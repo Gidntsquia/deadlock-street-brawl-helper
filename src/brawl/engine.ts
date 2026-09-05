@@ -1,0 +1,220 @@
+// Street Brawl draft engine. Pure function of (hero assets, item catalog, Street Brawl aggregate analytics,
+// mode config). Everything in the draft is free and the order is fixed by round, so unlike the normal-mode
+// generator there is no cost-efficiency or buy-time term. It never reads per-player data.
+import type { Item, ItemStat } from '../types';
+import { statValue } from '../generator/build';
+import { kitProfile } from '../generator/kit';
+import type { BrawlInput, DraftAdvice, DraftState, Offer, RankedOffer, RerollAdvice, ScoreParts } from './types';
+
+export const BRAWL_WEIGHTS = { popularity: 1.0, winLift: 1.0, kit: 0.3, tier: 0.2, counter: 0.5, synergy: 0.5, active: 0.1, upgrade: 0.15, enhanced: 0.15 };
+export const WIN_SHRINK_FRAC = 0.05;   // K = max(200, 5 % of the tier's most-picked item)
+export const MIN_PAIR_MATCHES = 20;
+export const MIN_VS_MATCHES = 50;      // enemy-filtered rows below this are ignored
+export const ENHANCED_STAT_MULT = 1.25; // UNVERIFIED: the API does not publish enhanced numbers; measure from tooltips
+export const MAX_ACTIVES = 4;          // Brawl keeps the 4-active cap (no per-slot caps); a 5th active gets a penalty, not a veto
+export const ACTIVE_OVERFLOW_PENALTY = 0.5;
+export const REROLL_GAIN_THRESHOLD = 0.1;
+export const CARDS_PER_SET = 3;
+export const SETS_PER_ROUND = 3;
+
+interface Base { item: Item; stat?: ItemStat; pop: number; winLift: number; kit: number; base: number; counter: number }
+
+const shrink = (wins: number, matches: number, K: number, mean: number) => (wins + K * mean) / (matches + K);
+
+/**
+ * Per-item scores independent of the draft state. Popularity and win-lift are normalised WITHIN TIER:
+ * a tier-4 item is picked less often than a tier-1 item mostly because it is offered less often (tier
+ * pools are fixed per round), so cross-tier usage says little about quality. Kit value is the raw
+ * soul-equivalent stat value (no cost division: everything is free) relative to the tier median, clipped at
+ * 2x. A flat per-tier bonus makes a rare (tier-bumped) card worth more than a normal one of the same rank.
+ */
+export function baseScores(input: BrawlInput, enemies: number[] = []): Map<number, Base> {
+  const { hero, abilities, items, analytics } = input;
+  const catalog = new Map(items.filter((i) => !i.disabled && i.item_tier >= 1).map((i) => [i.id, i]));
+  const kit = kitProfile(hero, abilities);
+  const stats = new Map(analytics.item_stats.filter((s) => catalog.has(s.item_id) && s.matches > 0).map((s) => [s.item_id, s]));
+  const tierMax: Record<number, number> = {};
+  for (const s of stats.values()) { const t = catalog.get(s.item_id)!.item_tier; tierMax[t] = Math.max(tierMax[t] ?? 0, s.matches); }
+  const totalW = [...stats.values()].reduce((a, s) => a + s.wins, 0), totalM = [...stats.values()].reduce((a, s) => a + s.matches, 0);
+  const meanWR = totalM ? totalW / totalM : 0.5;
+
+  // enemy-filtered populations: per enemy, the hero's mean win rate in those matches
+  const vsMean = new Map<number, number>();
+  for (const e of enemies) {
+    const rows = analytics.vs[String(e)]; if (!rows) continue;
+    const w = rows.reduce((a, r) => a + r.wins, 0), m = rows.reduce((a, r) => a + r.matches, 0);
+    if (m) vsMean.set(e, w / m);
+  }
+
+  // kit value: unknown (unpriced) items get the median of their tier so the term is neutral for them
+  const rawKit = new Map<number, number>();
+  for (const it of catalog.values()) rawKit.set(it.id, statValue(it, kit));
+  const tierMedian: Record<number, number> = {};
+  for (const t of [1, 2, 3, 4, 5]) {
+    const xs = [...catalog.values()].filter((i) => i.item_tier === t).map((i) => rawKit.get(i.id)!).filter((x) => x > 0).sort((a, b) => a - b);
+    tierMedian[t] = xs.length ? xs[Math.floor(xs.length / 2)] : 0;
+  }
+  const kitVal = (it: Item) => rawKit.get(it.id)! > 0 ? rawKit.get(it.id)! : tierMedian[it.item_tier] ?? 0;
+  const kitNorm = (it: Item) => { const med = tierMedian[it.item_tier]; return med ? Math.min(2, kitVal(it) / med) / 2 : 0.5; };
+
+  const out = new Map<number, Base>();
+  for (const it of catalog.values()) {
+    const stat = stats.get(it.id);
+    const tm = tierMax[it.item_tier] ?? 0;
+    const pop = stat && tm ? stat.matches / tm : 0;
+    const K = Math.max(200, WIN_SHRINK_FRAC * tm);
+    const winLift = stat ? (shrink(stat.wins, stat.matches, K, meanWR) - meanWR) * 10 * pop : 0;
+    // counter: how much better the item does against the known enemies than against the field
+    let counter = 0, n = 0;
+    if (stat) for (const e of enemies) {
+      const rows = analytics.vs[String(e)]; const mean = vsMean.get(e); if (!rows || mean === undefined) continue;
+      const r = rows.find((x) => x.item_id === it.id); if (!r || r.matches < MIN_VS_MATCHES) continue;
+      const liftVs = shrink(r.wins, r.matches, K, mean) - mean;
+      const liftAll = shrink(stat.wins, stat.matches, K, meanWR) - meanWR;
+      counter += (liftVs - liftAll) * 10 * pop; n++;
+    }
+    counter = n ? counter / n : 0;
+    const k = kitNorm(it);
+    const base = BRAWL_WEIGHTS.popularity * Math.sqrt(pop) + BRAWL_WEIGHTS.winLift * winLift + BRAWL_WEIGHTS.kit * k + BRAWL_WEIGHTS.tier * (it.item_tier - 1) + (it.is_active_item ? BRAWL_WEIGHTS.active : 0);
+    out.set(it.id, { item: it, stat, pop, winLift, kit: k, base, counter });
+  }
+  return out;
+}
+
+/** Pair win-lift lookup (×10) from Street Brawl permutation stats. */
+export function pairLifts(input: BrawlInput): Map<string, number> {
+  const stats = input.analytics.item_stats;
+  const totalW = stats.reduce((a, s) => a + s.wins, 0), totalM = stats.reduce((a, s) => a + s.matches, 0);
+  const meanWR = totalM ? totalW / totalM : 0.5;
+  const pair = new Map<string, number>();
+  for (const p of input.analytics.permutation_stats) {
+    if (p.item_ids.length !== 2 || p.matches < MIN_PAIR_MATCHES) continue;
+    const lift = (p.wins / p.matches - meanWR) * 10;
+    const [a, b] = p.item_ids;
+    pair.set(`${a}:${b}`, lift); pair.set(`${b}:${a}`, lift);
+  }
+  return pair;
+}
+
+const synergyWith = (pair: Map<string, number>, id: number, others: number[]) => {
+  let s = 0, n = 0;
+  for (const o of others) { const l = pair.get(`${id}:${o}`); if (l !== undefined) { s += l; n++; } }
+  return n ? s / n : 0;
+};
+
+/** Scores one card against the current state (owned items, enemies) without considering the other sets. */
+export function scoreOffer(input: BrawlInput, bases: Map<number, Base>, pair: Map<string, number>, state: DraftState, offer: Offer): RankedOffer {
+  const b = bases.get(offer.itemId);
+  const item = b?.item ?? input.items.find((i) => i.id === offer.itemId);
+  if (!item) throw new Error(`unknown item id ${offer.itemId}`);
+  const ownedItems = state.owned.map((id) => input.items.find((i) => i.id === id)).filter((x): x is Item => !!x);
+  const enhanced = !!offer.enhanced;
+  const synergy = synergyWith(pair, item.id, state.owned);
+  const upgradesOwned = ownedItems.some((o) => item.component_items.includes(o.class_name));
+  const actives = ownedItems.filter((o) => o.is_active_item).length;
+  const activePenalty = item.is_active_item && actives >= MAX_ACTIVES ? -ACTIVE_OVERFLOW_PENALTY : 0;
+  const parts: ScoreParts = {
+    pop: b ? BRAWL_WEIGHTS.popularity * Math.sqrt(b.pop) : 0,
+    winLift: b ? BRAWL_WEIGHTS.winLift * b.winLift : 0,
+    kit: b ? BRAWL_WEIGHTS.kit * b.kit * (enhanced ? ENHANCED_STAT_MULT : 1) : 0,
+    tier: BRAWL_WEIGHTS.tier * (item.item_tier - 1),
+    counter: b ? BRAWL_WEIGHTS.counter * b.counter : 0,
+    synergy: BRAWL_WEIGHTS.synergy * synergy,
+    active: (item.is_active_item ? BRAWL_WEIGHTS.active : 0) + activePenalty,
+    upgrade: upgradesOwned ? BRAWL_WEIGHTS.upgrade : 0,
+    enhanced: enhanced ? BRAWL_WEIGHTS.enhanced : 0,
+  };
+  const score = Object.values(parts).reduce((a, x) => a + x, 0);
+  const why: string[] = [];
+  const hero = input.hero.name;
+  if (!b?.stat) why.push('no Street Brawl data for this item yet');
+  if (b && b.pop > 0.5) why.push(`picked in ${(b.pop * 100).toFixed(0)}% of ${hero} brawls (relative to the top tier-${item.item_tier} pick)`);
+  if (b && b.winLift > 0.1) why.push(`+${(b.winLift * 10).toFixed(1)}% win rate vs ${hero} average`);
+  if (b && b.winLift < -0.1) why.push(`${(b.winLift * 10).toFixed(1)}% win rate vs ${hero} average`);
+  if (b && b.kit > 0.7) why.push(`scales ${hero}'s kit`);
+  if (b && b.counter > 0.1) why.push('wins more against this enemy team');
+  if (b && b.counter < -0.1) why.push('wins less against this enemy team');
+  if (synergy > 0.2) why.push('wins more alongside items you already hold');
+  if (synergy < -0.2) why.push('wins less alongside items you already hold');
+  if (upgradesOwned) why.push(`upgrades ${ownedItems.find((o) => item.component_items.includes(o.class_name))!.name}, which you already hold`);
+  if (activePenalty) why.push(`you already hold ${actives} active items`);
+  if (enhanced) why.push('enhanced version');
+  return { item, enhanced, score, parts, why, usage: b?.pop ?? 0, winRate: b?.stat ? b.stat.wins / b.stat.matches : null, known: !!b?.stat };
+}
+
+/** Expected number of rare (tier-bumped) cards per card, from the config's outcome-count weight table. */
+export function rareChancePerCard(input: BrawlInput, round: number): number {
+  const r = input.config.item_draft_rounds_per_game_round[Math.min(round, input.config.item_draft_rounds_per_game_round.length) - 1];
+  if (!r) return 0;
+  let w = 0, ew = 0;
+  for (const [k, v] of Object.entries(r.chance_rare.outcomes_to_weights)) { w += v; ew += Number(k) * v; }
+  const cards = r.item_draft_rounds.length * CARDS_PER_SET;
+  return w ? Math.min(1, ew / w / cards) : 0;
+}
+
+/**
+ * Expected best base score of a fresh set of 3 cards drawn from the round's tier pool for that set:
+ * E[max of 3 iid] = Σ s_(k) · (F_k³ − F_{k−1}³) over the score-sorted pool, where F is the weighted CDF
+ * (weight = tier probability / pool size). Only items with Street Brawl data are in the pool.
+ */
+export function expectedBestOfSet(input: BrawlInput, bases: Map<number, Base>, round: number, setIndex: number): RerollAdvice['pool'] & { expected: number } | null {
+  const r = input.config.item_draft_rounds_per_game_round[Math.min(round, input.config.item_draft_rounds_per_game_round.length) - 1];
+  const tiers = r?.item_draft_rounds[setIndex];
+  if (!tiers) return null;
+  const pRare = rareChancePerCard(input, round);
+  const pool: { s: number; w: number }[] = [];
+  for (const [tier, p] of [[tiers.normal_mod_tier, 1 - pRare], [tiers.rare_mod_tier, pRare]] as const) {
+    const xs = [...bases.values()].filter((b) => b.item.item_tier === tier && b.stat);
+    for (const b of xs) pool.push({ s: b.base, w: p / xs.length });
+  }
+  if (!pool.length) return null;
+  pool.sort((a, b) => a.s - b.s);
+  let F = 0, prev = 0, expected = 0;
+  for (const p of pool) { F += p.w; expected += p.s * (F ** CARDS_PER_SET - prev); prev = F ** CARDS_PER_SET; }
+  return { tier: tiers.normal_mod_tier, rareTier: tiers.rare_mod_tier, pRare, expected };
+}
+
+/** Ranks every card, chooses the jointly best pick per set, and says whether a reroll is worth it. */
+export function adviseDraft(input: BrawlInput, state: DraftState): DraftAdvice {
+  const bases = baseScores(input, state.enemies);
+  const pair = pairLifts(input);
+  const sets = state.sets.map((set) => set.map((o) => scoreOffer(input, bases, pair, state, o)).sort((a, b) => b.score - a.score || a.item.id - b.item.id));
+
+  // joint pick: every one-per-set combination, adding pairwise synergy between the picks themselves
+  let best: RankedOffer[] = [], bestScore = -Infinity;
+  const rec = (i: number, acc: RankedOffer[]) => {
+    if (i === sets.length) {
+      let s = acc.reduce((a, r) => a + r.score, 0);
+      for (let x = 0; x < acc.length; x++) for (let y = x + 1; y < acc.length; y++) {
+        if (acc[x].item.id === acc[y].item.id) s -= 1; // the same item twice is a wasted pick
+        s += BRAWL_WEIGHTS.synergy * (pair.get(`${acc[x].item.id}:${acc[y].item.id}`) ?? 0) / Math.max(1, acc.length - 1);
+      }
+      if (s > bestScore) { bestScore = s; best = [...acc]; }
+      return;
+    }
+    if (!sets[i].length) { rec(i + 1, acc); return; }
+    for (const r of sets[i]) rec(i + 1, [...acc, r]);
+  };
+  rec(0, []);
+
+  // reroll: the set whose best card falls furthest below a fresh draw's expected best
+  let reroll: RerollAdvice | null = null;
+  const rerolls = input.config.item_draft_rerolls_per_round[Math.min(state.round, input.config.item_draft_rerolls_per_round.length) - 1] ?? 0;
+  if (rerolls > 0) {
+    sets.forEach((set, i) => {
+      if (!set.length) return;
+      const e = expectedBestOfSet(input, bases, state.round, i);
+      if (!e) return;
+      const currentBest = Math.max(...set.map((r) => r.score - r.parts.synergy - r.parts.counter - r.parts.upgrade));
+      const gain = e.expected - currentBest;
+      if (gain > REROLL_GAIN_THRESHOLD && (!reroll || gain > reroll.gain)) reroll = { set: i, currentBest, expectedBest: e.expected, gain, pool: { tier: e.tier, rareTier: e.rareTier, pRare: e.pRare } };
+    });
+  }
+  return { sets, picks: best, reroll };
+}
+
+/** Per-round tier layout of the draft, for the UI and the CLI. */
+export function roundTiers(input: BrawlInput, round: number) {
+  const r = input.config.item_draft_rounds_per_game_round[Math.min(round, input.config.item_draft_rounds_per_game_round.length) - 1];
+  return r ? r.item_draft_rounds.map((t) => ({ normal: t.normal_mod_tier, rare: t.rare_mod_tier })) : [];
+}

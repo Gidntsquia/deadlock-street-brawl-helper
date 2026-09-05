@@ -1,0 +1,144 @@
+{
+ "s7-left": {
+  "item_id": 1439347412,
+  "name": "Mystic Regeneration",
+  "icon": 185
+ },
+ "s7-top": {
+  "item_id": 1548066885,
+  "name": "Extended Magazine",
+  "icon": 185
+ },
+ "s7-right": {
+  "item_id": 465043967,
+  "name": "Spirit Strike",
+  "icon": 185
+ },
+ "s8-left": {
+  "item_id": 3361075077,
+  "name": "Return Fire",
+  "icon": 185
+ },
+ "s8-top": {
+  "item_id": 1219329868,
+  "name": "Spirit Sap",
+  "icon": 185
+ },
+ "s8-right": {
+  "item_id": 3977876567,
+  "name": "Kinetic Dash",
+  "icon": 185
+ },
+ "s9-left": {
+  "item_id": 2481177645,
+  "name": "Hunter's Aura",
+  "icon": 185
+ },
+ "s9-top": {
+  "item_id": 2739107182,
+  "name": "Burst Fire",
+  "icon": 185
+ },
+ "s9-right": {
+  "item_id": 3919289022,
+  "name": "Mercurial Magnum",
+  "icon": 185,
+  "rare": true
+ },
+ "s10-left": {
+  "item_id": 1932939246,
+  "name": "Alchemical Fire",
+  "icon": 185
+ },
+ "s10-top": {
+  "item_id": 2163598980,
+  "name": "Spirit Resilience",
+  "icon": 185
+ },
+ "s10-right": {
+  "item_id": 915014646,
+  "name": "Transcendent Cooldown",
+  "icon": 185,
+  "rare": true
+ },
+ "s13-left": {
+  "item_id": 1150006784,
+  "name": "Arcane Surge",
+  "icon": 185
+ },
+ "s13-top": {
+  "item_id": 1644605047,
+  "name": "Reactive Barrier",
+  "icon": 185,
+  "enhanced": true
+ },
+ "s13-right": {
+  "item_id": 2447176615,
+  "name": "Enduring Speed",
+  "icon": 185
+ },
+ "s14-left": {
+  "item_id": 1047818222,
+  "name": "Debuff Reducer",
+  "icon": 185
+ },
+ "s14-top": {
+  "item_id": 2603935618,
+  "name": "Healbane",
+  "icon": 185,
+  "enhanced": true
+ },
+ "s14-right": {
+  "item_id": 2407033488,
+  "name": "Intensifying Magazine",
+  "icon": 185
+ },
+ "s15-left": {
+  "item_id": 3270001687,
+  "name": "Warp Stone",
+  "icon": 185
+ },
+ "s15-top": {
+  "item_id": 3190916303,
+  "name": "Spirit Snatch",
+  "icon": 185
+ },
+ "s15-right": {
+  "item_id": 2717651715,
+  "name": "Superior Duration",
+  "icon": 185,
+  "enhanced": true
+ },
+ "s16-left": {
+  "item_id": 865958998,
+  "name": "Veil Walker",
+  "icon": 185
+ },
+ "s16-top": {
+  "item_id": 2108215830,
+  "name": "Heroic Aura",
+  "icon": 185
+ },
+ "s16-right": {
+  "item_id": 1250307611,
+  "name": "Juggernaut",
+  "icon": 185,
+  "rare": true
+ },
+ "s17-left": {
+  "item_id": 865958998,
+  "name": "Veil Walker",
+  "icon": 185
+ },
+ "s17-top": {
+  "item_id": 2108215830,
+  "name": "Heroic Aura",
+  "icon": 185
+ },
+ "s17-right": {
+  "item_id": 1250307611,
+  "name": "Juggernaut",
+  "icon": 185,
+  "rare": true
+ }
+}
