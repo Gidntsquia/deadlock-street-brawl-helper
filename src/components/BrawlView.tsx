@@ -72,7 +72,7 @@ export function BrawlView({ hero, heroes, items, abilities }: Props) {
   const phoneState = useMemo(() => JSON.stringify({
     hero: hero.name, round, choice, took: took_, ownedCount: owned.length, status: capture === 'on' ? 'Waiting for the draft screen…' : 'Start the capture on the PC.',
     cards: ranked.map((r) => ({ name: r.item.name, enhanced: r.enhanced, score: r.score, usage: r.usage, winRate: r.winRate, why: r.why, icon: img(r.item.shop_image_webp ?? r.item.image_webp) })),
-    reroll: reroll ? { currentBest: reroll.currentBest, expectedBest: reroll.expectedBest, tier: reroll.pool.tier } : null,
+    reroll: reroll ? { currentBest: reroll.currentBest, expectedBest: reroll.expectedBest, holdValue: reroll.holdValue, tier: reroll.pool.tier } : null,
   }), [hero.name, round, choice, took_, owned.length, capture, ranked, reroll]);
   const phoneSent = useRef(0);
   useEffect(() => {
@@ -200,7 +200,7 @@ export function BrawlView({ hero, heroes, items, abilities }: Props) {
           </span>
         </button>
       ))}
-      {reroll && <div className="brawl-reroll">Re-roll this set: best card {reroll.currentBest.toFixed(2)}, a fresh tier-{reroll.pool.tier} set should offer {reroll.expectedBest.toFixed(2)} <button className="btn" onClick={rerolled}>I re-rolled</button></div>}
+      {reroll && <div className="brawl-reroll">Re-roll this set: best card {reroll.currentBest.toFixed(2)}, a fresh tier-{reroll.pool.tier} set should offer {reroll.expectedBest.toFixed(2)}{reroll.holdValue > 0 ? ` (saving it for a later set is worth ${reroll.holdValue.toFixed(2)})` : ''} <button className="btn" onClick={rerolled}>I re-rolled</button></div>}
       {cards.length > 0 && !reroll && <div className="muted">Keep this set{rerolls ? '' : ' (no re-rolls left)'}.</div>}
     </div>
   );

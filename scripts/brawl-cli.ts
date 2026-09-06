@@ -83,5 +83,5 @@ advice.sets.forEach((set, i) => {
   }
 });
 console.log(`\npick: ${advice.picks.map((p) => p.item.name + (p.enhanced ? '+' : '')).join(' / ')}`);
-if (advice.reroll) console.log(`reroll set ${advice.reroll.set + 1}: its best card scores ${advice.reroll.currentBest.toFixed(2)}, a fresh tier-${advice.reroll.pool.tier} set is expected to offer ${advice.reroll.expectedBest.toFixed(2)} (${(advice.reroll.pool.pRare * 100).toFixed(0)}% chance per card of tier ${advice.reroll.pool.rareTier})`);
+if (advice.reroll) console.log(`reroll set ${advice.reroll.set + 1}: its best card scores ${advice.reroll.currentBest.toFixed(2)}, a fresh tier-${advice.reroll.pool.tier} set is expected to offer ${advice.reroll.expectedBest.toFixed(2)} (${(advice.reroll.pool.pRare * 100).toFixed(0)}% chance per card of tier ${advice.reroll.pool.rareTier})${advice.reroll.holdValue ? `; holding the re-roll for a later set is worth ${advice.reroll.holdValue.toFixed(2)}` : ''}`);
 else console.log('reroll: keep all three sets');

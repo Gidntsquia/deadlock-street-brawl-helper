@@ -35,7 +35,7 @@ export interface DraftState {
   sets: Offer[][];          // 1..3 sets of up to 3 cards
 }
 
-export interface ScoreParts { pop: number; winLift: number; kit: number; tier: number; counter: number; synergy: number; active: number; upgrade: number; enhanced: number }
+export interface ScoreParts { pop: number; winLift: number; kit: number; tier: number; counter: number; synergy: number; active: number; upgrade: number; enhanced: number; dup: number }
 
 export interface RankedOffer {
   item: Item; enhanced: boolean; score: number; parts: ScoreParts; why: string[];
@@ -43,7 +43,8 @@ export interface RankedOffer {
   known: boolean;                          // false when the item has no brawl data
 }
 
-export interface RerollAdvice { set: number; currentBest: number; expectedBest: number; gain: number; pool: { tier: number; pRare: number; rareTier: number } }
+/** holdValue: what keeping the re-roll for a later set of this round is worth (0 for the last set). */
+export interface RerollAdvice { set: number; currentBest: number; expectedBest: number; gain: number; holdValue: number; pool: { tier: number; pRare: number; rareTier: number } }
 
 export interface DraftAdvice {
   sets: RankedOffer[][];    // every card scored against `owned`, best first
