@@ -20,7 +20,13 @@ export const MIN_VS_MATCHES = 50;      // enemy-filtered rows below this are ign
 export const ENHANCED_STAT_MULT = 1.25; // UNVERIFIED: the API does not publish enhanced numbers; measure from tooltips
 export const MAX_ACTIVES = 4;          // Brawl keeps the 4-active cap (no per-slot caps); a 5th active gets a penalty, not a veto
 export const ACTIVE_OVERFLOW_PENALTY = 0.5;
-export const REROLL_GAIN_THRESHOLD = 0.1;  // re-roll only when its gain beats holding the re-roll for a later set by this much
+export const REROLL_GAIN_THRESHOLD = 0;    // re-roll whenever a fresh draw is expected to beat the set's best card
+// Per-card rare / enhanced chance as seen on screen: 4 rare and 3 enhanced of the 27 fixture cards
+// (scripts/fixtures/brawl-cards/labels.json). The config's outcome-weight tables give 0.39 and 0.26 per card if read as
+// counts over the nine cards of a round, which is far above what the draft shows and made a fresh set look better
+// than the best card of its tier; whatever those tables count, it is not that. Set either to null to use the config.
+export const RARE_PER_CARD: number | null = 4 / 27;
+export const ENHANCED_PER_CARD: number | null = 3 / 27;
 export const CARDS_PER_SET = 3;
 export const SETS_PER_ROUND = 3;
 
@@ -156,8 +162,9 @@ export function scoreOffer(input: BrawlInput, bases: Map<number, Base>, pair: Ma
   return { item, enhanced, score, parts, why, usage: b?.pop ?? 0, winRate: b?.stat ? b.stat.wins / b.stat.matches : null, known: !!b?.stat };
 }
 
-/** Expected number of rare (tier-bumped) cards per card, from the config's outcome-count weight table. */
+/** Rare (tier-bumped) chance per card: the measured constant, else the config's outcome-count weight table. */
 export function rareChancePerCard(input: BrawlInput, round: number): number {
+  if (RARE_PER_CARD !== null) return RARE_PER_CARD;
   const r = input.config.item_draft_rounds_per_game_round[Math.min(round, input.config.item_draft_rounds_per_game_round.length) - 1];
   if (!r) return 0;
   let w = 0, ew = 0;
@@ -166,8 +173,9 @@ export function rareChancePerCard(input: BrawlInput, round: number): number {
   return w ? Math.min(1, ew / w / cards) : 0;
 }
 
-/** Expected number of enhanced cards per card, from the config's outcome-count weight table. */
+/** Enhanced chance per card: the measured constant, else the config's outcome-count weight table. */
 export function enhancedChancePerCard(input: BrawlInput, round: number): number {
+  if (ENHANCED_PER_CARD !== null) return ENHANCED_PER_CARD;
   const r = input.config.item_draft_rounds_per_game_round[Math.min(round, input.config.item_draft_rounds_per_game_round.length) - 1];
   if (!r) return 0;
   let w = 0, ew = 0;
@@ -268,9 +276,10 @@ export function adviseDraft(input: BrawlInput, state: DraftState): DraftAdvice {
   };
   rec(0, []);
 
-  // reroll: one re-roll per round, spent on the set whose gain (a fresh draw's expected best minus its best card) beats
-  // the value of holding the re-roll for a later set. Later sets already on screen have a known gain; unseen ones
-  // are valued by backward induction over the distribution of their best card: V_j = E[max(gain_j, V_{j+1})].
+  // reroll: suggested for the set with the largest expected gain (a fresh draw's expected best minus its best card)
+  // whenever that gain is positive. The value of holding the re-roll for a later set is reported alongside (later sets
+  // on screen have a known gain; unseen ones are valued by backward induction over the distribution of their best
+  // card, V_j = E[max(gain_j, V_{j+1})]) but does not veto the re-roll: the user asked for the plain expectation.
   // The state-dependent terms (synergy, counter, upgrade) are stripped from the current best so it is on the pool's scale.
   let reroll: RerollAdvice | null = null;
   const rerolls = input.config.item_draft_rerolls_per_round[Math.min(state.round, input.config.item_draft_rerolls_per_round.length) - 1] ?? 0;
@@ -294,8 +303,7 @@ export function adviseDraft(input: BrawlInput, state: DraftState): DraftAdvice {
     }
     known.forEach((k, i) => {
       if (!k) return;
-      const net = k.gain - hold[i + 1];
-      if (net > REROLL_GAIN_THRESHOLD && (!reroll || net > reroll.gain - reroll.holdValue)) reroll = { set: i, currentBest: k.currentBest, expectedBest: k.expected, gain: k.gain, holdValue: hold[i + 1], pool: k.pool };
+      if (k.gain > REROLL_GAIN_THRESHOLD && (!reroll || k.gain > reroll.gain)) reroll = { set: i, currentBest: k.currentBest, expectedBest: k.expected, gain: k.gain, holdValue: hold[i + 1], pool: k.pool };
     });
   }
   return { sets, picks: best, reroll };
