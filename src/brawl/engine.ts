@@ -11,8 +11,10 @@ import type { BrawlInput, DraftAdvice, DraftState, Offer, RankedOffer, RerollAdv
 // above the rest of its set, and everything in the draft is free, so one tier is worth about the whole within-tier
 // spread: a median tier-3 card beats the best tier-2 card, and only a tier-3 card that is useless for the hero loses
 // to a top tier-2 pick.
-// enhanced: the same item with better numbers, worth a good part of a tier (the enhanced flag belongs to the card slot
-// and survives a re-roll, so a re-roll of an enhanced slot yields another enhanced card: see cardDist).
+// enhanced: the same item with better numbers, worth a good part of a tier. Both the enhanced flag and the rare
+// (tier-bumped) flag belong to the card slot and survive a re-roll: a re-roll of an enhanced slot yields another
+// enhanced card and a re-roll of a rare slot yields another rare-tier card (see cardDist). So a weak rare or enhanced
+// card is often worth re-rolling: the slot keeps its bonus and only the item is drawn again.
 export const BRAWL_WEIGHTS = { popularity: 1.0, winLift: 1.0, kit: 0.3, tier: 1.0, counter: 0.5, synergy: 0.5, active: 0.1, upgrade: 0.15, enhanced: 0.6, dup: 1.0 };
 export const WIN_SHRINK_FRAC = 0.05;   // K = max(200, 5 % of the tier's most-picked item)
 export const MIN_PAIR_MATCHES = 20;
@@ -190,16 +192,19 @@ export interface Dist { s: number; w: number }
  * Score distribution of one fresh card in a given set: every draftable item of the set's normal tier (rare tier with
  * probability pRare), weighted uniformly within the tier. Items with no Street Brawl data are in the pool too (they
  * are offered just as often; they only score their tier and kit value). `enhanced` is the slot's flag when known
- * (it survives a re-roll); null draws it with the round's enhanced chance. `actives` applies the overflow penalty.
+ * (it survives a re-roll); null draws it with the round's enhanced chance. `rare` likewise fixes the slot's tier bump
+ * (a rare slot re-rolls into another rare-tier card, a normal slot into a normal one); null draws it with the round's
+ * rare chance. `actives` applies the overflow penalty.
  */
-export function cardDist(input: BrawlInput, bases: Map<number, Base>, round: number, setIndex: number, enhanced: boolean | null, actives = 0): Dist[] | null {
+export function cardDist(input: BrawlInput, bases: Map<number, Base>, round: number, setIndex: number, enhanced: boolean | null, actives = 0, rare: boolean | null = null): Dist[] | null {
   const r = input.config.item_draft_rounds_per_game_round[Math.min(round, input.config.item_draft_rounds_per_game_round.length) - 1];
   const tiers = r?.item_draft_rounds[setIndex];
   if (!tiers) return null;
-  const pRare = rareChancePerCard(input, round);
+  const pRare = rare === null ? rareChancePerCard(input, round) : rare ? 1 : 0;
   const pEnh = enhanced === null ? enhancedChancePerCard(input, round) : enhanced ? 1 : 0;
   const out: Dist[] = [];
   for (const [tier, p] of [[tiers.normal_mod_tier, 1 - pRare], [tiers.rare_mod_tier, pRare]] as const) {
+    if (p <= 0) continue;
     const xs = [...bases.values()].filter((b) => b.item.item_tier === tier);
     for (const b of xs) {
       const pen = b.item.is_active_item && actives >= MAX_ACTIVES ? -ACTIVE_OVERFLOW_PENALTY : 0;
@@ -234,14 +239,14 @@ export function maxDist(slots: Dist[][]): Dist[] {
 export const mean = (d: Dist[]) => d.reduce((a, x) => a + x.s * x.w, 0);
 
 /**
- * Expected best score of a fresh set of 3 cards. `enhanced` gives the slots' enhanced flags when the set is on screen
- * (a re-roll keeps them); when the set is still unseen, every slot draws the flag at the round's enhanced chance.
+ * Expected best score of a fresh set of 3 cards. `enhanced` and `rare` give the slots' flags when the set is on screen
+ * (a re-roll keeps both); when the set is still unseen, every slot draws them at the round's chances.
  */
-export function expectedBestOfSet(input: BrawlInput, bases: Map<number, Base>, round: number, setIndex: number, enhanced: (boolean | null)[] = [null, null, null], actives = 0): RerollAdvice['pool'] & { expected: number; dist: Dist[] } | null {
+export function expectedBestOfSet(input: BrawlInput, bases: Map<number, Base>, round: number, setIndex: number, enhanced: (boolean | null)[] = [null, null, null], actives = 0, rare: (boolean | null)[] = enhanced.map(() => null)): RerollAdvice['pool'] & { expected: number; dist: Dist[] } | null {
   const r = input.config.item_draft_rounds_per_game_round[Math.min(round, input.config.item_draft_rounds_per_game_round.length) - 1];
   const tiers = r?.item_draft_rounds[setIndex];
   if (!tiers) return null;
-  const slots = enhanced.map((e) => cardDist(input, bases, round, setIndex, e, actives));
+  const slots = enhanced.map((e, j) => cardDist(input, bases, round, setIndex, e, actives, rare[j] ?? null));
   if (slots.some((x) => !x)) return null;
   const dist = maxDist(slots as Dist[][]);
   return { tier: tiers.normal_mod_tier, rareTier: tiers.rare_mod_tier, pRare: rareChancePerCard(input, round), expected: mean(dist), dist };
@@ -277,7 +282,9 @@ export function adviseDraft(input: BrawlInput, state: DraftState): DraftAdvice {
   rec(0, []);
 
   // reroll: suggested for the set with the largest expected gain (a fresh draw's expected best minus its best card)
-  // whenever that gain is positive. The value of holding the re-roll for a later set is reported alongside (later sets
+  // whenever that gain is positive. The on-screen slots keep their rare and enhanced flags through the re-roll, so a
+  // set holding a poor rare or enhanced card is valued against a fresh draw of the same rare tier / enhanced slot,
+  // which is what makes re-rolling a weak rare card worthwhile. The value of holding the re-roll for a later set is reported alongside (later sets
   // on screen have a known gain; unseen ones are valued by backward induction over the distribution of their best
   // card, V_j = E[max(gain_j, V_{j+1})]) but does not veto the re-roll: the user asked for the plain expectation.
   // The state-dependent terms (synergy, counter, upgrade) are stripped from the current best so it is on the pool's scale.
@@ -289,7 +296,9 @@ export function adviseDraft(input: BrawlInput, state: DraftState): DraftAdvice {
     const known = sets.map((set, i) => {
       if (!set.length) return null;
       const flags = state.sets[i].map((o) => !!o.enhanced); while (flags.length < CARDS_PER_SET) flags.push(false);
-      const e = expectedBestOfSet(input, bases, state.round, i, flags, actives);
+      const normal = layout[i]?.normal ?? 0;
+      const rares = set.map((r) => r.item.item_tier > normal); while (rares.length < CARDS_PER_SET) rares.push(false);
+      const e = expectedBestOfSet(input, bases, state.round, i, flags, actives, rares);
       if (!e) return null;
       const currentBest = Math.max(...set.map((r) => r.score - r.parts.synergy - r.parts.counter - r.parts.upgrade));
       return { currentBest, expected: e.expected, gain: e.expected - currentBest, pool: { tier: e.tier, rareTier: e.rareTier, pRare: e.pRare } };

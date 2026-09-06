@@ -203,7 +203,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
           </span>
         </button>
       ))}
-      {reroll && <div className="brawl-reroll">Re-roll this set: best card {reroll.currentBest.toFixed(2)}, a fresh tier-{reroll.pool.tier} set should offer {reroll.expectedBest.toFixed(2)}{reroll.holdValue > 0 ? ` (saving it for a later set is worth ${reroll.holdValue.toFixed(2)})` : ''} <button className="btn" onClick={rerolled}>I re-rolled</button></div>}
+      {reroll && <div className="brawl-reroll">Re-roll this set: best card {reroll.currentBest.toFixed(2)}, a fresh set should offer {reroll.expectedBest.toFixed(2)} (rare and enhanced slots stay rare and enhanced){reroll.holdValue > 0 ? ` (saving it for a later set is worth ${reroll.holdValue.toFixed(2)})` : ''} <button className="btn" onClick={rerolled}>I re-rolled</button></div>}
       {cards.length > 0 && !reroll && <div className="muted">Keep this set{rerolls ? '' : ' (no re-rolls left)'}.</div>}
     </div>
   );
