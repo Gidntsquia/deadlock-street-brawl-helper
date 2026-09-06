@@ -6,7 +6,12 @@ import { statValue } from '../generator/build';
 import { kitProfile } from '../generator/kit';
 import type { BrawlInput, DraftAdvice, DraftState, Offer, RankedOffer, RerollAdvice, ScoreParts } from './types';
 
-export const BRAWL_WEIGHTS = { popularity: 1.0, winLift: 1.0, kit: 0.3, tier: 0.2, counter: 0.5, synergy: 0.5, active: 0.1, upgrade: 0.15, enhanced: 0.15 };
+// tier: popularity and win-lift are normalised within a tier (see baseScores), so the within-tier score spread is
+// about 0.2 (worst) .. 1.4 (best) for every tier and carries no cross-tier information. A rare card is a whole tier
+// above the rest of its set, and everything in the draft is free, so one tier is worth about the whole within-tier
+// spread: a median tier-3 card beats the best tier-2 card, and only a tier-3 card that is useless for the hero loses
+// to a top tier-2 pick.
+export const BRAWL_WEIGHTS = { popularity: 1.0, winLift: 1.0, kit: 0.3, tier: 1.0, counter: 0.5, synergy: 0.5, active: 0.1, upgrade: 0.15, enhanced: 0.15 };
 export const WIN_SHRINK_FRAC = 0.05;   // K = max(200, 5 % of the tier's most-picked item)
 export const MIN_PAIR_MATCHES = 20;
 export const MIN_VS_MATCHES = 50;      // enemy-filtered rows below this are ignored
@@ -26,7 +31,8 @@ const shrink = (wins: number, matches: number, K: number, mean: number) => (wins
  * a tier-4 item is picked less often than a tier-1 item mostly because it is offered less often (tier
  * pools are fixed per round), so cross-tier usage says little about quality. Kit value is the raw
  * soul-equivalent stat value (no cost division: everything is free) relative to the tier median, clipped at
- * 2x. A flat per-tier bonus makes a rare (tier-bumped) card worth more than a normal one of the same rank.
+ * 2x. The per-tier bonus (BRAWL_WEIGHTS.tier) is what compares a rare (tier-bumped) card with the normal cards of
+ * its set: the within-tier terms only say how good a card is among its own tier.
  */
 export function baseScores(input: BrawlInput, enemies: number[] = []): Map<number, Base> {
   const { hero, abilities, items, analytics } = input;
@@ -178,7 +184,13 @@ export function expectedBestOfSet(input: BrawlInput, bases: Map<number, Base>, r
 export function adviseDraft(input: BrawlInput, state: DraftState): DraftAdvice {
   const bases = baseScores(input, state.enemies);
   const pair = pairLifts(input);
-  const sets = state.sets.map((set) => set.map((o) => scoreOffer(input, bases, pair, state, o)).sort((a, b) => b.score - a.score || a.item.id - b.item.id));
+  const layout = roundTiers(input, state.round);
+  const sets = state.sets.map((set, i) => set.map((o) => {
+    const r = scoreOffer(input, bases, pair, state, o);
+    const normal = layout[i]?.normal;
+    if (normal && r.item.item_tier > normal) r.why.unshift(`rare: a tier-${r.item.item_tier} card in a tier-${normal} set`);
+    return r;
+  }).sort((a, b) => b.score - a.score || a.item.id - b.item.id));
 
   // joint pick: every one-per-set combination, adding pairwise synergy between the picks themselves
   let best: RankedOffer[] = [], bestScore = -Infinity;

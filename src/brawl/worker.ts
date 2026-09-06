@@ -5,8 +5,14 @@ import { decodeIconIndex, readDraftMeta, readDraftScreen, readInventory, type Ca
 import type { IconIndex } from './types';
 
 export type WorkerIn =
-  | { type: 'init'; index: IconIndex; tiers: Record<number, number> }
-  | { type: 'frame'; width: number; height: number; buffer: ArrayBuffer; prefer: number[] };
+  | { type: 'init'; index: IconIndex; tiers: Record<number, number>; intervalMs: number }
+  | { type: 'frame'; width: number; height: number; buffer: ArrayBuffer; prefer: number[] }
+  | { type: 'idle' }; // the page had no frame ready for the last tick
+
+/** The worker paces the capture: it asks the page for a frame, reads it, waits, asks again. Page timers are
+ *  throttled to once a second (Chrome: once a minute after five minutes) while the game has the foreground and the
+ *  browser tab is hidden; worker timers are not, so the advice keeps updating without alt-tabbing. */
+export type WorkerOut = FrameResult | { type: 'tick' };
 
 export interface FrameResult {
   type: 'result';
@@ -23,11 +29,16 @@ let tiers: Record<number, number> = {};
 let lastKey = '', acceptedKey = '';
 let lastInv = '', sentInv = '';
 
-const post = (m: FrameResult) => (self as unknown as { postMessage(m: unknown): void }).postMessage(m);
+let intervalMs = 250;
+
+const post = (m: WorkerOut) => (self as unknown as { postMessage(m: unknown): void }).postMessage(m);
+let timer: ReturnType<typeof setTimeout> | undefined;
+const tick = (after: number) => { clearTimeout(timer); timer = setTimeout(() => post({ type: 'tick' }), after); }; // one chain, even if the page sent two frames
 
 self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
   const msg = ev.data;
-  if (msg.type === 'init') { index = decodeIconIndex(msg.index); tiers = msg.tiers; lastKey = acceptedKey = lastInv = sentInv = ''; return; }
+  if (msg.type === 'init') { index = decodeIconIndex(msg.index); tiers = msg.tiers; intervalMs = msg.intervalMs; lastKey = acceptedKey = lastInv = sentInv = ''; tick(0); return; }
+  if (msg.type === 'idle') { tick(intervalMs); return; }
   if (!index) return;
   const t0 = performance.now();
   const img = { width: msg.width, height: msg.height, data: new Uint8ClampedArray(msg.buffer), channels: 4 as const };
@@ -46,4 +57,5 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
   } else if (!key) lastInv = '';
   lastKey = key;
   post({ type: 'result', reads, key, accepted, meta, inventory, ms: performance.now() - t0 });
+  tick(intervalMs);
 });
