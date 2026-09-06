@@ -15,10 +15,10 @@ const CAPTURE_MS = 250; // pause between frames; the worker paces the loop (see 
 const NTFY_DAILY_LIMIT = 250; // ntfy.sh free tier: messages per IP per day
 const ENEMY_SLOTS = 4;
 
-interface Props { hero: Hero; heroes: Hero[]; items: Item[]; abilities: Ability[] }
+interface Props { hero: Hero; heroes: Hero[]; items: Item[]; abilities: Ability[]; onHero: (id: number) => void }
 
 /** Street Brawl draft advisor: the three cards on screen (read from a screen capture or typed in), ranked for this hero. */
-export function BrawlView({ hero, heroes, items, abilities }: Props) {
+export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
   const [analytics, setAnalytics] = useState<BrawlAnalytics | null>(null);
   const [config, setConfig] = useState<BrawlConfig | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -157,7 +157,10 @@ export function BrawlView({ hero, heroes, items, abilities }: Props) {
         const meta = r.meta!;
         if (meta.round) setRound(meta.round);
         if (meta.choice) setChoice(meta.choice);
-        const foes = enemiesFrom(meta.bar, heroId);
+        // the square-topped portrait is the player's: switch the app's hero to it (the enemies are then the other side)
+        const me = meta.self && heroes.some((h) => h.id === meta.self) ? meta.self : heroId;
+        if (me !== heroId) { onHero(me); setOwned([]); offeredRef.current.clear(); }
+        const foes = enemiesFrom(meta.bar, me);
         if (foes.length) setEnemies((prev) => { const n = [...prev]; for (const f of foes) if (!n.includes(f)) { const k = n.indexOf(0); if (k < 0) break; n[k] = f; } return n.every((x, i) => x === prev[i]) ? prev : n; });
       }
       if (r.inventory) {
@@ -174,7 +177,7 @@ export function BrawlView({ hero, heroes, items, abilities }: Props) {
     w.addEventListener('message', onMessage);
     sendFrame(); // the worker's first tick may have arrived before this listener existed
     return () => w.removeEventListener('message', onMessage);
-  }, [capture, byId, heroId]);
+  }, [capture, byId, heroId, heroes, onHero]);
 
   const took = (r: RankedOffer) => {
     setOwned((o) => [...o, r.item.id]); setCards([]);
@@ -188,7 +191,7 @@ export function BrawlView({ hero, heroes, items, abilities }: Props) {
 
   const advicePanel = (
     <div className="brawl-advice">
-      {!cards.length && <div className="muted">{capture === 'on' ? status : 'Waiting for cards: start the screen capture or type the three items below.'}</div>}
+      {!cards.length && <div className="muted">{capture === 'on' ? status : 'Waiting for cards: start the screen capture (it also picks up which hero you are playing) or type the three items below.'}</div>}
       {took_ && <div className="muted">Took {took_} · {owned.length} owned</div>}
       {ranked.map((r, k) => (
         <button key={r.item.id} className={`brawl-card ${k === 0 ? 'best' : ''}`} onClick={() => took(r)} title={capture === 'on' ? "Picks are read from the inventory grid; click only if it missed" : "I took this one"}>

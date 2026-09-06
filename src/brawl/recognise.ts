@@ -276,6 +276,60 @@ export function readHeroBar(img: RGBImage, index: DecodedIndex): HeroBar {
   return { left: read(HERO_BAR.left), right: read(HERO_BAR.right) };
 }
 
+// The player's own portrait is the one slot drawn as a square-topped tile (the others are circles): its two vertical
+// edges run the full height of the upper half, and the tile fill in the top corners differs from the bar background
+// beside it. While the "round starting" banner is up every slot sits in a tile, so a frame where several slots show
+// tiles is rejected and the next frame is used.
+export const SELF_TILE = { edgeRun: 0.9, minScore: 40, maxTiles: 2 } as const;
+
+function pxAt(img: RGBImage, x: number, y: number): [number, number, number] {
+  x = Math.min(img.width - 1, Math.max(0, x)); y = Math.min(img.height - 1, Math.max(0, y));
+  const i = (y * img.width + x) * img.channels; return [img.data[i], img.data[i + 1], img.data[i + 2]];
+}
+const colourDiff = (a: number[], b: number[]) => (Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2])) / 3;
+function meanRect(img: RGBImage, x0: number, y0: number, x1: number, y1: number): [number, number, number] {
+  let r = 0, g = 0, b = 0, n = 0;
+  for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { const p = pxAt(img, x, y); r += p[0]; g += p[1]; b += p[2]; n++; }
+  return n ? [r / n, g / n, b / n] : [0, 0, 0];
+}
+
+/** Index (0..3) of the player's slot on each side, or -1. */
+export function readSelfSlot(img: RGBImage): { left: number; right: number } {
+  const sx = img.width / BRAWL_LAYOUT.ref.width, sy = img.height / BRAWL_LAYOUT.ref.height;
+  const cy = HERO_BAR.cy * sy, R = HERO_BAR.diameter * sx / 2;
+  const y0 = Math.round(cy - 0.9 * R), y1 = Math.round(cy - 0.3 * R), rows = y1 - y0;
+  const cb = Math.round(cy - 0.9 * R), ce = Math.round(cy - 0.7 * R);
+  const runs = new Map<number, number>();
+  const run = (x: number) => { let n = runs.get(x); if (n === undefined) { n = 0; for (let y = y0; y < y1; y++) if (colourDiff(pxAt(img, x - 2, y), pxAt(img, x + 2, y)) > 20) n++; runs.set(x, n); } return n; };
+  const tile = (cx: number) => {
+    let best = 0;
+    for (let xl = Math.round(cx - 1.3 * R); xl <= cx - 0.7 * R; xl++) {
+      if (run(xl) < rows * SELF_TILE.edgeRun) continue;
+      for (let xr = Math.round(xl + 1.9 * R); xr <= xl + 2.3 * R; xr++) {
+        if (run(xr) < rows * SELF_TILE.edgeRun) continue;
+        const inL = meanRect(img, xl + 4, cb, xl + 12, ce), inR = meanRect(img, xr - 12, cb, xr - 4, ce);
+        const outL = meanRect(img, xl - 10, cb, xl - 4, ce), outR = meanRect(img, xr + 4, cb, xr + 10, ce);
+        best = Math.max(best, Math.min(colourDiff(inL, outL), colourDiff(inR, outR)) - colourDiff(inL, inR) / 2);
+      }
+    }
+    return best;
+  };
+  const scores = [...HERO_BAR.left, ...HERO_BAR.right].map((x) => tile(x * sx));
+  const tiles = scores.filter((v) => v > 0).length;
+  const order = scores.map((_, i) => i).sort((p, q) => scores[q] - scores[p]);
+  const ok = tiles <= SELF_TILE.maxTiles && scores[order[0]] >= SELF_TILE.minScore && scores[order[0]] >= 2 * scores[order[1]];
+  if (!ok) return { left: -1, right: -1 };
+  const k = order[0];
+  return k < HERO_BAR.left.length ? { left: k, right: -1 } : { left: -1, right: k - HERO_BAR.left.length };
+}
+
+/** The player's hero id from the bar, or 0 when the square-topped slot is missing or unreadable. */
+export function selfHero(bar: HeroBar, self: { left: number; right: number }): number {
+  if (self.left >= 0) return bar.left[self.left]?.heroId ?? 0;
+  if (self.right >= 0) return bar.right[self.right]?.heroId ?? 0;
+  return 0;
+}
+
 /** The opposing team's hero ids, given the player's hero; empty when the player's hero is on neither side. */
 export function enemiesFrom(bar: HeroBar, myHero: number): number[] {
   const ids = (side: HeroMatch[]) => side.map((m) => m.heroId).filter(Boolean);
@@ -342,10 +396,11 @@ const readDigit = (img: RGBImage, box: { x0: number; y0: number; x1: number; y1:
   return bestD <= MAX_DIGIT_DISTANCE ? best : 0;
 };
 
-export interface DraftMeta { round: number; choice: number; bar: HeroBar }
+export interface DraftMeta { round: number; choice: number; bar: HeroBar; self: number /* the player's hero id, 0 if unread */ }
 /** Round (1-5), choice (1-3) and the hero bar of a draft screen; 0 for a label that could not be read. */
 export function readDraftMeta(img: RGBImage, index: DecodedIndex): DraftMeta {
-  return { round: readDigit(img, LABELS.round, lightText, ROUND_DIGITS), choice: readDigit(img, LABELS.choice, magentaText, CHOICE_DIGITS), bar: readHeroBar(img, index) };
+  const bar = readHeroBar(img, index);
+  return { round: readDigit(img, LABELS.round, lightText, ROUND_DIGITS), choice: readDigit(img, LABELS.choice, magentaText, CHOICE_DIGITS), bar, self: selfHero(bar, readSelfSlot(img)) };
 }
 
 // ---- inventory grid ------------------------------------------------------------------------------------

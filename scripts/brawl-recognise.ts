@@ -5,7 +5,7 @@
 //       crops the three card squares to scripts/fixtures/brawl-cards/<name>-{left,top,right}.png and records the labels
 //   npm run brawl:see -- --save-screen s7 screenshots/brawl/s7.png 1 1 "Drifter,Infernus,Bebop,Holliday" "Pocket,Apollo,Ivy,Calico"
 //       keeps only the hero bar and the ROUND / CHOICE labels of the screen (rest black) in scripts/fixtures/brawl-screens/
-//   npm run brawl:see -- --screens                        accuracy of round, choice and the eight portraits on those
+//   npm run brawl:see -- --screens                        accuracy of round, choice, the player's own slot and the eight portraits on those
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import sharp from 'sharp';
 import { cardAnchors, decodeIconIndex, enemiesFrom, matchIcon, readDraftMeta, readDraftScreen, readMarkers, readTier, resolveTwin, type RGBImage } from '../src/brawl';
@@ -58,10 +58,10 @@ if (args[0] === '--save-fixture') {
   let ok = 0, n = 0;
   for (const [k, l] of Object.entries<any>(labels)) {
     const m = readDraftMeta(await load(`${SFIX}/${k}.png`), index);
-    const got = [m.round, m.choice, ...m.bar.left.map((h) => h.heroId), ...m.bar.right.map((h) => h.heroId)];
-    const want = [l.round, l.choice, ...l.left, ...l.right];
+    const got = [m.round, m.choice, m.self, ...m.bar.left.map((h) => h.heroId), ...m.bar.right.map((h) => h.heroId)];
+    const want = [l.round, l.choice, l.self ?? 0, ...l.left, ...l.right];
     const hits = got.filter((g, i) => g === want[i]).length; ok += hits; n += want.length;
-    console.log(`${hits === want.length ? 'ok  ' : 'MISS'} ${k.padEnd(6)} round ${m.round}/${l.round} choice ${m.choice}/${l.choice}  ${m.bar.left.map((h) => heroName(h.heroId)).join(',')} vs ${m.bar.right.map((h) => heroName(h.heroId)).join(',')}  scores ${[...m.bar.left, ...m.bar.right].map((h) => h.score.toFixed(2)).join(' ')}`);
+    console.log(`${hits === want.length ? 'ok  ' : 'MISS'} ${k.padEnd(6)} round ${m.round}/${l.round} choice ${m.choice}/${l.choice} self ${heroName(m.self)}  ${m.bar.left.map((h) => heroName(h.heroId)).join(',')} vs ${m.bar.right.map((h) => heroName(h.heroId)).join(',')}  scores ${[...m.bar.left, ...m.bar.right].map((h) => h.score.toFixed(2)).join(' ')}`);
   }
   console.log(`${ok}/${n} labels (${(ok / n * 100).toFixed(1)} %)`);
   if (ok / n < 0.95) process.exit(1);
@@ -84,7 +84,7 @@ if (args[0] === '--save-fixture') {
     const img = await load(f);
     const reads = readDraftScreen(img, index, tierOf);
     const m = readDraftMeta(img, index);
-    console.log(`${f}: round ${m.round || '?'} choice ${m.choice || '?'}  ${m.bar.left.map((h) => heroName(h.heroId)).join(',')} vs ${m.bar.right.map((h) => heroName(h.heroId)).join(',')}`);
+    console.log(`${f}: round ${m.round || '?'} choice ${m.choice || '?'} self ${heroName(m.self)}  ${m.bar.left.map((h) => heroName(h.heroId)).join(',')} vs ${m.bar.right.map((h) => heroName(h.heroId)).join(',')}`);
     console.log('  ', reads.map((r) => `${r.card}: ${r.present ? `${nameOf(r.itemId)} T${r.tier}${r.rare ? ' RARE' : ''}${r.enhanced ? ' ENH' : ''}` : '(none)'} ${r.match.score.toFixed(2)}`).join(' | '));
   }
 }
