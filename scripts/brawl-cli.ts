@@ -27,8 +27,8 @@ const parseOffer = (s: string): Offer => { const enhanced = /\+$/.test(s.trim())
 const list = (s?: string) => (s ? s.split(',').map((x) => x.trim()).filter(Boolean) : []);
 
 if (args.includes('--validate')) {
-  const file = manifest.brawl?.user_file ?? 'validation/brawl-267836488.json'; // the fetch writes manifest.brawl only when it completes
-  if (!existsSync(`public/data/${file}`)) throw new Error('no brawl validation file; run `npm run fetch-data -- --brawl`');
+  const file = manifest.brawl?.user_file;
+  if (!file || !existsSync(`public/data/${file}`)) throw new Error('no brawl validation file; set DEADLOCK_ACCOUNT_ID and run `npm run fetch-data -- --brawl`');
   const data = read(file);
   const heroIds: number[] = opt('hero') ? [heroByName(opt('hero')!).id] : [...new Set<number>(data.matches.map((m: any) => m.hero_id))];
   const rows = [];
