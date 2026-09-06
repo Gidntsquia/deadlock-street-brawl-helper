@@ -3,11 +3,8 @@
 //       --set "Boundless Spirit,Titanic Magazine,Shrink Ray" --set "Improved Spirit+,Bullet Resilience,Restorative Locket"
 //   Items by name (case-insensitive) or id; a trailing "+" marks an enhanced card. Up to three --set arguments.
 //   npm run brawl -- --hero 1 --pool           top items per tier for the hero (sanity check of the base scores)
-//   npm run brawl -- --hero 1 --validate       held-out pick-percentile check against the user's brawl matches
-//   npm run brawl -- --validate                same for every hero that appears in the held-out file
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { adviseDraft, baseScores, roundTiers, type BrawlInput, type Offer } from '../src/brawl';
-import { validateBrawlPicks } from '../src/validation/brawl';
 
 const read = (p: string) => JSON.parse(readFileSync(`public/data/${p}`, 'utf8'));
 const args = process.argv.slice(2);
@@ -15,7 +12,7 @@ const opt = (k: string) => { const i = args.indexOf(`--${k}`); return i >= 0 ? a
 const opts = (k: string) => args.flatMap((a, i) => (a === `--${k}` ? [args[i + 1]] : []));
 const asJson = args.includes('--json');
 
-const items = read('items.json'), heroes = read('heroes.json'), abilities = read('abilities.json'), config = read('brawl-config.json'), manifest = read('manifest.json');
+const items = read('items.json'), heroes = read('heroes.json'), abilities = read('abilities.json'), config = read('brawl-config.json');
 const heroByName = (s: string) => heroes.find((h: any) => h.id === Number(s) || h.name.toLowerCase() === s.trim().toLowerCase());
 const itemByName = (s: string) => items.find((i: any) => i.id === Number(s) || i.name.toLowerCase() === s.trim().toLowerCase());
 const loadInput = (heroId: number): BrawlInput => {
@@ -25,29 +22,6 @@ const loadInput = (heroId: number): BrawlInput => {
 };
 const parseOffer = (s: string): Offer => { const enhanced = /\+$/.test(s.trim()); const it = itemByName(s.trim().replace(/\+$/, '')); if (!it) throw new Error(`unknown item "${s}"`); return { itemId: it.id, enhanced }; };
 const list = (s?: string) => (s ? s.split(',').map((x) => x.trim()).filter(Boolean) : []);
-
-if (args.includes('--validate')) {
-  const file = manifest.brawl?.user_file;
-  if (!file || !existsSync(`public/data/${file}`)) throw new Error('no brawl validation file; set DEADLOCK_ACCOUNT_ID and run `npm run fetch-data -- --brawl`');
-  const data = read(file);
-  const heroIds: number[] = opt('hero') ? [heroByName(opt('hero')!).id] : [...new Set<number>(data.matches.map((m: any) => m.hero_id))];
-  const rows = [];
-  for (const id of heroIds) {
-    if (!existsSync(`public/data/analytics/brawl/${id}.json`)) continue;
-    const input = loadInput(id);
-    const v = validateBrawlPicks(input, data);
-    rows.push({ hero: input.hero.name, matches: v.matches, picks: v.picks.length, meanPercentile: v.meanPercentile, popOnly: v.meanPopPercentile, topThird: v.topThird });
-    if (!asJson && opt('hero')) for (const p of v.picks) console.log(`  ${String(p.match_id).padEnd(10)} r${p.round} ${p.item.name.padEnd(24)} T${p.item.item_tier} pct ${(p.percentile * 100).toFixed(0).padStart(3)}  pop-only ${(p.popPercentile * 100).toFixed(0).padStart(3)}  pool ${p.poolSize}`);
-  }
-  if (asJson) console.log(JSON.stringify(rows));
-  else {
-    console.log('# Street Brawl held-out pick percentile (0.5 = random, ~0.75 = always the engine\'s best of 3)');
-    for (const r of rows) console.log(`  ${r.hero.padEnd(12)} ${String(r.matches).padStart(3)} matches ${String(r.picks).padStart(4)} picks  engine ${(r.meanPercentile * 100).toFixed(0)}%  popularity-only ${(r.popOnly * 100).toFixed(0)}%  top-third ${(r.topThird * 100).toFixed(0)}%`);
-    const all = rows.reduce((a, r) => ({ n: a.n + r.picks, s: a.s + r.meanPercentile * r.picks, p: a.p + r.popOnly * r.picks }), { n: 0, s: 0, p: 0 });
-    if (all.n) console.log(`  overall      ${all.n} picks  engine ${(all.s / all.n * 100).toFixed(0)}%  popularity-only ${(all.p / all.n * 100).toFixed(0)}%`);
-  }
-  process.exit(0);
-}
 
 const hero = heroByName(opt('hero') ?? '1');
 if (!hero) throw new Error(`unknown hero ${opt('hero')}`);
@@ -68,7 +42,7 @@ const round = Number(opt('round') ?? 1);
 const owned = list(opt('owned')).map((s) => { const it = itemByName(s); if (!it) throw new Error(`unknown item "${s}"`); return it.id as number; });
 const enemies = list(opt('enemies')).map((e) => { const h = heroByName(e); if (!h) throw new Error(`unknown hero "${e}"`); return h.id as number; });
 const sets = opts('set').map((s) => list(s).map(parseOffer));
-if (!sets.length) throw new Error('give at least one --set "A,B,C" (or --pool / --validate)');
+if (!sets.length) throw new Error('give at least one --set "A,B,C" (or --pool)');
 const advice = adviseDraft(input, { round, owned, enemies, sets });
 if (asJson) { console.log(JSON.stringify({ picks: advice.picks.map((p) => p.item.id), reroll: advice.reroll?.set ?? null, sets: advice.sets.map((s) => s.map((r) => [r.item.id, +r.score.toFixed(3)])) })); process.exit(0); }
 const tiers = roundTiers(input, round);
