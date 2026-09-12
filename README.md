@@ -57,8 +57,12 @@ npm run brawl:see -- --fixtures          # Card recogniser accuracy on the saved
 
 ## Documentation 📚
 
-- [Street Brawl plan](docs/street-brawl-plan.md) — the mode's rules, the scoring engine, and how the screen reader identifies cards
-- [Tier list](docs/tier-list.md) — how the S/A/B/C grades are worked out, and rebuilding them on their own
+- [Street Brawl Advisor](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Street-Brawl-Advisor) — the mode's rules, the card scoring function, and the re-roll maths
+- [Screen Reader](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Screen-Reader) — how cards, tiers, labels and your picks are recognised
+- [Overlay](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Overlay) — screen capture and the always-on-top window
+- [Tier List](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Tier-List) — how the S/A/B/C grades are worked out
+- [Data Pipeline](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Data-Pipeline) — what `fetch-data` downloads, and the 30-day window
+- [Development](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Development) — code layout, scripts, checks
 
 ## License 📄
 
