@@ -13,11 +13,13 @@
 //   public/data/img/{items,heroes,abilities}/  webp images so the app needs no network at all
 //   public/data/brawl-config.json          Street Brawl mode constants (round budgets, draft tiers/weights)
 //   public/data/analytics/brawl/<hero_id>.json  Street Brawl item-stats, pair stats, and item-stats vs every enemy hero
+//   public/data/analytics/brawl/tier-list.json  Street Brawl hero win/pick totals + item totals summed over every hero
 //   public/data/manifest.json              timestamps + counts + validation_sets (who was selected and why)
 //
 // Flags
 //   --analytics-only            refresh analytics/* only
 //   --brawl                     refresh the Street Brawl snapshot only
+//   --brawl-tierlist            rebuild analytics/brawl/tier-list.json only (one request + the files already on disk)
 //   --validation-only           re-select players and refetch validation/* for every hero
 //   --heroes 1,31               (with --validation-only or --analytics-only) only these hero ids; with --validation-only their entries are merged into manifest.validation_sets
 //   --select-only               (with --validation-only) run the selection, print the table per hero, write nothing
@@ -25,7 +27,6 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const API = 'https://api.deadlock-api.com';
-import { detectStyles, usageOf, STYLE } from './styles.mjs';
 const ASSETS = 'https://assets.deadlock-api.com';
 const OUT = path.resolve('public/data');
 // Held-out validation sets: for every active hero, VALIDATION_PLAYERS_PER_HERO top players chosen
@@ -64,6 +65,9 @@ const TOP_BADGE = 90;
 const ANALYTICS_ONLY = process.argv.includes('--analytics-only');
 // `--brawl` refreshes only the Street Brawl snapshot (brawl-config.json, analytics/brawl/*).
 const BRAWL_ONLY = process.argv.includes('--brawl');
+// `--brawl-tierlist` rebuilds analytics/brawl/tier-list.json alone: one hero-stats call plus a sum over
+// the per-hero files already on disk, instead of the ~1400 requests a full --brawl run costs.
+const BRAWL_TIERLIST_ONLY = process.argv.includes('--brawl-tierlist');
 // A 429 on match metadata can ask for an hour-long retry-after; wait at most this long, then throw so the
 // caller skips that match and moves on to the next one (there are more candidates than the target).
 const MAX_WAIT_MS = 45 * 1000;
@@ -189,6 +193,9 @@ async function fetchPopulation(heroId, extra = '') {
 // own item + ability-order population (include the style's seed item); the main style is the population
 // with every alternative anchor excluded, so each build is generated from games played its way.
 async function fetchStyles(hero, topQ, top, shopIds) {
+  // loaded here, not at the top: styles.mjs belongs to the build generator this app was split out of,
+  // so the Street Brawl paths must still run when it is absent
+  const { detectStyles, usageOf, STYLE } = await import('./styles.mjs');
   const { n: N, u } = usageOf(top.item_stats.filter((s) => shopIds.has(s.item_id)));
   const cands = [...u].filter(([, x]) => x >= STYLE.candidateShare[0] && x <= STYLE.candidateShare[1]).map(([id]) => id);
   const conditional = {};
@@ -359,9 +366,48 @@ async function fetchBrawl(heroes, manifest) {
     await save(`analytics/brawl/${h.id}.json`, { hero_id: h.id, game_mode: BRAWL_GAME_MODE, item_stats, permutation_stats, vs });
   }
   manifest.brawl = { fetched_at: new Date().toISOString(), game_mode: BRAWL_GAME_MODE, heroes: heroes.length };
+  await buildTierList(heroes, manifest);
+}
+
+// Tier-list snapshot: one small file the app can load on its own, instead of the 38 per-hero files.
+// Heroes come straight from hero-stats; items are the per-hero item_stats summed over every hero, so
+// an item's win rate is its rate across the whole mode and its usage is the share of hero-games it appeared in.
+async function buildTierList(heroes, manifest) {
+  console.log('brawl tier list: hero-stats + item totals');
+  const rows = await getJson(`${API}/v1/analytics/hero-stats?game_mode=${BRAWL_GAME_MODE}&min_unix_timestamp=${MIN_TS}`);
+  const active = new Set(heroes.map((h) => h.id));
+  const heroStats = rows.filter((r) => active.has(r.hero_id)).map((r) => ({ hero_id: r.hero_id, wins: r.wins, losses: r.losses, matches: r.matches }));
+  const totals = new Map();
+  let heroGames = 0;
+  for (const h of heroes) {
+    let file;
+    try { file = JSON.parse(await readFile(path.join(OUT, `analytics/brawl/${h.id}.json`), 'utf8')); }
+    catch { console.warn(`  no brawl snapshot for ${h.name}; skipped`); continue; }
+    heroGames += heroStats.find((s) => s.hero_id === h.id)?.matches ?? 0;
+    for (const s of file.item_stats) {
+      const t = totals.get(s.item_id) ?? { item_id: s.item_id, wins: 0, losses: 0, matches: 0, players: 0 };
+      t.wins += s.wins; t.losses += s.losses; t.matches += s.matches; t.players += s.players;
+      totals.set(s.item_id, t);
+    }
+  }
+  const items = [...totals.values()].sort((a, b) => b.matches - a.matches);
+  await save('analytics/brawl/tier-list.json', {
+    fetched_at: new Date().toISOString(), game_mode: BRAWL_GAME_MODE, min_unix_timestamp: MIN_TS,
+    window_days: manifest.window_days ?? WINDOW_DAYS,
+    hero_games: heroGames, heroes: heroStats, items,
+  });
+  manifest.brawl_tier_list = { fetched_at: new Date().toISOString(), heroes: heroStats.length, items: items.length };
 }
 
 async function main() {
+  if (BRAWL_TIERLIST_ONLY) {
+    const manifest = JSON.parse(await readFile(path.join(OUT, 'manifest.json'), 'utf8'));
+    const heroes = JSON.parse(await readFile(path.join(OUT, 'heroes.json'), 'utf8'));
+    MIN_TS = manifest.min_unix_timestamp; // same window as the per-hero files it sums
+    await buildTierList(heroes, manifest);
+    await save('manifest.json', manifest);
+    return;
+  }
   if (BRAWL_ONLY) {
     const manifest = JSON.parse(await readFile(path.join(OUT, 'manifest.json'), 'utf8'));
     const heroes = JSON.parse(await readFile(path.join(OUT, 'heroes.json'), 'utf8'));

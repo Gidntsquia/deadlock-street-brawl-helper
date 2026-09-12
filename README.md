@@ -59,6 +59,18 @@ npm run icon-index    # Rebuild public/data/brawl-icons.json after fetching item
   windows.
 - No backend, everything runs in the browser.
 
+### Street Brawl Tier List 🏆
+
+The second tab grades every hero and every draftable item S, A, B or C from
+the last 30 days of Street Brawl. The grade mixes two numbers, both shown
+under each entry: win rate counts for 70% and usage counts for 30%. Items are
+graded against the other items of their own draft tier, since the tier decides
+which round a card can be offered in.
+
+Rebuild that snapshot on its own with `npm run fetch-data -- --brawl-tierlist`
+— one request plus a sum over the per-hero files already on disk, rather than
+the full `--brawl` refresh.
+
 ## Documentation 📚
 
 More background in [docs/street-brawl-plan.md](docs/street-brawl-plan.md) — Brawl's rules, the
