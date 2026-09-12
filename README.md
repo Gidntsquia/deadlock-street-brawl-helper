@@ -1,81 +1,66 @@
 # Deadlock Street Brawl Helper 🥊
 
 <p align="center">
-  <img alt="The Street Brawl advisor reading a live draft: three ranked cards with the enhanced Reactive Barrier marked TAKE" src="docs/brawl-overlay.png">
+  <img alt="The draft advisor ranking the three cards of a Street Brawl set, with an enhanced Reactive Barrier marked TAKE" src="docs/brawl-overlay.png">
 </p>
 
-A draft advisor for [Deadlock](https://store.steampowered.com/app/1422450/Deadlock/)'s
-Street Brawl mode. It reads the draft screen while you play, identifies the
-three cards being offered, and ranks them. It also tells you whether
-re-rolling is worth it. The advice shows up in a small window on top of the
-game.
+A draft advisor for [Deadlock](https://store.steampowered.com/app/1422450/Deadlock/)'s Street Brawl
+mode. It reads the draft screen while you play, ranks the three cards you're being offered, and tells
+you whether the set is worth a re-roll. The advice shows up in a small window on top of the game.
+Scores come from 30 days of Street Brawl matches from [deadlock-api.com](https://deadlock-api.com).
 
 ## Quickstart 🚀
 
-Step-by-step, no experience required.
+Requires [Node.js](https://nodejs.org) 20 or newer, and Chrome or Edge. The match data is already in
+the repo.
 
-1. **Install Node.js.** Go to [nodejs.org](https://nodejs.org), download the
-   version marked "LTS", and install it like any other program.
-2. **Open a terminal.**
-   - Windows: press the Start key, type `Terminal`, press Enter.
-   - Mac: press Cmd+Space, type `Terminal`, press Enter.
-3. **Copy-paste these lines into the terminal one at a time**, pressing Enter
-   after each and waiting for it to finish before the next one:
-   ```
-   git clone https://github.com/Gidntsquia/deadlock-street-brawl-helper
-   cd deadlock-street-brawl-helper
-   npm install
-   npm run fetch-data
-   npm run dev
-   ```
-   (`npm install` sets things up, `fetch-data` downloads the game's card
-   data, and `dev` starts the app — leave this last one running.)
-4. **Open your browser** and go to
-   [http://localhost:5173](http://localhost:5173).
-5. **Set Deadlock to borderless windowed mode.** In Deadlock's settings,
-   under Video, set Display Mode to "Borderless Windowed". This is required
-   — the overlay can't sit on top of the game in fullscreen mode.
-6. **Click "Capture game screen + overlay"** in the app, then pick the
-   Deadlock window from the list that pops up.
-7. Play a Street Brawl draft — the advice window will appear on top of the
-   game automatically.
+```
+git clone https://github.com/Gidntsquia/deadlock-street-brawl-helper
+cd deadlock-street-brawl-helper
+npm install
+npm run dev   # Open http://localhost:5173 and leave this running
+```
 
-Only works in Chrome or Edge (not Firefox — it can't do always-on-top
-windows). To stop the app later, go back to the terminal and press Ctrl+C.
+Then, with Deadlock open:
 
-Other commands (optional, run from a terminal in the project folder):
+1. In Deadlock's settings, under Video, set Display Mode to **Borderless Windowed**. The overlay
+   can't sit on top of the game in fullscreen.
+2. In the app, click **Capture game screen + overlay** and pick the Deadlock window from the list.
+3. Play a Street Brawl draft. The advice window follows the draft on its own.
+
+IMPORTANT: Firefox can't open always-on-top windows, so this only works in Chrome or Edge. Press
+Ctrl+C in the terminal to stop the app.
+
+Other commands:
 
 ```
 npm run brawl -- --hero 1 --round 2 --owned "Extra Charge" --enemies "Lash,Seven" \
-    --set "Improved Spirit,Enchanter's Emblem,Swift Striker"   # Draft advice without the screen reader
-npm run icon-index    # Rebuild public/data/brawl-icons.json after fetching item images
+    --set "Improved Spirit,Enchanter's Emblem,Swift Striker"   # Advice without the screen reader
+npm run fetch-data                       # Refresh the 30-day snapshot (~1400 requests, slow)
+npm run fetch-data -- --brawl-tierlist   # Rebuild the tier list from the files already on disk
+npm run brawl:see -- --fixtures          # Card recogniser accuracy on the saved screenshots
 ```
 
 ## Features 🔬
 
-- The cards, round number, enemy heroes, and the items you've already picked
-  are all read from the screen. Nothing is sent to the game.
-- The overlay works in Chrome and Edge. Firefox can't do always-on-top
-  windows.
-- No backend, everything runs in the browser.
-
-### Street Brawl Tier List 🏆
-
-The second tab grades every hero and every draftable item S, A, B or C from
-the last 30 days of Street Brawl. The grade mixes two numbers, both shown
-under each entry: win rate counts for 70% and usage counts for 30%. Items are
-graded against the other items of their own draft tier, since the tier decides
-which round a card can be offered in.
-
-Rebuild that snapshot on its own with `npm run fetch-data -- --brawl-tierlist`
-— one request plus a sum over the per-hero files already on disk, rather than
-the full `--brawl` refresh.
+- The three cards, the round, the enemy team, and the items you've already picked are all read from
+  the screen. Nothing is sent to the game.
+- Cards are ranked for the hero you're playing, from how often the item is picked in Street Brawl,
+  its win rate there, and how well it scales that hero's abilities.
+- Re-roll advice compares the best card in front of you with what a fresh set is expected to offer.
+  A re-rolled rare or enhanced slot stays rare or enhanced, which is part of the call.
+- The enemy heroes read off the scoreboard move the ranking toward items that do well against them.
+- The legendary items that only appear in Street Brawl are ranked alongside everything else.
+- A second tab grades every hero and every draftable item S, A, B or C from the last 30 days.
+- If the capture misses a card you can pick the three yourself, and the ranking updates.
+- No backend. Everything runs in the browser off the snapshot in the repo.
 
 ## Documentation 📚
 
-More background in [docs/street-brawl-plan.md](docs/street-brawl-plan.md) — Brawl's rules, the
-card scoring and re-roll math, and how the screen reader identifies cards.
+- [Street Brawl plan](docs/street-brawl-plan.md) — the mode's rules, the scoring engine, and how the screen reader identifies cards
+- [Tier list](docs/tier-list.md) — how the S/A/B/C grades are worked out, and rebuilding them on their own
 
 ## License 📄
 
-MIT — see [LICENSE](LICENSE).
+[MIT](LICENSE). Match data and item art come from [deadlock-api.com](https://deadlock-api.com);
+Deadlock is Valve's.
