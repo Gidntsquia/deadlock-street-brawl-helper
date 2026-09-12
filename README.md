@@ -8,10 +8,7 @@ A draft advisor for [Deadlock](https://store.steampowered.com/app/1422450/Deadlo
 Street Brawl mode. It reads the draft screen while you play, identifies the
 three cards being offered, and ranks them. It also tells you whether
 re-rolling is worth it. The advice shows up in a small window on top of the
-game, or on your phone.
-
-This was split out of [deadlock-optimal-build-finder](https://github.com/Gidntsquia/deadlock-optimal-build-finder),
-which covers regular (non-Brawl) item builds.
+game.
 
 ## Quickstart 🚀
 
@@ -27,8 +24,7 @@ npm run dev          # Open http://localhost:5173
 
 Click **Capture game screen + overlay** and select the Deadlock window.
 IMPORTANT: the game has to be in borderless windowed mode for the overlay to
-show on top of it. If you want to use exclusive fullscreen, click **Phone
-display** and scan the QR code with your phone instead.
+show on top of it.
 
 Other commands:
 
@@ -43,16 +39,13 @@ npm run icon-index    # Rebuild public/data/brawl-icons.json after fetching item
 - The cards, round number, enemy heroes, and the items you've already picked
   are all read from the screen. Nothing is sent to the game.
 - The overlay works in Chrome and Edge. Firefox can't do always-on-top
-  windows, so use the phone display there.
+  windows.
 - No backend, everything runs in the browser.
 
 ## Documentation 📚
 
-More background in the original project's wiki:
-
-- [Street Brawl Advisor](https://github.com/Gidntsquia/deadlock-optimal-build-finder/wiki/Street-Brawl-Advisor) — card scoring, re-roll math, the CLI
-- [Screen Reader](https://github.com/Gidntsquia/deadlock-optimal-build-finder/wiki/Screen-Reader) — how cards, round numbers, hero portraits and picks are recognized
-- [Overlay and Phone Display](https://github.com/Gidntsquia/deadlock-optimal-build-finder/wiki/Overlay-and-Phone-Display) — screen capture, Picture-in-Picture, ntfy.sh
+More background in [docs/street-brawl-plan.md](docs/street-brawl-plan.md) — Brawl's rules, the
+card scoring and re-roll math, and how the screen reader identifies cards.
 
 ## License 📄
 

@@ -150,11 +150,6 @@ footer { padding: 16px; font-size: 11px; opacity: .55; text-align: center; }
 .brawl label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; }
 .brawl select, .brawl input[type=number] { min-height: 40px; background: rgba(255,255,255,.08); color: var(--navy-ink); border: 1px solid rgba(255,255,255,.18); border-radius: 8px; padding: 4px 8px; font: inherit; max-width: 100%; }
 .brawl input[type=number] { width: 60px; }
-.brawl-phone { display: inline-flex; gap: 12px; align-items: center; flex-wrap: wrap; max-width: 560px; }
-.brawl-phone img { border-radius: 8px; }
-.brawl-ntfy { display: block; margin-top: 6px; }
-.brawl-ntfy input { width: 220px; font-size: .9em; }
-.brawl-phone code { font-size: 1.2em; letter-spacing: .08em; font-weight: 800; color: var(--teal); }
 .btn { display: inline-flex; align-items: center; min-height: 40px; text-decoration: none; color: inherit; padding: 0 14px; border-radius: 8px; background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.18); font-weight: 800; }
 .btn.primary { background: var(--teal); color: var(--teal-ink); border-color: transparent; }
 .btn:disabled { opacity: .5; }

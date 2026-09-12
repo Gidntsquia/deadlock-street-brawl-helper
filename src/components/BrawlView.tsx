@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import QRCode from 'qrcode';
 import { createPortal } from 'react-dom';
 import type { Ability, Hero, Item } from '../types';
 import { j, img } from '../data/load';
@@ -7,12 +6,7 @@ import { adviseDraft, enemiesFrom, roundTiers, type BrawlAnalytics, type BrawlCo
 import type { WorkerIn, WorkerOut } from '../brawl/worker';
 import { ItemTile } from './ItemTile';
 
-const PHONE_KEY = 'brawl-phone'; // localStorage: pairing code while the phone display is on
-const NTFY_KEY = 'brawl-ntfy'; // localStorage: alternative ntfy server (tests, self-hosting)
-const NTFY = 'https://ntfy.sh';
-const newCode = () => Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => 'abcdefghjkmnpqrstuvwxyz23456789'[b % 31]).join('');
 const CAPTURE_MS = 250; // pause between frames; the worker paces the loop (see worker.ts) so it keeps running while the tab is hidden
-const NTFY_DAILY_LIMIT = 250; // ntfy.sh free tier: messages per IP per day
 const ENEMY_SLOTS = 4;
 
 interface Props { hero: Hero; heroes: Hero[]; items: Item[]; abilities: Ability[]; onHero: (id: number) => void }
@@ -32,10 +26,6 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
   const [status, setStatus] = useState('');
   const [pip, setPip] = useState<Window | null>(null);
   const [took_, setTook] = useState<string>('');
-  const [phone, setPhone] = useState<string>(() => { try { return localStorage.getItem(PHONE_KEY) ?? ''; } catch { return ''; } });
-  const [phoneQr, setPhoneQr] = useState('');
-  const [phoneErr, setPhoneErr] = useState('');
-  const [ntfy, setNtfyState] = useState<string>(() => { try { return (localStorage.getItem(NTFY_KEY) ?? NTFY).replace(/\/$/, ''); } catch { return NTFY; } });
   const workerRef = useRef<Worker | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -64,29 +54,6 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
   const reroll = advice?.reroll && rerolls > 0 ? advice.reroll : null;
   const tiers = input ? roundTiers(input, round) : [];
 
-  // phone display: publish the advice to a random ntfy.sh topic; the phone page (phone.html) subscribes to it, so no PC network setup is needed
-  const setNtfy = (s: string) => { const v = s.trim().replace(/\/$/, '') || NTFY; setNtfyState(v); try { if (v === NTFY) localStorage.removeItem(NTFY_KEY); else localStorage.setItem(NTFY_KEY, v); } catch { /* private mode */ } };
-  const phoneUrl = phone ? `${new URL('phone.html', location.href).href}#t=${phone}${ntfy !== NTFY ? `&s=${ntfy}` : ''}` : '';
-  useEffect(() => { try { if (phone) localStorage.setItem(PHONE_KEY, phone); else localStorage.removeItem(PHONE_KEY); } catch { /* private mode */ } }, [phone]);
-  useEffect(() => { if (phoneUrl) QRCode.toDataURL(phoneUrl, { margin: 1, width: 160, color: { dark: '#14181f', light: '#e8e2d0' } }).then(setPhoneQr); }, [phoneUrl]);
-  const phoneState = useMemo(() => JSON.stringify({
-    hero: hero.name, round, choice, took: took_, ownedCount: owned.length, status: capture === 'on' ? 'Waiting for the draft screen…' : 'Start the capture on the PC.',
-    cards: ranked.map((r) => ({ name: r.item.name, enhanced: r.enhanced, score: r.score, usage: r.usage, winRate: r.winRate, why: r.why, icon: img(r.item.shop_image_webp ?? r.item.image_webp) })),
-    reroll: reroll ? { currentBest: reroll.currentBest, expectedBest: reroll.expectedBest, holdValue: reroll.holdValue, tier: reroll.pool.tier } : null,
-  }), [hero.name, round, choice, took_, owned.length, capture, ranked, reroll]);
-  const phoneSent = useRef(0);
-  useEffect(() => {
-    if (!phone) return;
-    // ntfy.sh allows NTFY_DAILY_LIMIT messages per IP per day, so only states worth showing are sent: the empty
-    // moment between a pick and the next set (while capturing) is skipped; the next set carries the "took" line
-    if (capture === 'on' && !ranked.length && phoneSent.current > 0) return;
-    const id = setTimeout(() => fetch(`${ntfy}/brawl-${phone}`, { method: 'POST', body: phoneState }).then((r) => {
-      phoneSent.current++;
-      setPhoneErr(r.ok ? '' : r.status === 429 ? `${ntfy} refused the message: the free limit (${NTFY_DAILY_LIMIT} messages per day per IP) is used up; it refills over the day, or point the app at another ntfy server below` : `${ntfy} answered ${r.status}`);
-    }).catch(() => setPhoneErr(`cannot reach ${ntfy}`)), 300);
-    return () => clearTimeout(id);
-  }, [phone, ntfy, phoneState]); // eslint-disable-line react-hooks/exhaustive-deps
-
   const stopCapture = useCallback(() => {
     streamRef.current?.getTracks().forEach((t) => t.stop()); streamRef.current = null;
     workerRef.current?.terminate(); workerRef.current = null;
@@ -101,9 +68,9 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
     if (dpip) w = await dpip.requestWindow({ width: 460, height: 320 });
     else {
       const popup = window.open('', 'brawl-overlay', 'popup,width=460,height=320');
-      if (!popup) { setStatus('the browser blocked the overlay window; allow pop-ups for this site, or use the phone display'); return; }
+      if (!popup) { setStatus('the browser blocked the overlay window; allow pop-ups for this site'); return; }
       w = popup; w.document.title = 'Brawl advice';
-      setStatus('overlay opened as a window (this browser has no always-on-top web window: put it on a second monitor, or use the phone display)');
+      setStatus('overlay opened as a window (this browser has no always-on-top web window: put it on a second monitor)');
     }
     for (const s of Array.from(document.styleSheets)) { try { const el = document.createElement('style'); el.textContent = Array.from(s.cssRules).map((r) => r.cssText).join('\n'); w.document.head.appendChild(el); } catch { /* cross-origin sheet */ } }
     w.document.body.className = 'pip-body';
@@ -111,11 +78,10 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
     setPip(w);
     return w;
   }, []);
-  /** One click: open the always-on-top overlay (needs the click's user activation) and then start the screen capture. */
+  /** One click: start the screen capture (needs the click's user activation) and then open the always-on-top overlay. */
   const startCapture = async () => {
     try {
       setCapture('starting'); setStatus('loading icon index…');
-      if (!pip && hasDpip()) { try { await openPip(); } catch { /* overlay is optional */ } } // without Document PiP the window is not on top, so it is opened only on request
       const index = await j<IconIndex>('brawl-icons.json');
       const w = new Worker(new URL('../brawl/worker.ts', import.meta.url), { type: 'module' });
       const tiers: Record<number, number> = {}; for (const i of items) tiers[i.id] = i.item_tier;
@@ -126,6 +92,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
       stream.getVideoTracks()[0].addEventListener('ended', stopCapture);
       const v = videoRef.current!; v.srcObject = stream; await v.play();
       setCapture('on'); setStatus('watching for the draft screen');
+      if (!pip && hasDpip()) { try { await openPip(); } catch { /* overlay is optional */ } } // getDisplayMedia already consumed this click's activation, so requestWindow may need a second click here; that's fine since capture already started
     } catch (e) { stopCapture(); setStatus(`capture failed: ${(e as Error).message}`); }
   };
   useEffect(() => () => stopCapture(), [stopCapture]);
@@ -229,15 +196,6 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
           <button className="btn" onClick={pip ? () => pip.close() : openPip}>{pip ? 'Close overlay' : hasDpip() ? 'Always-on-top overlay' : 'Advice window'}</button>
           <span className="muted">{status}</span>
         </div>
-        <div className="row">
-          <button className="btn" onClick={() => setPhone(phone ? '' : newCode())}>{phone ? 'Phone display: on' : 'Phone display'}</button>
-          {phone && <span className="brawl-phone">
-            {phoneQr && phoneUrl && <img src={phoneQr} alt="QR code for the phone page" width={160} height={160} />}
-            <span className="muted">Scan with the phone, or open <a className="btn" href={phoneUrl}>{new URL('phone.html', location.href).href}</a> on it and type the code <code>{phone}</code>. {phoneErr}
-              <label className="brawl-ntfy">ntfy server <input type="url" defaultValue={ntfy} placeholder={NTFY} onBlur={(e) => setNtfy(e.target.value)} /></label>
-            </span>
-          </span>}
-        </div>
       </div>
 
       {pip ? createPortal(<div className="pip"><h2>{hero.name} · round {round}, choice {choice}</h2>{advicePanel}</div>, pip.document.body) : advicePanel}
@@ -263,7 +221,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
         <div className="chips">{owned.map((id, k) => <button key={k} className="chip" onClick={() => setOwned((o) => o.filter((_, i) => i !== k))}>{byId.get(id)?.name}</button>)}</div>
         <div className="row"><button className="btn" onClick={() => { setOwned([]); setCards([]); setTook(''); offeredRef.current = new Set(); setRound(1); setChoice(1); setEnemies(Array(ENEMY_SLOTS).fill(0)); }}>New game</button></div>
       </div>
-      <div className="muted brawl-foot"><img src={img(hero.images.small)} alt="" /> Layout anchors are for 2560×1440; other 16:9 sizes scale. The capture only reads pixels. Run Deadlock in borderless windowed mode so the overlay stays on top of it (Chrome/Edge), or turn on the phone display for exclusive fullscreen or Firefox.</div>
+      <div className="muted brawl-foot"><img src={img(hero.images.small)} alt="" /> Layout anchors are for 2560×1440; other 16:9 sizes scale. The capture only reads pixels. Run Deadlock in borderless windowed mode so the overlay stays on top of it (Chrome/Edge).</div>
     </div>
   );
 }
