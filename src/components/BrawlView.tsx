@@ -13,12 +13,13 @@ interface Props { hero: Hero; heroes: Hero[]; items: Item[]; abilities: Ability[
 
 /** Street Brawl draft advisor: the three cards on screen (read from a screen capture or typed in), ranked for this hero. */
 export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
-  const [analytics, setAnalytics] = useState<BrawlAnalytics | null>(null);
+  const [loaded, setLoaded] = useState<{ heroId: number; analytics: BrawlAnalytics } | null>(null);
   const [config, setConfig] = useState<BrawlConfig | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [round, setRound] = useState(1);
   const [choice, setChoice] = useState(1);
-  const [rerolls, setRerolls] = useState(1);
+  const [rerollsLeft, setRerollsLeft] = useState<number | null>(null); // null: however many the round starts with
+  const [rerollsRound, setRerollsRound] = useState(1);
   const [enemies, setEnemies] = useState<number[]>(Array(ENEMY_SLOTS).fill(0));
   const [owned, setOwned] = useState<number[]>([]);
   const [cards, setCards] = useState<Offer[]>([]);
@@ -37,8 +38,12 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
   useEffect(() => { cardsRef.current = cards; }, [cards]);
 
   useEffect(() => { j<BrawlConfig>('brawl-config.json').then(setConfig).catch((e) => setError(String(e))); }, []);
-  useEffect(() => { setAnalytics(null); j<BrawlAnalytics>(`analytics/brawl/${hero.id}.json`).then(setAnalytics).catch((e) => setError(String(e))); }, [hero.id]);
-  useEffect(() => { if (config) setRerolls(config.item_draft_rerolls_per_round[round - 1] ?? 1); }, [round, config]);
+  useEffect(() => { j<BrawlAnalytics>(`analytics/brawl/${hero.id}.json`).then((a) => setLoaded({ heroId: hero.id, analytics: a })).catch((e) => setError(String(e))); }, [hero.id]);
+  // tagged with the hero it was fetched for, so switching hero shows the loader again instead of the old hero's numbers
+  const analytics = loaded?.heroId === hero.id ? loaded.analytics : null;
+  // a new round refills the re-rolls; until then the count is whatever the player has spent it down to
+  if (rerollsRound !== round) { setRerollsRound(round); setRerollsLeft(null); }
+  const rerolls = rerollsLeft ?? config?.item_draft_rerolls_per_round[round - 1] ?? 1;
 
   const input: BrawlInput | null = useMemo(() => (analytics && config ? { hero, abilities, items, analytics, config } : null), [hero, abilities, items, analytics, config]);
   const byId = useMemo(() => new Map(items.map((i) => [i.id, i])), [items]);
@@ -151,7 +156,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
     setOwned((o) => [...o, r.item.id]); setCards([]);
     if (choice < 3) setChoice(choice + 1); else if (round < 5) { setRound(round + 1); setChoice(1); }
   };
-  const rerolled = () => { setRerolls((n) => Math.max(0, n - 1)); setCards([]); };
+  const rerolled = () => { setRerollsLeft(Math.max(0, rerolls - 1)); setCards([]); };
   const setCard = (k: number, id: number, enhanced: boolean) => setCards((c) => { const n = [...c]; while (n.length < 3) n.push({ itemId: 0 }); n[k] = { itemId: id, enhanced }; return n.filter((o) => o.itemId).slice(0, 3); });
 
   if (error) return <div className="error">{error}</div>;
@@ -188,7 +193,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
         <div className="row">
           <label>Round <select value={round} onChange={(e) => { setRound(Number(e.target.value)); setChoice(1); setCards([]); }}>{[1, 2, 3, 4, 5].map((r) => <option key={r} value={r}>{r} ({input.config.gold_per_round[r - 1]} souls)</option>)}</select></label>
           <label>Choice <select value={choice} onChange={(e) => { setChoice(Number(e.target.value)); setCards([]); }}>{[1, 2, 3].map((c) => <option key={c} value={c}>{c} of 3{tiers[c - 1] ? ` · tier ${tiers[c - 1].normal} (rare ${tiers[c - 1].rare})` : ''}</option>)}</select></label>
-          <label>Re-rolls left <input type="number" min={0} max={3} value={rerolls} onChange={(e) => setRerolls(Number(e.target.value))} /></label>
+          <label>Re-rolls left <input type="number" min={0} max={3} value={rerolls} onChange={(e) => setRerollsLeft(Number(e.target.value))} /></label>
         </div>
         <div className="row">
           {enemies.map((id, k) => (
@@ -224,12 +229,14 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
       <div className="panel">
         <h2>{hero.name}'s top items</h2>
         <div className="muted">Best pick in each tier, relative to the other items of that tier.</div>
-        {topItems.map(({ tier, items }) => (
-          <div key={tier} className="top-items-tier">
-            <h3>Tier {tier}</h3>
-            <div className="tiles">{items.map((b, k) => <ItemTile key={b.item.id} item={b.item} order={k + 1} />)}</div>
-          </div>
-        ))}
+        <div className="top-items">
+          {topItems.map(({ tier, items }) => (
+            <div key={tier} className="top-items-tier">
+              <h3>Tier {tier}</h3>
+              <div className="tiles">{items.map((b, k) => <ItemTile key={b.item.id} item={b.item} order={k + 1} />)}</div>
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className="panel">

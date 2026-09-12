@@ -8,7 +8,7 @@
 //   npm run brawl:see -- --screens                        accuracy of round, choice, the player's own slot and the eight portraits on those
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import sharp from 'sharp';
-import { cardAnchors, decodeIconIndex, enemiesFrom, matchIcon, readDraftMeta, readDraftScreen, readMarkers, readTier, resolveTwin, type RGBImage } from '../src/brawl';
+import { cardAnchors, decodeIconIndex, matchIcon, readDraftMeta, readDraftScreen, readMarkers, readTier, resolveTwin, type RGBImage } from '../src/brawl';
 
 const FIX = 'scripts/fixtures/brawl-cards';
 const SFIX = 'scripts/fixtures/brawl-screens';

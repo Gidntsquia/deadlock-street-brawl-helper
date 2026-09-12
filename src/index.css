@@ -100,6 +100,7 @@ h1, h2, h3 { margin: 0; font-weight: 800; }
 .panel-table td { padding: 2px 6px 2px 0; border-top: 1px solid rgba(128,128,128,.2); white-space: nowrap; }
 .panel-table th:not(:first-child), .panel-table td:not(:first-child) { text-align: right; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.top-items { display: grid; gap: 0 16px; }
 .top-items-tier h3 { font-size: 12px; opacity: .7; margin: 10px 0 2px; }
 .top-items-tier .tiles { grid-template-columns: repeat(3, 1fr); max-width: 300px; padding: 0; }
 .chip { font-size: 12px; background: rgba(255,255,255,.1); border-radius: 999px; padding: 4px 10px; font-weight: 700; }
@@ -173,4 +174,10 @@ footer { padding: 16px; font-size: 11px; opacity: .55; text-align: center; }
 .pip .brawl-advice { margin: 0; }
 .pip .brawl-card { grid-template-columns: 60px 1fr; padding: 6px; }
 .pip .brawl-card-body b { font-size: 14px; }
-@media (min-width: 900px) { .brawl-advice { margin: 0 20px 14px; max-width: 900px; } }
+@media (min-width: 900px) {
+  .brawl-advice { margin: 0 20px 14px; max-width: 900px; }
+  /* tiers side by side across the window instead of one narrow column down the page */
+  .top-items { grid-template-columns: repeat(auto-fit, minmax(240px, 360px)); justify-content: space-between; gap: 4px 18px; }
+  .top-items-tier h3 { font-size: 13px; }
+  .top-items-tier .tiles { max-width: none; gap: 10px; }
+}
