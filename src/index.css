@@ -100,6 +100,8 @@ h1, h2, h3 { margin: 0; font-weight: 800; }
 .panel-table td { padding: 2px 6px 2px 0; border-top: 1px solid rgba(128,128,128,.2); white-space: nowrap; }
 .panel-table th:not(:first-child), .panel-table td:not(:first-child) { text-align: right; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.top-items-tier h3 { font-size: 12px; opacity: .7; margin: 10px 0 2px; }
+.top-items-tier .tiles { grid-template-columns: repeat(3, 1fr); max-width: 300px; padding: 0; }
 .chip { font-size: 12px; background: rgba(255,255,255,.1); border-radius: 999px; padding: 4px 10px; font-weight: 700; }
 .badge { font-size: 10px; font-weight: 900; padding: 2px 7px; border-radius: 999px; }
 .badge.core { background: var(--good); color: #fff; }

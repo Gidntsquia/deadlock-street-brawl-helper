@@ -32,7 +32,7 @@ export const ENHANCED_PER_CARD: number | null = 3 / 27;
 export const CARDS_PER_SET = 3;
 export const SETS_PER_ROUND = 3;
 
-interface Base { item: Item; stat?: ItemStat; pop: number; winLift: number; kit: number; base: number; counter: number }
+export interface Base { item: Item; stat?: ItemStat; pop: number; winLift: number; kit: number; base: number; counter: number }
 
 /** Items that can appear on a draft card. */
 export const draftable = (i: Item) => !i.disabled && i.item_tier >= 1 && !/^upgrade_|Disabled/.test(i.name);
@@ -316,6 +316,14 @@ export function adviseDraft(input: BrawlInput, state: DraftState): DraftAdvice {
     });
   }
   return { sets, picks: best, reroll };
+}
+
+/** Best few items per tier, ranked by `base` (quality within that tier, ignoring the current draft/enemies). */
+export function topItemsByTier(input: BrawlInput, perTier = 3): { tier: number; items: Base[] }[] {
+  const bases = [...baseScores(input).values()];
+  const byTier = new Map<number, Base[]>();
+  for (const b of bases) { const t = b.item.item_tier; const xs = byTier.get(t); if (xs) xs.push(b); else byTier.set(t, [b]); }
+  return [...byTier.entries()].sort(([a], [b]) => a - b).map(([tier, xs]) => ({ tier, items: xs.sort((a, b) => b.base - a.base).slice(0, perTier) }));
 }
 
 /** Per-round tier layout of the draft, for the UI and the CLI. */

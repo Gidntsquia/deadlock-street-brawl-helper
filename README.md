@@ -12,21 +12,38 @@ game.
 
 ## Quickstart 🚀
 
-Requires Node 18+.
+Step-by-step, no experience required.
 
-```
-git clone https://github.com/Gidntsquia/deadlock-street-brawl-helper
-cd deadlock-street-brawl-helper
-npm install
-npm run fetch-data   # Downloads heroes/items/abilities + Brawl analytics into public/data/.
-npm run dev          # Open http://localhost:5173
-```
+1. **Install Node.js.** Go to [nodejs.org](https://nodejs.org), download the
+   version marked "LTS", and install it like any other program.
+2. **Open a terminal.**
+   - Windows: press the Start key, type `Terminal`, press Enter.
+   - Mac: press Cmd+Space, type `Terminal`, press Enter.
+3. **Copy-paste these lines into the terminal one at a time**, pressing Enter
+   after each and waiting for it to finish before the next one:
+   ```
+   git clone https://github.com/Gidntsquia/deadlock-street-brawl-helper
+   cd deadlock-street-brawl-helper
+   npm install
+   npm run fetch-data
+   npm run dev
+   ```
+   (`npm install` sets things up, `fetch-data` downloads the game's card
+   data, and `dev` starts the app — leave this last one running.)
+4. **Open your browser** and go to
+   [http://localhost:5173](http://localhost:5173).
+5. **Set Deadlock to borderless windowed mode.** In Deadlock's settings,
+   under Video, set Display Mode to "Borderless Windowed". This is required
+   — the overlay can't sit on top of the game in fullscreen mode.
+6. **Click "Capture game screen + overlay"** in the app, then pick the
+   Deadlock window from the list that pops up.
+7. Play a Street Brawl draft — the advice window will appear on top of the
+   game automatically.
 
-Click **Capture game screen + overlay** and select the Deadlock window.
-IMPORTANT: the game has to be in borderless windowed mode for the overlay to
-show on top of it.
+Only works in Chrome or Edge (not Firefox — it can't do always-on-top
+windows). To stop the app later, go back to the terminal and press Ctrl+C.
 
-Other commands:
+Other commands (optional, run from a terminal in the project folder):
 
 ```
 npm run brawl -- --hero 1 --round 2 --owned "Extra Charge" --enemies "Lash,Seven" \

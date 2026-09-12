@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Ability, Hero, Item } from '../types';
 import { j, img } from '../data/load';
-import { adviseDraft, enemiesFrom, roundTiers, type BrawlAnalytics, type BrawlConfig, type BrawlInput, type CardRead, type IconIndex, type Offer, type RankedOffer } from '../brawl';
+import { adviseDraft, enemiesFrom, roundTiers, topItemsByTier, type BrawlAnalytics, type BrawlConfig, type BrawlInput, type CardRead, type IconIndex, type Offer, type RankedOffer } from '../brawl';
 import type { WorkerIn, WorkerOut } from '../brawl/worker';
 import { ItemTile } from './ItemTile';
 
@@ -53,6 +53,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
   const ranked: RankedOffer[] = useMemo(() => advice?.sets[choice - 1] ?? [], [advice, choice]);
   const reroll = advice?.reroll && rerolls > 0 ? advice.reroll : null;
   const tiers = input ? roundTiers(input, round) : [];
+  const topItems = useMemo(() => (input ? topItemsByTier(input) : []), [input]);
 
   const stopCapture = useCallback(() => {
     streamRef.current?.getTracks().forEach((t) => t.stop()); streamRef.current = null;
@@ -158,7 +159,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
 
   const advicePanel = (
     <div className="brawl-advice">
-      {!cards.length && <div className="muted">{capture === 'on' ? status : 'Waiting for cards: start the screen capture (it also picks up which hero you are playing) or type the three items below.'}</div>}
+      {!cards.length && <div className="muted">{capture === 'on' ? status : 'No cards yet. Start the screen capture above, or pick the three cards yourself in "Cards on screen" below.'}</div>}
       {took_ && <div className="muted">Took {took_} · {owned.length} owned</div>}
       {ranked.map((r, k) => (
         <button key={r.item.id} className={`brawl-card ${k === 0 ? 'best' : ''}`} onClick={() => took(r)} title={capture === 'on' ? "Picks are read from the inventory grid; click only if it missed" : "I took this one"}>
@@ -179,6 +180,11 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
     <div className="brawl">
       <video ref={videoRef} muted playsInline style={{ display: 'none' }} />
       <div className="panel brawl-controls">
+        {capture === 'off' && (
+          <div className="muted brawl-howto">
+            1. Set Deadlock to <b>borderless windowed</b> mode. 2. Click <b>Capture game screen + overlay</b> below. 3. Pick the Deadlock window when asked. Then just play — advice appears on top of the game.
+          </div>
+        )}
         <div className="row">
           <label>Round <select value={round} onChange={(e) => { setRound(Number(e.target.value)); setChoice(1); setCards([]); }}>{[1, 2, 3, 4, 5].map((r) => <option key={r} value={r}>{r} ({input.config.gold_per_round[r - 1]} souls)</option>)}</select></label>
           <label>Choice <select value={choice} onChange={(e) => { setChoice(Number(e.target.value)); setCards([]); }}>{[1, 2, 3].map((c) => <option key={c} value={c}>{c} of 3{tiers[c - 1] ? ` · tier ${tiers[c - 1].normal} (rare ${tiers[c - 1].rare})` : ''}</option>)}</select></label>
@@ -213,6 +219,17 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
             </span>
           ))}
         </div>
+      </div>
+
+      <div className="panel">
+        <h2>{hero.name}'s top items</h2>
+        <div className="muted">Best pick in each tier, relative to the other items of that tier.</div>
+        {topItems.map(({ tier, items }) => (
+          <div key={tier} className="top-items-tier">
+            <h3>Tier {tier}</h3>
+            <div className="tiles">{items.map((b, k) => <ItemTile key={b.item.id} item={b.item} order={k + 1} />)}</div>
+          </div>
+        ))}
       </div>
 
       <div className="panel">
