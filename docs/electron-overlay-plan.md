@@ -1,5 +1,9 @@
 # Electron overlay plan
 
+Status (2026-09-17): phases 1-6 done. `npm run build:electron` produces `electron-dist/main.js`
+and `electron-dist/preload.js`; `npm run dist` (Windows only) packages `release/*.exe`. Not yet
+verified against the real game — that needs a Windows machine with Deadlock installed.
+
 Goal: turn the browser app into a packaged Windows app that draws the recommended card's highlight
 box directly on the Deadlock window, with no picker dialog, no alt-tabbing, and no manually placed
 floating window.

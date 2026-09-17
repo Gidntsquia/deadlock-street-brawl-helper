@@ -180,7 +180,9 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
       setCapture('on');
       setStatus('watching for the draft screen');
       log('brawl-view', 'info', 'capture.start');
-      if (!pip && hasDpip()) {
+      // Electron already draws its own always-on-top overlay window (electron/main.ts); the in-page
+      // Document-PiP overlay is only for the browser path.
+      if (!isElectron && !pip && hasDpip()) {
         try {
           await openPip();
         } catch {
@@ -204,6 +206,13 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
       else if (!rect && capture !== 'off') stopCapture();
     });
   }, [capture]);
+
+  // Electron: main.ts denies getDisplayMedia (callback(null)) instead of falling back to some other window
+  // when Deadlock isn't found, so tell the user why capture never starts instead of leaving them guessing.
+  useEffect(() => {
+    if (!isElectron) return;
+    return window.brawlAPI!.onCaptureDenied(() => setStatus('Deadlock window not found'));
+  }, []);
 
   // frame loop: the worker asks for a frame ('tick'), the page draws the video to a canvas and sends the pixels,
   // the worker answers with what it read and asks again after CAPTURE_MS. Nothing here depends on page timers.
@@ -389,8 +398,14 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
       <div className="panel brawl-controls">
         {capture === 'off' && (
           <div className="muted brawl-howto">
-            1. Set Deadlock to <b>borderless windowed</b> mode. 2. Click <b>Capture game screen + overlay</b> below. 3.
-            Pick the Deadlock window when asked. Then just play — advice appears on top of the game.
+            {isElectron ? (
+              'Start Deadlock in borderless windowed mode; the overlay starts on its own.'
+            ) : (
+              <>
+                1. Set Deadlock to <b>borderless windowed</b> mode. 2. Click <b>Capture game screen + overlay</b> below.
+                3. Pick the Deadlock window when asked. Then just play — advice appears on top of the game.
+              </>
+            )}
           </div>
         )}
         <div className="row">
@@ -498,7 +513,9 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
         )
       ) : (
         <>
-          {capture === 'on' && (
+          {/* Electron already draws the box on the real game window via its own overlay; showing this
+              preview here too would just duplicate it in the control window. */}
+          {!isElectron && capture === 'on' && (
             <canvas
               ref={previewRef}
               width={320}

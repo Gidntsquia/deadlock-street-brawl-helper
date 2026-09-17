@@ -43,6 +43,20 @@ npm run fetch-data -- --brawl-tierlist   # Rebuild the tier list from the files 
 npm run brawl:see -- --fixtures          # Card recogniser accuracy on the saved screenshots
 ```
 
+## Windows app 🪟
+
+A packaged Windows build skips the picker entirely and draws the highlight box straight onto the
+Deadlock window, with no floating overlay window to place by hand.
+
+```
+npm run dist   # Windows only; builds release/*.exe (installer + portable)
+```
+
+Start Deadlock in borderless windowed mode, then launch the exe: capture starts on its own once the
+Deadlock window is found, no picker dialog. Ctrl+Shift+O toggles the overlay; the tray icon has a
+Quit item. If Deadlock isn't running, the app says "Deadlock window not found" instead of capturing
+some other window. The browser path above still works cross-platform and needs no packaging.
+
 ## Features 🔬
 
 - The three cards, the round, the enemy team, and the items you've already picked are all read from

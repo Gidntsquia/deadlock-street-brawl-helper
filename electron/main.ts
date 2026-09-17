@@ -13,6 +13,7 @@ import {
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { findGameWindow, type Rect } from './gameWindow';
+import { CHANNELS } from './channels';
 import { log } from '../src/log';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -96,7 +97,7 @@ function startRectPolling() {
     if (!rectsEqual(found, lastRect)) {
       lastRect = found;
       log('electron-main', 'info', found ? 'window.found' : 'window.lost', found ?? undefined);
-      control?.webContents.send('game-rect', found);
+      control?.webContents.send(CHANNELS.gameRect, found);
       if (found && overlay) {
         overlay.setBounds(toDipBounds(found));
         if (!overlay.isVisible()) overlay.showInactive();
@@ -109,27 +110,37 @@ function startRectPolling() {
 
 function setupDisplayMediaHandler() {
   // Serves the Deadlock window directly to getDisplayMedia in the renderer, so no picker dialog appears.
+  // Never fall back to sources[0]: capturing an arbitrary window when Deadlock isn't running would silently
+  // show advice for whatever happened to be first in the list instead of telling the user the game isn't open.
   session.defaultSession.setDisplayMediaRequestHandler(
     async (_request, callback) => {
       const sources = await desktopCapturer.getSources({ types: ['window'] });
       const match = sources.find((s) => s.name.toLowerCase().includes(GAME_WINDOW_TITLE.toLowerCase()));
       log('electron-main', match ? 'info' : 'warn', match ? 'capture.chosen' : 'capture.denied', { name: match?.name });
-      callback({ video: match ?? sources[0] });
+      if (!match) {
+        control?.webContents.send(CHANNELS.captureDenied);
+        callback({}); // denies the request instead of falling back to an arbitrary window
+        return;
+      }
+      callback({ video: match });
     },
     { useSystemPicker: false },
   );
 }
 
 function setupIpc() {
-  ipcMain.handle('get-game-rect', () => lastRect);
+  ipcMain.handle(CHANNELS.getGameRect, () => lastRect);
   // Relay: the control window computes advice from its capture and forwards state for the overlay to draw.
-  ipcMain.on('overlay-state', (_event, state) => {
-    overlay?.webContents.send('overlay-state', state);
+  ipcMain.on(CHANNELS.overlayState, (_event, state) => {
+    overlay?.webContents.send(CHANNELS.overlayState, state);
   });
 }
 
 function setupTray() {
-  const icon = nativeImage.createFromPath(path.join(__dirname, '../public/apple-touch-icon.png'));
+  const iconPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'app.asar', 'dist', 'apple-touch-icon.png')
+    : path.join(__dirname, '../public/apple-touch-icon.png');
+  const icon = nativeImage.createFromPath(iconPath);
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
   tray.setToolTip('Deadlock Street Brawl Helper');
   tray.setContextMenu(

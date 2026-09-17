@@ -1,8 +1,9 @@
 {
   "name": "deadlock-street-brawl-helper",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
+  "main": "electron-dist/main.js",
   "scripts": {
     "dev": "vite",
     "dev:electron": "vite --mode electron",
@@ -52,6 +53,12 @@
       "dist/**",
       "electron-dist/**"
     ],
+    "asarUnpack": [
+      "node_modules/koffi/**"
+    ],
+    "extraMetadata": {
+      "main": "electron-dist/main.js"
+    },
     "win": {
       "target": [
         "nsis",
