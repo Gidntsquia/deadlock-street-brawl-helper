@@ -17,6 +17,7 @@ export default function App() {
   const [heroId, setHeroId] = useState(INFERNUS);
   const [tab, setTab] = useState<Tab>('advisor');
   const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
 
   useEffect(() => {
     loadCore().then(([i, h, a, m]) => { setItems(i); setHeroes(h); setAbilities(a); setManifest(m); }).catch((e) => setError(String(e)));
@@ -33,7 +34,7 @@ export default function App() {
         {tab === 'advisor' && <img src={img(hero.images.small)} alt="" />}
         <div>
           <h1>{tab === 'advisor' ? `${hero.name} Street Brawl` : 'Street Brawl Tier List'}</h1>
-          <div className="sub">{tab === 'advisor' ? 'Deadlock Street Brawl Helper' : 'Heroes and items graded by win rate and usage'}, data fetched {manifest?.fetched_at.slice(0, 10)}</div>
+          <div className="sub">{tab === 'advisor' ? 'Deadlock Street Brawl Helper' : 'Heroes and items graded by win rate and usage'}, data fetched {(manifest?.brawl?.fetched_at ?? manifest?.fetched_at)?.slice(0, 10)}</div>
         </div>
       </header>
       <nav className="tabs" role="tablist" aria-label="View">
@@ -43,12 +44,30 @@ export default function App() {
       </nav>
       {tab === 'advisor' ? (
         <>
+          <input
+            type="text"
+            className="hero-search"
+            placeholder="Find a hero…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            aria-label="Find a hero"
+          />
           <div className="hero-strip" role="tablist" aria-label="Hero">
-            {heroes.map((h) => (
-              <button key={h.id} className={`hero-chip ${h.id === heroId ? 'active' : ''}`} onClick={() => setHeroId(h.id)} role="tab" aria-selected={h.id === heroId}>
-                <img src={img(h.images.small)} alt="" loading="lazy" /><span>{h.name}</span>
-              </button>
-            ))}
+            {heroes.map((h) => {
+              const match = search.trim() !== '' && h.name.toLowerCase().includes(search.trim().toLowerCase());
+              return (
+                <button
+                  key={h.id}
+                  ref={match ? (el) => el?.scrollIntoView({ block: 'nearest', inline: 'center' }) : undefined}
+                  className={`hero-chip ${h.id === heroId ? 'active' : ''} ${match ? 'match' : ''}`}
+                  onClick={() => setHeroId(h.id)}
+                  role="tab"
+                  aria-selected={h.id === heroId}
+                >
+                  <img src={img(h.images.small)} alt="" loading="lazy" /><span>{h.name}</span>
+                </button>
+              );
+            })}
           </div>
           <select className="hero-select" value={heroId} onChange={(e) => setHeroId(Number(e.target.value))} aria-label="Select hero">
             {heroes.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
@@ -58,7 +77,7 @@ export default function App() {
       ) : (
         <TierList heroes={heroes} items={items} />
       )}
-      <footer>Data: deadlock-api.com (aggregate analytics, assets). See README for the scoring function.</footer>
+      <footer>Data: deadlock-api.com (aggregate analytics, assets). See docs/street-brawl-plan.md for the scoring function.</footer>
     </>
   );
 }

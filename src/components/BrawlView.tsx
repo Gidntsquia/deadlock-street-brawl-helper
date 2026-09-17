@@ -4,10 +4,12 @@ import type { Ability, Hero, Item } from '../types';
 import { j, img } from '../data/load';
 import { adviseDraft, enemiesFrom, roundTiers, topItemsByTier, type BrawlAnalytics, type BrawlConfig, type BrawlInput, type CardRead, type IconIndex, type Offer, type RankedOffer } from '../brawl';
 import type { WorkerIn, WorkerOut } from '../brawl/worker';
+import { drawReads } from '../brawl/draw';
 import { ItemTile } from './ItemTile';
 
 const CAPTURE_MS = 250; // pause between frames; the worker paces the loop (see worker.ts) so it keeps running while the tab is hidden
 const ENEMY_SLOTS = 4;
+const isElectron = typeof window !== 'undefined' && !!window.brawlAPI;
 
 interface Props { hero: Hero; heroes: Hero[]; items: Item[]; abilities: Ability[]; onHero: (id: number) => void }
 
@@ -34,6 +36,9 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
   const ownedRef = useRef<number[]>([]);
   const cardsRef = useRef<Offer[]>([]);
   const prevCardsRef = useRef<Offer[]>([]); // the set on screen before the current one: the pick shows up in the grid after the screen has moved on
+  const readsRef = useRef<CardRead[]>([]); // latest card positions on screen, for the preview highlight
+  const rankedRef = useRef<RankedOffer[]>([]);
+  const previewRef = useRef<HTMLCanvasElement | null>(null);
   useEffect(() => { ownedRef.current = owned; }, [owned]);
   useEffect(() => { cardsRef.current = cards; }, [cards]);
 
@@ -56,6 +61,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
     return adviseDraft(input, { round, owned, enemies: enemyIds, sets });
   }, [input, cards, round, owned, choice, enemies]); // eslint-disable-line react-hooks/exhaustive-deps
   const ranked: RankedOffer[] = useMemo(() => advice?.sets[choice - 1] ?? [], [advice, choice]);
+  useEffect(() => { rankedRef.current = ranked; }, [ranked]);
   const reroll = advice?.reroll && rerolls > 0 ? advice.reroll : null;
   const tiers = input ? roundTiers(input, round) : [];
   const topItems = useMemo(() => (input ? topItemsByTier(input) : []), [input]);
@@ -103,6 +109,16 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
   };
   useEffect(() => () => stopCapture(), [stopCapture]);
 
+  // Electron: no picker to click through (main.ts serves the Deadlock window via setDisplayMediaRequestHandler),
+  // so start capture as soon as the game window is found instead of waiting for a click.
+  useEffect(() => {
+    if (!isElectron) return;
+    return window.brawlAPI!.onGameRect((rect) => {
+      if (rect && capture === 'off') void startCapture();
+      else if (!rect && capture !== 'off') stopCapture();
+    });
+  }, [capture]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // frame loop: the worker asks for a frame ('tick'), the page draws the video to a canvas and sends the pixels,
   // the worker answers with what it read and asks again after CAPTURE_MS. Nothing here depends on page timers.
   useEffect(() => {
@@ -118,10 +134,22 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
       const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const prefer = [...offeredRef.current, ...ownedRef.current];
       w.postMessage({ type: 'frame', width: data.width, height: data.height, buffer: data.data.buffer, prefer } satisfies WorkerIn, [data.data.buffer]);
+      const bestId = rankedRef.current[0]?.item.id ?? null;
+      const pv = previewRef.current;
+      if (pv) {
+        const pctx = pv.getContext('2d');
+        if (pctx) {
+          const scale = pv.width / v.videoWidth;
+          pctx.drawImage(v, 0, 0, pv.width, pv.height);
+          drawReads(pctx, readsRef.current, bestId, scale, scale);
+        }
+      }
+      window.brawlAPI?.sendOverlayState({ reads: readsRef.current, bestId, frameW: v.videoWidth, frameH: v.videoHeight });
     };
     const onMessage = (ev: MessageEvent<WorkerOut>) => {
       if (ev.data.type === 'tick') { sendFrame(); return; }
       const r = ev.data;
+      readsRef.current = r.reads;
       const seen = r.reads.filter((x) => x.present).length;
       if (r.accepted) {
         const offers = r.reads.map(toOffer);
@@ -203,13 +231,27 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
           ))}
         </div>
         <div className="row">
-          {capture === 'on' ? <button className="btn" onClick={stopCapture}>Stop capture</button> : <button className="btn primary" onClick={startCapture} disabled={capture === 'starting'}>Capture game screen + overlay</button>}
-          <button className="btn" onClick={pip ? () => pip.close() : openPip}>{pip ? 'Close overlay' : hasDpip() ? 'Always-on-top overlay' : 'Advice window'}</button>
+          {!isElectron && (capture === 'on' ? <button className="btn" onClick={stopCapture}>Stop capture</button> : <button className="btn primary" onClick={startCapture} disabled={capture === 'starting'}>Capture game screen + overlay</button>)}
+          {!isElectron && <button className="btn" onClick={pip ? () => pip.close() : openPip}>{pip ? 'Close overlay' : hasDpip() ? 'Always-on-top overlay' : 'Advice window'}</button>}
           <span className="muted">{status}</span>
         </div>
       </div>
 
-      {pip ? createPortal(<div className="pip"><h2>{hero.name} · round {round}, choice {choice}</h2>{advicePanel}</div>, pip.document.body) : advicePanel}
+      {pip
+        ? createPortal(
+            <div className="pip">
+              <h2>{hero.name} · round {round}, choice {choice}</h2>
+              {capture === 'on' && <canvas ref={previewRef} width={320} height={180} className="brawl-preview" aria-label="Draft screen with the recommended card boxed" />}
+              {advicePanel}
+            </div>,
+            pip.document.body,
+          )
+        : (
+            <>
+              {capture === 'on' && <canvas ref={previewRef} width={320} height={180} className="brawl-preview" aria-label="Draft screen with the recommended card boxed" />}
+              {advicePanel}
+            </>
+          )}
 
       <div className="panel">
         <h2>Cards on screen</h2>

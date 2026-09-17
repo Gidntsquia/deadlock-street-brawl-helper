@@ -2,7 +2,9 @@ import type { Hero, Item } from '../types';
 
 /** public/data/analytics/brawl/tier-list.json, written by scripts/fetch-data.mjs (`--brawl-tierlist`). */
 export interface BrawlTierListData {
-  fetched_at: string; game_mode: 'street_brawl'; min_unix_timestamp: number; window_days: number;
+  fetched_at: string; game_mode: 'street_brawl';
+  /** Both ends of the window the numbers cover; hero counts and item counts share it. */
+  min_unix_timestamp: number; max_unix_timestamp: number | null; window_days: number;
   /** hero-games in the window: the denominator for every usage figure here */
   hero_games: number;
   heroes: { hero_id: number; wins: number; losses: number; matches: number }[];

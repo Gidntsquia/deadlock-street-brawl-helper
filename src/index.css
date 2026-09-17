@@ -25,12 +25,15 @@ h1, h2, h3 { margin: 0; font-weight: 800; }
 .app-header h1 { font-size: 17px; line-height: 1.15; }
 .app-header .sub { font-size: 12px; opacity: .8; }
 
+.hero-search { width: calc(100% - 28px); margin: 10px 14px 0; min-height: 44px; background: rgba(255,255,255,.06); color: var(--navy-ink); border: 1px solid rgba(255,255,255,.15); border-radius: 10px; padding: 8px 12px; font: inherit; font-weight: 700; }
+.hero-search::placeholder { color: var(--navy-ink); opacity: .5; }
 .hero-strip { display: flex; gap: 8px; overflow-x: auto; padding: 10px 14px 4px; scrollbar-width: none; }
 .hero-strip::-webkit-scrollbar { display: none; }
 .hero-chip { flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 60px; min-height: 44px; padding: 5px 4px; border-radius: 10px; background: rgba(255,255,255,.06); border: 2px solid transparent; }
 .hero-chip img { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; background: #000; }
 .hero-chip span { font-size: 11px; white-space: nowrap; font-weight: 700; opacity: .85; }
 .hero-chip.active { border-color: var(--teal); background: rgba(98,182,200,.18); }
+.hero-chip.match { border-color: var(--warn); background: rgba(217,138,43,.22); box-shadow: 0 0 0 3px rgba(217,138,43,.25); }
 .hero-select { width: calc(100% - 28px); margin: 4px 14px 6px; min-height: 44px; background: rgba(255,255,255,.06); color: var(--navy-ink); border: 1px solid rgba(255,255,255,.15); border-radius: 10px; padding: 8px 12px; font: inherit; font-weight: 700; }
 
 
@@ -204,6 +207,8 @@ footer { padding: 16px; font-size: 11px; opacity: .55; text-align: center; }
 .pip .brawl-advice { margin: 0; }
 .pip .brawl-card { grid-template-columns: 60px 1fr; padding: 6px; }
 .pip .brawl-card-body b { font-size: 14px; }
+.brawl-preview { display: block; width: 100%; height: auto; margin: 0 0 8px; border-radius: 8px; background: #000; border: 1px solid rgba(255,255,255,.15); }
+.pip .brawl-preview { margin: 0 0 6px; }
 @media (min-width: 900px) {
   .brawl-advice { margin: 0 20px 14px; max-width: 900px; }
   /* tiers side by side across the window instead of one narrow column down the page */

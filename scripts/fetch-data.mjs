@@ -75,6 +75,12 @@ const MAX_WAIT_MS = 45 * 1000;
 // so there is one all-rank population. Enemy-filtered item-stats are fetched for every hero as the counter term.
 const BRAWL_GAME_MODE = 'street_brawl';
 let MIN_TS = Math.floor(Date.now() / 1000) - WINDOW_DAYS * 86400;
+// Street Brawl pins both ends of the window. The tier list divides item matches from the per-hero files by
+// hero counts from a live hero-stats call, so those two have to cover exactly the same matches: with the
+// upper end open, a tier-list rebuild days later counts hero-games the item files never saw and understates
+// every usage figure. The other paths leave it open.
+let MAX_TS = null;
+const windowQ = () => `min_unix_timestamp=${MIN_TS}${MAX_TS ? `&max_unix_timestamp=${MAX_TS}` : ''}`;
 // Rate limit is 200 req / 60 s -> ~350 ms between requests keeps us well under.
 const SLEEP_MS = 350;
 
@@ -104,6 +110,10 @@ async function getJson(url, tries = 5) {
       await sleep(1500 * (i + 1));
     }
   }
+  // Every attempt was a 429 or a 5xx. Throwing here is what keeps a rate-limited run honest: returning
+  // undefined made callers fail on `.map` of undefined, and the one caller with a try/catch (the enemy
+  // matchups) logged that as a per-enemy failure and wrote the snapshot without them.
+  throw new Error(`gave up after ${tries} rate-limited or failing attempts for ${url}`);
 }
 
 // Downloads an image once into public/data/img/<dir>/<id>.webp and returns the app-relative path.
@@ -346,12 +356,15 @@ async function fetchValidation(heroes, manifest) {
 const slimStat = (s) => ({ item_id: s.item_id, wins: s.wins, matches: s.matches });
 
 async function fetchBrawl(heroes, manifest) {
+  // Pin the window for a brawl run reached from the full pipeline too, and take both ends from the clock here:
+  // the earlier steps can run for hours, so the module-load MIN_TS would make the span wider than WINDOW_DAYS.
+  if (MAX_TS === null) { MAX_TS = Math.floor(Date.now() / 1000); MIN_TS = MAX_TS - WINDOW_DAYS * 86400; }
   console.log(`brawl 1/2 mode config`);
   const generic = await getJson(`${ASSETS}/v2/generic-data`);
   await save('brawl-config.json', { fetched_at: new Date().toISOString(), ...generic.street_brawl });
   console.log(`brawl 2/2 per-hero Street Brawl analytics (${heroes.length} heroes x ${heroes.length} enemies)`);
   for (const h of heroes) {
-    const q = `hero_id=${h.id}&game_mode=${BRAWL_GAME_MODE}&min_unix_timestamp=${MIN_TS}`;
+    const q = `hero_id=${h.id}&game_mode=${BRAWL_GAME_MODE}&${windowQ()}`;
     const item_stats = await getJson(`${API}/v1/analytics/item-stats?${q}`);
     const perm = await getJson(`${API}/v1/analytics/item-permutation-stats?${q}&comb_size=2`);
     const permutation_stats = [...perm].sort((a, b) => b.matches - a.matches).slice(0, 600);
@@ -365,7 +378,10 @@ async function fetchBrawl(heroes, manifest) {
     console.log(`   ${h.name}: max item matches ${maxM}, ${item_stats.length} items, ${Object.keys(vs).length} enemies`);
     await save(`analytics/brawl/${h.id}.json`, { hero_id: h.id, game_mode: BRAWL_GAME_MODE, item_stats, permutation_stats, vs });
   }
-  manifest.brawl = { fetched_at: new Date().toISOString(), game_mode: BRAWL_GAME_MODE, heroes: heroes.length };
+  manifest.brawl = {
+    fetched_at: new Date().toISOString(), game_mode: BRAWL_GAME_MODE, heroes: heroes.length,
+    min_unix_timestamp: MIN_TS, max_unix_timestamp: MAX_TS, window_days: Math.round((MAX_TS - MIN_TS) / 86400),
+  };
   await buildTierList(heroes, manifest);
 }
 
@@ -374,7 +390,7 @@ async function fetchBrawl(heroes, manifest) {
 // an item's win rate is its rate across the whole mode and its usage is the share of hero-games it appeared in.
 async function buildTierList(heroes, manifest) {
   console.log('brawl tier list: hero-stats + item totals');
-  const rows = await getJson(`${API}/v1/analytics/hero-stats?game_mode=${BRAWL_GAME_MODE}&min_unix_timestamp=${MIN_TS}`);
+  const rows = await getJson(`${API}/v1/analytics/hero-stats?game_mode=${BRAWL_GAME_MODE}&${windowQ()}`);
   const active = new Set(heroes.map((h) => h.id));
   const heroStats = rows.filter((r) => active.has(r.hero_id)).map((r) => ({ hero_id: r.hero_id, wins: r.wins, losses: r.losses, matches: r.matches }));
   const totals = new Map();
@@ -392,8 +408,11 @@ async function buildTierList(heroes, manifest) {
   }
   const items = [...totals.values()].sort((a, b) => b.matches - a.matches);
   await save('analytics/brawl/tier-list.json', {
-    fetched_at: new Date().toISOString(), game_mode: BRAWL_GAME_MODE, min_unix_timestamp: MIN_TS,
-    window_days: manifest.window_days ?? WINDOW_DAYS,
+    fetched_at: new Date().toISOString(), game_mode: BRAWL_GAME_MODE,
+    // the window the numbers actually cover, not the nominal one: a rebuilt tier list inherits the window
+    // its per-hero files were fetched with, which is what makes hero_games the right denominator for them
+    min_unix_timestamp: MIN_TS, max_unix_timestamp: MAX_TS,
+    window_days: MAX_TS ? Math.round((MAX_TS - MIN_TS) / 86400) : (manifest.window_days ?? WINDOW_DAYS),
     hero_games: heroGames, heroes: heroStats, items,
   });
   manifest.brawl_tier_list = { fetched_at: new Date().toISOString(), heroes: heroStats.length, items: items.length };
@@ -403,7 +422,10 @@ async function main() {
   if (BRAWL_TIERLIST_ONLY) {
     const manifest = JSON.parse(await readFile(path.join(OUT, 'manifest.json'), 'utf8'));
     const heroes = JSON.parse(await readFile(path.join(OUT, 'heroes.json'), 'utf8'));
-    MIN_TS = manifest.min_unix_timestamp; // same window as the per-hero files it sums
+    // Exactly the window the per-hero files it sums were fetched with, both ends. Snapshots written before
+    // the window was pinned recorded only the lower end, so fall back to when the brawl files were fetched.
+    MIN_TS = manifest.brawl?.min_unix_timestamp ?? manifest.min_unix_timestamp;
+    MAX_TS = manifest.brawl?.max_unix_timestamp ?? Math.floor(Date.parse(manifest.brawl?.fetched_at ?? manifest.fetched_at) / 1000);
     await buildTierList(heroes, manifest);
     await save('manifest.json', manifest);
     return;
@@ -411,7 +433,10 @@ async function main() {
   if (BRAWL_ONLY) {
     const manifest = JSON.parse(await readFile(path.join(OUT, 'manifest.json'), 'utf8'));
     const heroes = JSON.parse(await readFile(path.join(OUT, 'heroes.json'), 'utf8'));
-    MIN_TS = manifest.min_unix_timestamp;
+    // A brawl refresh takes a fresh window rather than inheriting the one the last full run froze into the
+    // manifest, which otherwise widened on every run while every label still said WINDOW_DAYS.
+    MAX_TS = Math.floor(Date.now() / 1000);
+    MIN_TS = MAX_TS - WINDOW_DAYS * 86400;
     await fetchBrawl(heroes, manifest);
     await save('manifest.json', manifest);
     return;
