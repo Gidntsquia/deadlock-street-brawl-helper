@@ -12,7 +12,7 @@ Scores come from 30 days of Street Brawl matches from [deadlock-api.com](https:/
 ## Quickstart 🚀
 
 Requires [Node.js](https://nodejs.org) 20 or newer, and Chrome or Edge. The match data is already in
-the repo.
+the repo, and refreshes weekly on its own.
 
 ```
 git clone https://github.com/Gidntsquia/deadlock-street-brawl-helper
