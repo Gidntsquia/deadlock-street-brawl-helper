@@ -3,6 +3,7 @@ import type { Ability, Hero, Item } from './types';
 import { img, loadCore, type Manifest } from './data/load';
 import { BrawlView } from './components/BrawlView';
 import { TierList } from './components/TierList';
+import { usePersisted, isNumber, isString } from './hooks/usePersisted';
 
 const INFERNUS = 1;
 
@@ -11,14 +12,15 @@ const TABS = [
   { key: 'tiers', label: 'Street Brawl Tier List' },
 ] as const;
 type Tab = (typeof TABS)[number]['key'];
+const isTab = (v: unknown): v is Tab => isString(v) && TABS.some((t) => t.key === v);
 
 export default function App() {
   const [items, setItems] = useState<Item[]>([]);
   const [heroes, setHeroes] = useState<Hero[]>([]);
   const [abilities, setAbilities] = useState<Ability[]>([]);
   const [manifest, setManifest] = useState<Manifest | null>(null);
-  const [heroId, setHeroId] = useState(INFERNUS);
-  const [tab, setTab] = useState<Tab>('advisor');
+  const [heroId, setHeroId] = usePersisted('heroId', isNumber, INFERNUS);
+  const [tab, setTab] = usePersisted<Tab>('tab', isTab, 'advisor');
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
 
@@ -38,6 +40,11 @@ export default function App() {
   if (error) return <div className="error">{error}</div>;
   if (!hero) return <div className="loading">Loading snapshots…</div>;
 
+  const fetchedAt = manifest?.brawl?.fetched_at ?? manifest?.fetched_at;
+  const fetchedDate = fetchedAt?.slice(0, 10);
+  const ageDays = fetchedAt ? Math.floor((Date.now() - Date.parse(fetchedAt)) / 86400000) : null;
+  const stale = ageDays !== null && ageDays > 14;
+
   return (
     <>
       <header className="app-header">
@@ -46,7 +53,13 @@ export default function App() {
           <h1>{tab === 'advisor' ? `${hero.name} Street Brawl` : 'Street Brawl Tier List'}</h1>
           <div className="sub">
             {tab === 'advisor' ? 'Deadlock Street Brawl Helper' : 'Heroes and items graded by win rate and usage'}, data
-            fetched {(manifest?.brawl?.fetched_at ?? manifest?.fetched_at)?.slice(0, 10)}
+            from the 30 days to {fetchedDate}
+            {ageDays !== null && (
+              <span className={stale ? 'stale' : ''}>
+                {' '}
+                ({ageDays} day{ageDays === 1 ? '' : 's'} old)
+              </span>
+            )}
           </div>
         </div>
       </header>

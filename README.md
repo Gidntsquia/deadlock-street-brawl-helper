@@ -28,6 +28,8 @@ Then, with Deadlock open:
 2. In the app, click **Capture game screen + overlay** and pick the Deadlock window from the list.
 3. Play a Street Brawl draft. The advice window follows the draft on its own.
 
+The header shows how old the snapshot is ("N days old", flagged once it passes 14 days).
+
 IMPORTANT: Firefox can't open always-on-top windows, so this only works in Chrome or Edge. Press
 Ctrl+C in the terminal to stop the app.
 
@@ -54,6 +56,7 @@ npm run brawl:see -- --fixtures          # Card recogniser accuracy on the saved
 - A second tab grades every hero and every draftable item S, A, B or C from the last 30 days.
 - If the capture misses a card you can pick the three yourself, and the ranking updates.
 - No backend. Everything runs in the browser off the snapshot in the repo.
+- Your hero, tab, round and enemy picks are remembered across reloads (stored in the browser only).
 
 ## Documentation 📚
 

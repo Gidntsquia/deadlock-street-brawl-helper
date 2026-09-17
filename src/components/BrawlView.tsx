@@ -19,6 +19,7 @@ import type { WorkerIn, WorkerOut } from '../brawl/worker';
 import { drawReads } from '../brawl/draw';
 import { ItemTile } from './ItemTile';
 import { log } from '../log';
+import { usePersisted, isNumber, isNumberArray } from '../hooks/usePersisted';
 
 const CAPTURE_MS = 250; // pause between frames; the worker paces the loop (see worker.ts) so it keeps running while the tab is hidden
 const ENEMY_SLOTS = 4;
@@ -37,11 +38,12 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
   const [loaded, setLoaded] = useState<{ heroId: number; analytics: BrawlAnalytics } | null>(null);
   const [config, setConfig] = useState<BrawlConfig | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [round, setRound] = useState(1);
+  const [round, setRound] = usePersisted('round', isNumber, 1);
   const [choice, setChoice] = useState(1);
   const [rerollsLeft, setRerollsLeft] = useState<number | null>(null); // null: however many the round starts with
   const [rerollsRound, setRerollsRound] = useState(1);
-  const [enemies, setEnemies] = useState<number[]>(Array(ENEMY_SLOTS).fill(0));
+  const isEnemies = (v: unknown): v is number[] => isNumberArray(v) && v.length === ENEMY_SLOTS;
+  const [enemies, setEnemies] = usePersisted('enemies', isEnemies, Array(ENEMY_SLOTS).fill(0));
   const [owned, setOwned] = useState<number[]>([]);
   const [cards, setCards] = useState<Offer[]>([]);
   const [capture, setCapture] = useState<'off' | 'starting' | 'on'>('off');
@@ -347,9 +349,9 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
           key={r.item.id}
           className={`brawl-card ${k === 0 ? 'best' : ''}`}
           onClick={() => took(r)}
-          title={
-            capture === 'on' ? 'Picks are read from the inventory grid; click only if it missed' : 'I took this one'
-          }
+          title={`score ${r.score.toFixed(2)} · ${
+            capture === 'on' ? 'picks are read from the inventory grid; click only if it missed' : 'I took this one'
+          }`}
         >
           <ItemTile item={r.item} />
           <span className="brawl-card-body">
@@ -358,7 +360,8 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
               {r.enhanced ? ' (enhanced)' : ''}
             </b>
             <small>
-              score {r.score.toFixed(2)} · used by {(r.usage * 100).toFixed(0)}% of {hero.name}s
+              {k === 0 ? 'best' : `−${((1 - r.score / ranked[0].score) * 100).toFixed(0)}% vs best`} · used by{' '}
+              {(r.usage * 100).toFixed(0)}% of {hero.name}s
               {r.winRate !== null ? `, wins ${(r.winRate * 100).toFixed(0)}%` : ''}
               {r.known ? '' : ' · no brawl data'}
             </small>
@@ -468,7 +471,9 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
               {pip ? 'Close overlay' : hasDpip() ? 'Always-on-top overlay' : 'Advice window'}
             </button>
           )}
-          <span className="muted">{status}</span>
+        </div>
+        <div className="muted brawl-status" role="status" aria-live="polite">
+          {status}
         </div>
       </div>
 
@@ -577,7 +582,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
               offeredRef.current = new Set();
               setRound(1);
               setChoice(1);
-              setEnemies(Array(ENEMY_SLOTS).fill(0));
+              setEnemies(Array<number>(ENEMY_SLOTS).fill(0));
             }}
           >
             New game
