@@ -19,5 +19,5 @@
     "noFallthroughCasesInSwitch": true,
     "strict": true
   },
-  "include": ["scripts/*.ts"]
+  "include": ["scripts/*.ts", "scripts/**/*.ts"]
 }

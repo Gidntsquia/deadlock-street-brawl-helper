@@ -8,18 +8,9 @@
 //   npm run brawl:see -- --screens                        accuracy of round, choice, the player's own slot and the eight portraits on those
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import sharp from 'sharp';
-import {
-  cardAnchors,
-  decodeIconIndex,
-  matchIcon,
-  readDraftMeta,
-  readDraftScreen,
-  readMarkers,
-  readTier,
-  resolveTwin,
-  type RGBImage,
-} from '../src/brawl';
+import { cardAnchors, decodeIconIndex, readDraftMeta, readDraftScreen, type RGBImage } from '../src/brawl';
 import type { Hero, Item } from '../src/types';
+import { checkFixtures } from './fixtureCheck';
 
 const FIX = 'scripts/fixtures/brawl-cards';
 const SFIX = 'scripts/fixtures/brawl-screens';
@@ -117,36 +108,15 @@ if (args[0] === '--save-fixture') {
   console.log(`${ok}/${n} labels (${((ok / n) * 100).toFixed(1)} %)`);
   if (ok / n < 0.95) process.exit(1);
 } else if (args[0] === '--fixtures') {
-  const labels = JSON.parse(readFileSync(`${FIX}/labels.json`, 'utf8'));
-  let ok = 0,
-    n = 0;
-  for (const [k, l] of Object.entries<any>(labels)) {
-    const img = await load(`${FIX}/${k}.png`);
-    // RGBA is what the browser's canvas hands over; run every second fixture through that path
-    if (n % 2) {
-      const rgba = new Uint8Array(img.width * img.height * 4);
-      for (let i = 0; i < img.width * img.height; i++) {
-        rgba[i * 4] = img.data[i * 3];
-        rgba[i * 4 + 1] = img.data[i * 3 + 1];
-        rgba[i * 4 + 2] = img.data[i * 3 + 2];
-        rgba[i * 4 + 3] = 255;
-      }
-      img.data = rgba;
-      img.channels = 4;
-    }
-    const m = matchIcon(img, index, img.width / 2, img.height / 2, l.icon);
-    const tier = readTier(img, m),
-      mk = readMarkers(img, m),
-      id = resolveTwin(m.itemId, tier, index, tierOf);
-    const hit = id === l.item_id && tier === tierOf(l.item_id) && mk.rare === !!l.rare && mk.enhanced === !!l.enhanced;
-    ok += +hit;
-    n++;
+  const results = await checkFixtures(index, tierOf);
+  for (const r of results) {
     console.log(
-      `${hit ? 'ok  ' : 'MISS'} ${k.padEnd(12)} ${l.name.padEnd(24)} -> ${nameOf(id).padEnd(24)} T${tier}${mk.rare ? ' RARE' : ''}${mk.enhanced ? ' ENH' : ''}  score ${m.score.toFixed(3)} margin ${m.margin.toFixed(3)} rare ${mk.rareFrac.toFixed(2)} enh ${mk.enhancedFrac.toFixed(2)}`,
+      `${r.hit ? 'ok  ' : 'MISS'} ${r.key.padEnd(12)} ${r.label.name.padEnd(24)} -> ${nameOf(r.gotId).padEnd(24)} T${r.tier}${r.rare ? ' RARE' : ''}${r.enhanced ? ' ENH' : ''}  score ${r.score.toFixed(3)} margin ${r.margin.toFixed(3)} rare ${r.rareFrac.toFixed(2)} enh ${r.enhancedFrac.toFixed(2)}`,
     );
   }
-  console.log(`${ok}/${n} cards (${((ok / n) * 100).toFixed(1)} %)`);
-  if (ok / n < 0.95) process.exit(1);
+  const ok = results.filter((r) => r.hit).length;
+  console.log(`${ok}/${results.length} cards (${((ok / results.length) * 100).toFixed(1)} %)`);
+  if (ok / results.length < 0.95) process.exit(1);
 } else {
   for (const f of args) {
     const img = await load(f);
