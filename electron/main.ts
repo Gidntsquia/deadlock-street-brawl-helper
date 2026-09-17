@@ -110,8 +110,9 @@ function startRectPolling() {
 
 function setupDisplayMediaHandler() {
   // Serves the Deadlock window directly to getDisplayMedia in the renderer, so no picker dialog appears.
-  // Never fall back to sources[0]: capturing an arbitrary window when Deadlock isn't running would silently
-  // show advice for whatever happened to be first in the list instead of telling the user the game isn't open.
+  // Never fall back to the first source in the list: capturing an arbitrary window when Deadlock isn't
+  // running would silently show advice for whatever happened to be first instead of telling the user
+  // the game isn't open.
   session.defaultSession.setDisplayMediaRequestHandler(
     async (_request, callback) => {
       const sources = await desktopCapturer.getSources({ types: ['window'] });
