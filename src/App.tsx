@@ -109,7 +109,11 @@ export default function App() {
         <TierList heroes={heroes} items={items} />
       )}
       <footer>
-        Data: deadlock-api.com (aggregate analytics, assets). See docs/street-brawl-plan.md for the scoring function.
+        Data: deadlock-api.com (aggregate analytics, assets). See the{' '}
+        <a href="https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Street-Brawl-Advisor">
+          Street Brawl Advisor
+        </a>{' '}
+        wiki page for the scoring function.
       </footer>
     </>
   );

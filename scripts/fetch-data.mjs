@@ -7,48 +7,24 @@
 //   public/data/abilities.json             abilities of active heroes (names, upgrades)
 //   public/data/analytics/<hero_id>.json   item-stats, ability-order-stats, item-permutation-stats, and (top population)
 //                                          build styles: per-style item/ability stats (see scripts/styles.mjs)
-//   public/data/validation/<account>-<hero>.json  a top player's ~20 most recent matchmaking matches on one hero
-//                                          with per-match purchases; 5 players per hero, chosen automatically
-//                                          from the Phantom+ scoreboard (see selectValidationPlayers)   (VALIDATION ONLY)
 //   public/data/img/{items,heroes,abilities}/  webp images so the app needs no network at all
 //   public/data/brawl-config.json          Street Brawl mode constants (round budgets, draft tiers/weights)
 //   public/data/analytics/brawl/<hero_id>.json  Street Brawl item-stats, pair stats, and item-stats vs every enemy hero
 //   public/data/analytics/brawl/tier-list.json  Street Brawl hero win/pick totals + item totals summed over every hero
-//   public/data/manifest.json              timestamps + counts + validation_sets (who was selected and why)
+//   public/data/manifest.json              timestamps + counts
 //
 // Flags
 //   --analytics-only            refresh analytics/* only
 //   --brawl                     refresh the Street Brawl snapshot only
 //   --brawl-tierlist            rebuild analytics/brawl/tier-list.json only (one request + the files already on disk)
-//   --validation-only           re-select players and refetch validation/* for every hero
-//   --heroes 1,31               (with --validation-only or --analytics-only) only these hero ids; with --validation-only their entries are merged into manifest.validation_sets
-//   --select-only               (with --validation-only) run the selection, print the table per hero, write nothing
+//   --heroes 1,31               (with --analytics-only) only these hero ids
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const API = 'https://api.deadlock-api.com';
 const ASSETS = 'https://assets.deadlock-api.com';
 const OUT = path.resolve('public/data');
-// Held-out validation sets: for every active hero, VALIDATION_PLAYERS_PER_HERO top players chosen
-// automatically by selectValidationPlayers(). Never read by the generator.
-const VALIDATION_PLAYERS_PER_HERO = 5;
-// Matches (matchmaking only, most recent first) fetched per selected (player, hero).
-const VALIDATION_MATCH_TARGET = 20;
-// Candidate pool per hero: the top N Phantom+ players by matches on the hero in the analytics window.
-const VALIDATION_CANDIDATES = 25;
-// Filters: a candidate needs at least this many recent games on the hero ...
-const VALIDATION_MIN_RECENT = 5;
-// ... and, once the sample is big enough (>= VALIDATION_WR_MIN_MATCHES), a recent win rate of at least this.
-const VALIDATION_MIN_WINRATE = 0.4;
-const VALIDATION_WR_MIN_MATCHES = 10;
-// Score = recent_matches * (1 + EXPERIENCE_WEIGHT * ln(1 + total_hero_matches)) * recencyFactor,
-// recencyFactor = exp(-daysSince(last_played) / RECENCY_HALFLIFE_DAYS) clamped to [RECENCY_FLOOR, 1].
-const VALIDATION_EXPERIENCE_WEIGHT = 0.15;
-const VALIDATION_RECENCY_DAYS = 14;
-const VALIDATION_RECENCY_FLOOR = 0.25;
-const VALIDATION_ONLY = process.argv.includes('--validation-only');
-const SELECT_ONLY = process.argv.includes('--select-only');
-// `--heroes 1,31` limits --validation-only to those hero ids (entries are merged into the existing manifest).
+// `--heroes 1,31` limits --analytics-only to those hero ids.
 const HEROES_ARG = (() => {
   const i = process.argv.indexOf('--heroes');
   if (i < 0 || !process.argv[i + 1]) return null;
@@ -289,7 +265,7 @@ async function fetchStyles(hero, topQ, top, shopIds) {
 
 async function fetchAnalytics(heroes, manifest) {
   const targets = HEROES_ARG ? heroes.filter((h) => HEROES_ARG.includes(h.id)) : heroes;
-  console.log(`4/5 per-hero analytics (${targets.length} heroes, all ranks + badge>=${TOP_BADGE}, plus build styles)`);
+  console.log(`4/4 per-hero analytics (${targets.length} heroes, all ranks + badge>=${TOP_BADGE}, plus build styles)`);
   const shopIds = new Set(
     JSON.parse(await readFile(path.join(OUT, 'items.json'), 'utf8'))
       .filter((i) => i.shopable && !i.disabled && i.cost > 0)
@@ -320,169 +296,6 @@ async function fetchAnalytics(heroes, manifest) {
   }
   manifest.counts.analytics_heroes = heroes.length;
   manifest.top_min_average_badge = TOP_BADGE;
-}
-
-// Steps 1-4 of the selection for one hero: scoreboard candidates -> hero-stats -> score/filter -> names.
-async function selectValidationPlayers(hero) {
-  const base = `${API}/v1/analytics/scoreboards/players?hero_id=${hero.id}&min_average_badge=${TOP_BADGE}&min_unix_timestamp=${MIN_TS}&limit=${VALIDATION_CANDIDATES}`;
-  const byMatches = await getJson(`${base}&sort_by=matches`);
-  const byWins = await getJson(`${base}&sort_by=wins`);
-  const wins = new Map(byWins.map((r) => [r.account_id, r.value]));
-  const now = Date.now() / 1000;
-  const cands = [];
-  for (const r of byMatches) {
-    const recent_matches = r.matches ?? r.value;
-    const recent_wins = wins.get(r.account_id) ?? 0;
-    let total_hero_matches = recent_matches,
-      last_played = 0;
-    try {
-      const hs = await getJson(`${API}/v1/players/${r.account_id}/hero-stats`);
-      const row = (hs || []).find((x) => x.hero_id === hero.id);
-      if (row) {
-        total_hero_matches = row.matches_played ?? recent_matches;
-        last_played = row.last_played ?? 0;
-      }
-    } catch (e) {
-      console.warn(`  hero-stats failed for ${r.account_id}: ${e.message}`);
-    }
-    const days = last_played ? Math.max(0, (now - last_played) / 86400) : VALIDATION_RECENCY_DAYS * 10;
-    const recency = Math.min(1, Math.max(VALIDATION_RECENCY_FLOOR, Math.exp(-days / VALIDATION_RECENCY_DAYS)));
-    const score = recent_matches * (1 + VALIDATION_EXPERIENCE_WEIGHT * Math.log(1 + total_hero_matches)) * recency;
-    const wr = recent_matches ? recent_wins / recent_matches : 0;
-    const passes =
-      recent_matches >= VALIDATION_MIN_RECENT &&
-      !(recent_matches >= VALIDATION_WR_MIN_MATCHES && wr < VALIDATION_MIN_WINRATE);
-    cands.push({
-      account_id: r.account_id,
-      recent_matches,
-      recent_wins,
-      total_hero_matches,
-      last_played,
-      score,
-      passes,
-    });
-  }
-  cands.sort((a, b) => b.score - a.score);
-  let picked = cands.filter((c) => c.passes).slice(0, VALIDATION_PLAYERS_PER_HERO);
-  if (picked.length < VALIDATION_PLAYERS_PER_HERO) {
-    const need = VALIDATION_PLAYERS_PER_HERO - picked.length;
-    const fill = cands.filter((c) => !c.passes).slice(0, need);
-    console.warn(
-      `  ${hero.name}: only ${picked.length} candidates pass the filters – filling ${fill.length} from the unfiltered top`,
-    );
-    picked = [...picked, ...fill];
-  }
-  const names = new Map();
-  if (picked.length) {
-    try {
-      const steam = await getJson(`${API}/v1/players/steam?account_ids=${picked.map((c) => c.account_id).join(',')}`);
-      for (const p of steam || []) if (p.personaname) names.set(p.account_id, p.personaname);
-    } catch (e) {
-      console.warn(`  steam names failed: ${e.message}`);
-    }
-  }
-  return picked.map((c, i) => ({
-    account_id: c.account_id,
-    player: names.get(c.account_id) || `#${c.account_id}`,
-    hero_id: hero.id,
-    hero: hero.name,
-    selection: {
-      rank: i + 1,
-      recent_matches: c.recent_matches,
-      recent_wins: c.recent_wins,
-      total_hero_matches: c.total_hero_matches,
-      last_played: c.last_played,
-      score: Number(c.score.toFixed(2)),
-    },
-  }));
-}
-
-function printSelection(hero, sel) {
-  console.log(`   ${hero.name} (${hero.id})`);
-  console.table(
-    sel.map((v) => ({
-      rank: v.selection.rank,
-      account_id: v.account_id,
-      player: v.player,
-      recent: v.selection.recent_matches,
-      wins: v.selection.recent_wins,
-      total: v.selection.total_hero_matches,
-      last_played: new Date(v.selection.last_played * 1000).toISOString().slice(0, 10),
-      score: v.selection.score,
-    })),
-  );
-}
-
-// Step 5: the player's most recent matchmaking matches on the hero, with per-match purchases.
-async function fetchPlayerMatches(v, histories) {
-  if (!histories.has(v.account_id))
-    histories.set(v.account_id, await getJson(`${API}/v1/players/${v.account_id}/match-history`));
-  const hist = histories.get(v.account_id);
-  const onHero = hist.filter((m) => m.hero_id === v.hero_id);
-  const real = onHero
-    .filter((m) => (m.match_mode === 1 || m.match_mode === 2) && m.game_mode === 1)
-    .sort((a, b) => b.start_time - a.start_time);
-  const purchases = [];
-  for (const m of real) {
-    if (purchases.length >= VALIDATION_MATCH_TARGET) break;
-    try {
-      const meta = await getJson(`${API}/v1/matches/${m.match_id}/metadata`);
-      const mi = meta.match_info;
-      const p = (mi.players || []).find((x) => x.account_id === v.account_id);
-      if (!p || !(p.items || []).length) continue; // no purchase data (abandon etc.): does not count toward the target
-      purchases.push({
-        match_id: m.match_id,
-        start_time: mi.start_time,
-        duration_s: mi.duration_s,
-        match_mode: mi.match_mode,
-        game_mode: mi.game_mode,
-        won: p.team === mi.winning_team,
-        net_worth: p.net_worth,
-        items: (p.items || []).map((it) => ({
-          item_id: it.item_id,
-          game_time_s: it.game_time_s,
-          sold_time_s: it.sold_time_s,
-        })),
-      });
-    } catch (e) {
-      console.warn(`  skip match ${m.match_id}: ${e.message}`);
-    }
-  }
-  return { total_hero_matches: onHero.length, matchmaking_hero_matches: real.length, matches: purchases };
-}
-
-async function fetchValidation(heroes, manifest) {
-  const targets = HEROES_ARG ? heroes.filter((h) => HEROES_ARG.includes(h.id)) : heroes;
-  console.log(
-    `5/5 held-out top-player matches (validation only): ${targets.length} heroes x ${VALIDATION_PLAYERS_PER_HERO} players x ${VALIDATION_MATCH_TARGET} matches${SELECT_ONLY ? ' [select-only]' : ''}`,
-  );
-  const selected = [];
-  for (const h of targets) {
-    const sel = await selectValidationPlayers(h);
-    printSelection(h, sel);
-    selected.push(...sel);
-  }
-  if (SELECT_ONLY) return;
-  const histories = new Map();
-  const entries = [];
-  for (const v of selected) {
-    const data = await fetchPlayerMatches(v, histories);
-    const file = `validation/${v.account_id}-${v.hero_id}.json`;
-    await save(file, { ...v, ...data });
-    entries.push({ ...v, file, matches: data.matches.length });
-  }
-  const targetIds = new Set(targets.map((h) => h.id));
-  const kept = HEROES_ARG ? (manifest.validation_sets || []).filter((v) => !targetIds.has(v.hero_id)) : [];
-  manifest.validation_sets = [...kept, ...entries].sort(
-    (a, b) => a.hero_id - b.hero_id || a.selection?.rank - b.selection?.rank,
-  );
-  manifest.counts.validation_sets = manifest.validation_sets.length;
-  manifest.validation = {
-    players_per_hero: VALIDATION_PLAYERS_PER_HERO,
-    match_target: VALIDATION_MATCH_TARGET,
-    selected_at: new Date().toISOString(),
-  };
-  delete manifest.counts.zergggy_matches_with_purchases;
 }
 
 // One row per item, slimmed to what the counter term needs.
@@ -608,14 +421,6 @@ async function main() {
     return;
   }
   await mkdir(OUT, { recursive: true });
-  if (VALIDATION_ONLY) {
-    const manifest = JSON.parse(await readFile(path.join(OUT, 'manifest.json'), 'utf8'));
-    const heroes = JSON.parse(await readFile(path.join(OUT, 'heroes.json'), 'utf8'));
-    MIN_TS = manifest.min_unix_timestamp;
-    await fetchValidation(heroes, manifest);
-    if (!SELECT_ONLY) await save('manifest.json', manifest);
-    return;
-  }
   if (ANALYTICS_ONLY) {
     const manifest = JSON.parse(await readFile(path.join(OUT, 'manifest.json'), 'utf8'));
     const heroes = JSON.parse(await readFile(path.join(OUT, 'heroes.json'), 'utf8'));
@@ -632,7 +437,7 @@ async function main() {
     counts: {},
   };
 
-  console.log('1/5 item catalog');
+  console.log('1/4 item catalog');
   const items = (await getJson(`${ASSETS}/v2/items/by-type/upgrade`)).map(slimItem);
   console.log(`   downloading ${items.length} item images`);
   for (const it of items) {
@@ -647,7 +452,7 @@ async function main() {
   manifest.counts.items = items.length;
   manifest.counts.shopable_items = items.filter((i) => i.shopable && !i.disabled).length;
 
-  console.log('2/5 heroes');
+  console.log('2/4 heroes');
   const heroesRaw = await getJson(`${ASSETS}/v2/heroes`);
   const active = heroesRaw.filter((h) => h.player_selectable && !h.disabled && !h.in_development);
   const heroes = active.map(slimHero);
@@ -661,7 +466,7 @@ async function main() {
   await save('heroes.json', heroes);
   manifest.counts.heroes = heroes.length;
 
-  console.log('3/5 abilities');
+  console.log('3/4 abilities');
   const abilitiesRaw = await getJson(`${ASSETS}/v2/items/by-type/ability`);
   const activeIds = new Set(active.map((h) => h.id));
   const abilities = abilitiesRaw.filter((a) => activeIds.has(a.hero)).map(slimAbility);
@@ -676,7 +481,6 @@ async function main() {
 
   await fetchAnalytics(heroes, manifest);
 
-  await fetchValidation(heroes, manifest);
   await fetchBrawl(heroes, manifest);
 
   await save('manifest.json', manifest);

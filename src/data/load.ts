@@ -6,31 +6,12 @@ export async function j<T>(rel: string): Promise<T> {
   if (!r.ok) throw new Error(`Missing snapshot ${rel} – run \`npm run fetch-data\``);
   return r.json();
 }
-/** How a representative player was picked for a hero (absent on older snapshots with one hand-picked player per hero). */
-export interface ValidationSelection {
-  rank: number;
-  recent_matches: number;
-  recent_wins: number;
-  total_hero_matches: number;
-  last_played: number;
-  score: number;
-}
-export interface ValidationSetRef {
-  account_id: number;
-  player: string;
-  hero_id: number;
-  hero: string;
-  file: string;
-  matches: number;
-  selection?: ValidationSelection;
-}
 /** `brawl` is absent until a `--brawl` run has written a Street Brawl snapshot; it carries its own window. */
 export interface Manifest {
   fetched_at: string;
   window_days: number;
   counts: Record<string, number>;
   brawl?: { fetched_at: string; window_days: number };
-  validation_sets?: ValidationSetRef[];
 }
 export const loadCore = () =>
   Promise.all([
