@@ -2,7 +2,12 @@
 // Uses koffi (prebuilt FFI, no node-gyp) per docs/electron-overlay-plan.md phase 3.
 import koffi from 'koffi';
 
-export interface Rect { x: number; y: number; width: number; height: number }
+export interface Rect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
 
 const DWMWA_EXTENDED_FRAME_BOUNDS = 9;
 
@@ -26,7 +31,12 @@ function loadDwmapi(koffi: typeof import('koffi')) {
   const RECT = koffi.struct('RECT', { left: 'long', top: 'long', right: 'long', bottom: 'long' });
   return {
     RECT,
-    DwmGetWindowAttribute: lib.func('__stdcall', 'DwmGetWindowAttribute', 'long', ['void *', 'uint32', koffi.out(koffi.pointer(RECT)), 'uint32']),
+    DwmGetWindowAttribute: lib.func('__stdcall', 'DwmGetWindowAttribute', 'long', [
+      'void *',
+      'uint32',
+      koffi.out(koffi.pointer(RECT)),
+      'uint32',
+    ]),
   };
 }
 
@@ -43,7 +53,16 @@ export function findGameWindow(titleSubstring: string): Rect | null {
       koffi.register((hwnd: unknown) => {
         if (!user32!.IsWindowVisible(hwnd)) return true;
         const len = user32!.GetWindowTextW(hwnd, buf, 256);
-        if (len > 0 && buf.toString('utf16le', 0, len * 2).toLowerCase().includes(needle)) { handle = hwnd; return false; }
+        if (
+          len > 0 &&
+          buf
+            .toString('utf16le', 0, len * 2)
+            .toLowerCase()
+            .includes(needle)
+        ) {
+          handle = hwnd;
+          return false;
+        }
         return true;
       }, koffi.pointer('void *')),
       0,

@@ -3,6 +3,7 @@
 Repo constitution for planner / worker / evaluator agents. Overrides generic stack defaults.
 
 ## Stack (do not switch)
+
 - npm (not Bun/pnpm), Node 20+ locally, Node 24 in CI. Vite 8 + React 19 + TypeScript 6, plain CSS in `src/index.css`.
 - Lint: oxlint (`.oxlintrc.json`). Format: Prettier. Tests: vitest. Typecheck: `tsc -b` over
   `tsconfig.app.json` / `tsconfig.node.json` / `tsconfig.electron.json` (all `strict`).
@@ -12,6 +13,7 @@ Repo constitution for planner / worker / evaluator agents. Overrides generic sta
   No backend, no database, no secrets, no `.env`.
 
 ## Commands
+
 - `npm run check` — lint + typecheck + prettier --check + vitest; CI runs this before deploy.
 - `npm run brawl:see -- --fixtures` — recogniser accuracy on `scripts/fixtures/` (must stay 27/27).
 - `npm run brawl -- --hero 1 --round 2 --set "…"` — engine CLI without the screen reader.
@@ -19,6 +21,7 @@ Repo constitution for planner / worker / evaluator agents. Overrides generic sta
   GitHub Action does it.
 
 ## Conventions
+
 - Logging goes through `src/log.ts` (JSON lines to console). No bare `console.*` in `src/` or `electron/`.
 - Commit messages: imperative sentence, no type prefix (see `git log`). Pushing to main is pre-approved.
 - Never edit `public/data/**` or `scripts/fixtures/**` by hand except `manifest.json` metadata.

@@ -6,7 +6,10 @@ import { TierList } from './components/TierList';
 
 const INFERNUS = 1;
 
-const TABS = [{ key: 'advisor', label: 'Draft advisor' }, { key: 'tiers', label: 'Street Brawl Tier List' }] as const;
+const TABS = [
+  { key: 'advisor', label: 'Draft advisor' },
+  { key: 'tiers', label: 'Street Brawl Tier List' },
+] as const;
 type Tab = (typeof TABS)[number]['key'];
 
 export default function App() {
@@ -20,7 +23,14 @@ export default function App() {
   const [search, setSearch] = useState('');
 
   useEffect(() => {
-    loadCore().then(([i, h, a, m]) => { setItems(i); setHeroes(h); setAbilities(a); setManifest(m); }).catch((e) => setError(String(e)));
+    loadCore()
+      .then(([i, h, a, m]) => {
+        setItems(i);
+        setHeroes(h);
+        setAbilities(a);
+        setManifest(m);
+      })
+      .catch((e) => setError(String(e)));
   }, []);
 
   const hero = heroes.find((h) => h.id === heroId);
@@ -34,12 +44,23 @@ export default function App() {
         {tab === 'advisor' && <img src={img(hero.images.small)} alt="" />}
         <div>
           <h1>{tab === 'advisor' ? `${hero.name} Street Brawl` : 'Street Brawl Tier List'}</h1>
-          <div className="sub">{tab === 'advisor' ? 'Deadlock Street Brawl Helper' : 'Heroes and items graded by win rate and usage'}, data fetched {(manifest?.brawl?.fetched_at ?? manifest?.fetched_at)?.slice(0, 10)}</div>
+          <div className="sub">
+            {tab === 'advisor' ? 'Deadlock Street Brawl Helper' : 'Heroes and items graded by win rate and usage'}, data
+            fetched {(manifest?.brawl?.fetched_at ?? manifest?.fetched_at)?.slice(0, 10)}
+          </div>
         </div>
       </header>
       <nav className="tabs" role="tablist" aria-label="View">
         {TABS.map((t) => (
-          <button key={t.key} role="tab" aria-selected={tab === t.key} className={tab === t.key ? 'active' : ''} onClick={() => setTab(t.key)}>{t.label}</button>
+          <button
+            key={t.key}
+            role="tab"
+            aria-selected={tab === t.key}
+            className={tab === t.key ? 'active' : ''}
+            onClick={() => setTab(t.key)}
+          >
+            {t.label}
+          </button>
         ))}
       </nav>
       {tab === 'advisor' ? (
@@ -64,20 +85,32 @@ export default function App() {
                   role="tab"
                   aria-selected={h.id === heroId}
                 >
-                  <img src={img(h.images.small)} alt="" loading="lazy" /><span>{h.name}</span>
+                  <img src={img(h.images.small)} alt="" loading="lazy" />
+                  <span>{h.name}</span>
                 </button>
               );
             })}
           </div>
-          <select className="hero-select" value={heroId} onChange={(e) => setHeroId(Number(e.target.value))} aria-label="Select hero">
-            {heroes.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
+          <select
+            className="hero-select"
+            value={heroId}
+            onChange={(e) => setHeroId(Number(e.target.value))}
+            aria-label="Select hero"
+          >
+            {heroes.map((h) => (
+              <option key={h.id} value={h.id}>
+                {h.name}
+              </option>
+            ))}
           </select>
           <BrawlView hero={hero} heroes={heroes} items={items} abilities={abilities} onHero={setHeroId} />
         </>
       ) : (
         <TierList heroes={heroes} items={items} />
       )}
-      <footer>Data: deadlock-api.com (aggregate analytics, assets). See docs/street-brawl-plan.md for the scoring function.</footer>
+      <footer>
+        Data: deadlock-api.com (aggregate analytics, assets). See docs/street-brawl-plan.md for the scoring function.
+      </footer>
     </>
   );
 }

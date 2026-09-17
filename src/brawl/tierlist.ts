@@ -2,9 +2,12 @@ import type { Hero, Item } from '../types';
 
 /** public/data/analytics/brawl/tier-list.json, written by scripts/fetch-data.mjs (`--brawl-tierlist`). */
 export interface BrawlTierListData {
-  fetched_at: string; game_mode: 'street_brawl';
+  fetched_at: string;
+  game_mode: 'street_brawl';
   /** Both ends of the window the numbers cover; hero counts and item counts share it. */
-  min_unix_timestamp: number; max_unix_timestamp: number | null; window_days: number;
+  min_unix_timestamp: number;
+  max_unix_timestamp: number | null;
+  window_days: number;
   /** hero-games in the window: the denominator for every usage figure here */
   hero_games: number;
   heroes: { hero_id: number; wins: number; losses: number; matches: number }[];
@@ -15,10 +18,11 @@ export type Grade = 'S' | 'A' | 'B' | 'C';
 export const GRADES: Grade[] = ['S', 'A', 'B', 'C'];
 
 export interface TierEntry<T> {
-  subject: T; matches: number;
-  winRate: number;   // wins / matches
-  usage: number;     // share of hero-games the subject appeared in
-  score: number;     // combined z-score, the value the grade is cut from
+  subject: T;
+  matches: number;
+  winRate: number; // wins / matches
+  usage: number; // share of hero-games the subject appeared in
+  score: number; // combined z-score, the value the grade is cut from
   grade: Grade;
 }
 
@@ -30,7 +34,11 @@ const W_USE = 0.3;
 // this changes nothing today; it keeps a thin sample from grading S off a lucky streak.
 const PRIOR = 500;
 // Cut points on the combined z-score. Over a roughly normal population this lands ~13% S, ~25% A, ~35% B.
-const CUTS: [Grade, number][] = [['S', 1.15], ['A', 0.35], ['B', -0.6]];
+const CUTS: [Grade, number][] = [
+  ['S', 1.15],
+  ['A', 0.35],
+  ['B', -0.6],
+];
 
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
 /** Standard scores; a population with no spread scores flat rather than dividing by zero. */
@@ -42,7 +50,11 @@ function z(xs: number[]): number[] {
 }
 const gradeOf = (score: number): Grade => CUTS.find(([, cut]) => score >= cut)?.[0] ?? 'C';
 
-interface Row<T> { subject: T; wins: number; matches: number }
+interface Row<T> {
+  subject: T;
+  wins: number;
+  matches: number;
+}
 
 /** Grades one population against itself: both inputs are standardised, mixed, then cut into S/A/B/C. */
 function rank<T>(rows: Row<T>[], games: number): TierEntry<T>[] {
@@ -53,7 +65,14 @@ function rank<T>(rows: Row<T>[], games: number): TierEntry<T>[] {
   const use = z(rows.map((r) => Math.log(Math.max(1, r.matches) / games)));
   const score = z(rows.map((_, i) => W_WIN * win[i] + W_USE * use[i]));
   return rows
-    .map((r, i) => ({ subject: r.subject, matches: r.matches, winRate: r.wins / r.matches, usage: r.matches / games, score: score[i], grade: gradeOf(score[i]) }))
+    .map((r, i) => ({
+      subject: r.subject,
+      matches: r.matches,
+      winRate: r.wins / r.matches,
+      usage: r.matches / games,
+      score: score[i],
+      grade: gradeOf(score[i]),
+    }))
     .sort((a, b) => b.score - a.score);
 }
 
@@ -86,4 +105,5 @@ export function itemTiers(data: BrawlTierListData, items: Item[]): TierEntry<Ite
   return [...groups.values()].flatMap((g) => rank(g, data.hero_games)).sort((a, b) => b.score - a.score);
 }
 
-export const byGrade = <T,>(rows: TierEntry<T>[]) => GRADES.map((grade) => ({ grade, rows: rows.filter((r) => r.grade === grade) }));
+export const byGrade = <T>(rows: TierEntry<T>[]) =>
+  GRADES.map((grade) => ({ grade, rows: rows.filter((r) => r.grade === grade) }));

@@ -1,11 +1,16 @@
 import type { Ability, AbilityOrderStat, AbilityStep, Hero } from '../types';
 
 /** Picks the best-supported ability level-up sequence from aggregate ability-order stats. */
-export function pickAbilityOrder(hero: Hero, abilities: Ability[], stats: AbilityOrderStat[]): { steps: AbilityStep[]; support: { matches: number; winRate: number } | null } {
+export function pickAbilityOrder(
+  hero: Hero,
+  abilities: Ability[],
+  stats: AbilityOrderStat[],
+): { steps: AbilityStep[]; support: { matches: number; winRate: number } | null } {
   const byId = new Map(abilities.map((a) => [a.id, a]));
   const sig = abilities.filter((a) => hero.abilities.includes(a.class_name));
   const sigIds = new Set(sig.map((a) => a.id));
-  const totalW = stats.reduce((a, s) => a + s.wins, 0), totalM = stats.reduce((a, s) => a + s.matches, 0);
+  const totalW = stats.reduce((a, s) => a + s.wins, 0),
+    totalM = stats.reduce((a, s) => a + s.matches, 0);
   const mean = totalM ? totalW / totalM : 0.5;
   const K = Math.max(50, 0.05 * Math.max(1, ...stats.map((s) => s.matches)));
   // score = shrunk win rate * log(matches): favours sequences that are both common and winning
@@ -27,8 +32,10 @@ export function pickAbilityOrder(hero: Hero, abilities: Ability[], stats: Abilit
   const seen = new Map<number, number>();
   const steps: AbilityStep[] = [];
   seq.forEach((id, index) => {
-    const a = byId.get(id); if (!a) return;
-    const n = seen.get(id) ?? 0; seen.set(id, n + 1);
+    const a = byId.get(id);
+    if (!a) return;
+    const n = seen.get(id) ?? 0;
+    seen.set(id, n + 1);
     const kind = n === 0 ? 'unlock' : n === 1 ? 'tier1' : n === 2 ? 'tier2' : 'tier3';
     if (n > 3) return;
     steps.push({ ability: a, kind, index });

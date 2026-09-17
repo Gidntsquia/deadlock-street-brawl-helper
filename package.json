@@ -10,6 +10,10 @@
     "build:electron": "tsc -b && vite build --mode electron",
     "dist": "npm run build:electron && electron-builder",
     "lint": "oxlint",
+    "typecheck": "tsc -b",
+    "test": "vitest run",
+    "format": "prettier --check .",
+    "check": "npm run lint && npm run typecheck && npm run format && npm run test",
     "fetch-data": "node scripts/fetch-data.mjs --brawl",
     "icon-index": "node scripts/build-icon-index.mjs",
     "brawl": "npx tsx scripts/brawl-cli.ts",
@@ -29,19 +33,34 @@
     "electron": "^33.2.1",
     "electron-builder": "^25.1.8",
     "oxlint": "^1.79.0",
+    "prettier": "^3.9.7",
     "sharp": "^0.35.4",
     "tsx": "^4.23.13",
     "typescript": "~6.0.2",
     "vite": "^8.2.2",
     "vite-plugin-electron": "^0.29.0",
-    "vite-plugin-electron-renderer": "^0.14.6"
+    "vite-plugin-electron-renderer": "^0.14.6",
+    "vitest": "^5.0.1"
   },
   "build": {
     "appId": "com.deadlockstreetbrawl.helper",
     "productName": "Deadlock Street Brawl Helper",
-    "directories": { "output": "release" },
-    "files": ["dist/**", "electron-dist/**"],
-    "win": { "target": ["nsis", "portable"] },
-    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true }
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "electron-dist/**"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
   }
 }

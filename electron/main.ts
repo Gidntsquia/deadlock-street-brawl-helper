@@ -1,7 +1,19 @@
-import { app, BrowserWindow, desktopCapturer, globalShortcut, ipcMain, screen, session, Tray, Menu, nativeImage } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  desktopCapturer,
+  globalShortcut,
+  ipcMain,
+  screen,
+  session,
+  Tray,
+  Menu,
+  nativeImage,
+} from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { findGameWindow, type Rect } from './gameWindow';
+import { log } from '../src/log';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL;
@@ -21,36 +33,55 @@ function loadRoute(win: BrowserWindow, route: string) {
 
 function createControlWindow() {
   control = new BrowserWindow({
-    width: 1200, height: 900,
+    width: 1200,
+    height: 900,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true, nodeIntegration: false,
+      contextIsolation: true,
+      nodeIntegration: false,
     },
   });
   loadRoute(control, '#/');
-  control.on('closed', () => { control = null; app.quit(); });
+  control.on('closed', () => {
+    control = null;
+    app.quit();
+  });
 }
 
 function createOverlayWindow() {
   overlay = new BrowserWindow({
-    frame: false, transparent: true, alwaysOnTop: true, skipTaskbar: true,
-    focusable: false, hasShadow: false, resizable: false, show: false,
+    frame: false,
+    transparent: true,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    focusable: false,
+    hasShadow: false,
+    resizable: false,
+    show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true, nodeIntegration: false,
+      contextIsolation: true,
+      nodeIntegration: false,
     },
   });
   overlay.setIgnoreMouseEvents(true, { forward: true });
   overlay.setAlwaysOnTop(true, 'screen-saver');
   loadRoute(overlay, '#/overlay');
-  overlay.on('closed', () => { overlay = null; });
+  overlay.on('closed', () => {
+    overlay = null;
+  });
 }
 
 /** Snaps a physical-pixel screen rect to the DIPs `setBounds` expects on the display it's on. */
 function toDipBounds(rect: Rect) {
   const display = screen.getDisplayMatching({ x: rect.x, y: rect.y, width: rect.width, height: rect.height });
   const scale = display.scaleFactor || 1;
-  return { x: Math.round(rect.x / scale), y: Math.round(rect.y / scale), width: Math.round(rect.width / scale), height: Math.round(rect.height / scale) };
+  return {
+    x: Math.round(rect.x / scale),
+    y: Math.round(rect.y / scale),
+    width: Math.round(rect.width / scale),
+    height: Math.round(rect.height / scale),
+  };
 }
 
 function rectsEqual(a: Rect | null, b: Rect | null) {
@@ -64,6 +95,7 @@ function startRectPolling() {
     const found = findGameWindow(GAME_WINDOW_TITLE);
     if (!rectsEqual(found, lastRect)) {
       lastRect = found;
+      log('electron-main', 'info', found ? 'window.found' : 'window.lost', found ?? undefined);
       control?.webContents.send('game-rect', found);
       if (found && overlay) {
         overlay.setBounds(toDipBounds(found));
@@ -77,32 +109,41 @@ function startRectPolling() {
 
 function setupDisplayMediaHandler() {
   // Serves the Deadlock window directly to getDisplayMedia in the renderer, so no picker dialog appears.
-  session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
-    const sources = await desktopCapturer.getSources({ types: ['window'] });
-    const match = sources.find((s) => s.name.toLowerCase().includes(GAME_WINDOW_TITLE.toLowerCase()));
-    callback({ video: match ?? sources[0] });
-  }, { useSystemPicker: false });
+  session.defaultSession.setDisplayMediaRequestHandler(
+    async (_request, callback) => {
+      const sources = await desktopCapturer.getSources({ types: ['window'] });
+      const match = sources.find((s) => s.name.toLowerCase().includes(GAME_WINDOW_TITLE.toLowerCase()));
+      log('electron-main', match ? 'info' : 'warn', match ? 'capture.chosen' : 'capture.denied', { name: match?.name });
+      callback({ video: match ?? sources[0] });
+    },
+    { useSystemPicker: false },
+  );
 }
 
 function setupIpc() {
   ipcMain.handle('get-game-rect', () => lastRect);
   // Relay: the control window computes advice from its capture and forwards state for the overlay to draw.
-  ipcMain.on('overlay-state', (_event, state) => { overlay?.webContents.send('overlay-state', state); });
+  ipcMain.on('overlay-state', (_event, state) => {
+    overlay?.webContents.send('overlay-state', state);
+  });
 }
 
 function setupTray() {
   const icon = nativeImage.createFromPath(path.join(__dirname, '../public/apple-touch-icon.png'));
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
   tray.setToolTip('Deadlock Street Brawl Helper');
-  tray.setContextMenu(Menu.buildFromTemplate([
-    { label: 'Toggle overlay', click: toggleOverlay },
-    { label: 'Quit', click: () => app.quit() },
-  ]));
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: 'Toggle overlay', click: toggleOverlay },
+      { label: 'Quit', click: () => app.quit() },
+    ]),
+  );
 }
 
 function toggleOverlay() {
   if (!overlay) return;
-  if (overlay.isVisible()) overlay.hide(); else if (lastRect) overlay.showInactive();
+  if (overlay.isVisible()) overlay.hide();
+  else if (lastRect) overlay.showInactive();
 }
 
 app.whenReady().then(() => {
@@ -115,5 +156,10 @@ app.whenReady().then(() => {
   globalShortcut.register('CommandOrControl+Shift+O', toggleOverlay);
 });
 
-app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-app.on('will-quit', () => { globalShortcut.unregisterAll(); if (pollTimer) clearInterval(pollTimer); });
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') app.quit();
+});
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
+  if (pollTimer) clearInterval(pollTimer);
+});

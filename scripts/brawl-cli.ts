@@ -5,57 +5,110 @@
 //   npm run brawl -- --hero 1 --pool           top items per tier for the hero (sanity check of the base scores)
 import { readFileSync } from 'node:fs';
 import { adviseDraft, baseScores, roundTiers, type BrawlInput, type Offer } from '../src/brawl';
+import type { Ability, Hero, Item } from '../src/types';
+import type { BrawlAnalytics, BrawlConfig } from '../src/brawl/types';
 
-const read = (p: string) => JSON.parse(readFileSync(`public/data/${p}`, 'utf8'));
+const read = <T>(p: string): T => JSON.parse(readFileSync(`public/data/${p}`, 'utf8'));
 const args = process.argv.slice(2);
-const opt = (k: string) => { const i = args.indexOf(`--${k}`); return i >= 0 ? args[i + 1] : undefined; };
+const opt = (k: string) => {
+  const i = args.indexOf(`--${k}`);
+  return i >= 0 ? args[i + 1] : undefined;
+};
 const opts = (k: string) => args.flatMap((a, i) => (a === `--${k}` ? [args[i + 1]] : []));
 const asJson = args.includes('--json');
 
-const items = read('items.json'), heroes = read('heroes.json'), abilities = read('abilities.json'), config = read('brawl-config.json');
-const heroByName = (s: string) => heroes.find((h: any) => h.id === Number(s) || h.name.toLowerCase() === s.trim().toLowerCase());
-const itemByName = (s: string) => items.find((i: any) => i.id === Number(s) || i.name.toLowerCase() === s.trim().toLowerCase());
+const items = read<Item[]>('items.json'),
+  heroes = read<Hero[]>('heroes.json'),
+  abilities = read<Ability[]>('abilities.json'),
+  config = read<BrawlConfig>('brawl-config.json');
+const heroByName = (s: string) =>
+  heroes.find((h) => h.id === Number(s) || h.name.toLowerCase() === s.trim().toLowerCase());
+const itemByName = (s: string) =>
+  items.find((i) => i.id === Number(s) || i.name.toLowerCase() === s.trim().toLowerCase());
 const loadInput = (heroId: number): BrawlInput => {
-  const hero = heroes.find((h: any) => h.id === heroId);
+  const hero = heroes.find((h) => h.id === heroId);
   if (!hero) throw new Error(`hero ${heroId} not in snapshot`);
-  return { hero, abilities, items, analytics: read(`analytics/brawl/${heroId}.json`), config };
+  return { hero, abilities, items, analytics: read<BrawlAnalytics>(`analytics/brawl/${heroId}.json`), config };
 };
-const parseOffer = (s: string): Offer => { const enhanced = /\+$/.test(s.trim()); const it = itemByName(s.trim().replace(/\+$/, '')); if (!it) throw new Error(`unknown item "${s}"`); return { itemId: it.id, enhanced }; };
-const list = (s?: string) => (s ? s.split(',').map((x) => x.trim()).filter(Boolean) : []);
+const parseOffer = (s: string): Offer => {
+  const enhanced = /\+$/.test(s.trim());
+  const it = itemByName(s.trim().replace(/\+$/, ''));
+  if (!it) throw new Error(`unknown item "${s}"`);
+  return { itemId: it.id, enhanced };
+};
+const list = (s?: string) =>
+  s
+    ? s
+        .split(',')
+        .map((x) => x.trim())
+        .filter(Boolean)
+    : [];
 
 const hero = heroByName(opt('hero') ?? '1');
 if (!hero) throw new Error(`unknown hero ${opt('hero')}`);
 const input = loadInput(hero.id);
 
 if (args.includes('--pool')) {
-  const enemies = list(opt('enemies')).map((e) => heroByName(e)?.id).filter((x): x is number => !!x);
+  const enemies = list(opt('enemies'))
+    .map((e) => heroByName(e)?.id)
+    .filter((x): x is number => !!x);
   const bases = baseScores(input, enemies);
   for (const t of [1, 2, 3, 4, 5]) {
     const xs = [...bases.values()].filter((b) => b.item.item_tier === t && b.stat).sort((a, b) => b.base - a.base);
     console.log(`\n## ${hero.name} tier ${t} (${xs.length} items with brawl data)`);
-    for (const b of xs.slice(0, 12)) console.log(`  ${b.item.name.padEnd(24)} ${b.item.item_slot_type.padEnd(8)} sc${b.base.toFixed(2)} use${(b.pop * 100).toFixed(0).padStart(3)} wr${(b.stat!.wins / b.stat!.matches * 100).toFixed(1)} lift${b.winLift.toFixed(2)} kit${b.kit.toFixed(2)}${enemies.length ? ` vs${b.counter.toFixed(2)}` : ''} n=${b.stat!.matches}`);
+    for (const b of xs.slice(0, 12))
+      console.log(
+        `  ${b.item.name.padEnd(24)} ${b.item.item_slot_type.padEnd(8)} sc${b.base.toFixed(2)} use${(b.pop * 100).toFixed(0).padStart(3)} wr${((b.stat!.wins / b.stat!.matches) * 100).toFixed(1)} lift${b.winLift.toFixed(2)} kit${b.kit.toFixed(2)}${enemies.length ? ` vs${b.counter.toFixed(2)}` : ''} n=${b.stat!.matches}`,
+      );
   }
   process.exit(0);
 }
 
 const round = Number(opt('round') ?? 1);
-const owned = list(opt('owned')).map((s) => { const it = itemByName(s); if (!it) throw new Error(`unknown item "${s}"`); return it.id as number; });
-const enemies = list(opt('enemies')).map((e) => { const h = heroByName(e); if (!h) throw new Error(`unknown hero "${e}"`); return h.id as number; });
+const owned = list(opt('owned')).map((s) => {
+  const it = itemByName(s);
+  if (!it) throw new Error(`unknown item "${s}"`);
+  return it.id as number;
+});
+const enemies = list(opt('enemies')).map((e) => {
+  const h = heroByName(e);
+  if (!h) throw new Error(`unknown hero "${e}"`);
+  return h.id as number;
+});
 const sets = opts('set').map((s) => list(s).map(parseOffer));
 if (!sets.length) throw new Error('give at least one --set "A,B,C" (or --pool)');
 const advice = adviseDraft(input, { round, owned, enemies, sets });
-if (asJson) { console.log(JSON.stringify({ picks: advice.picks.map((p) => p.item.id), reroll: advice.reroll?.set ?? null, sets: advice.sets.map((s) => s.map((r) => [r.item.id, +r.score.toFixed(3)])) })); process.exit(0); }
+if (asJson) {
+  console.log(
+    JSON.stringify({
+      picks: advice.picks.map((p) => p.item.id),
+      reroll: advice.reroll?.set ?? null,
+      sets: advice.sets.map((s) => s.map((r) => [r.item.id, +r.score.toFixed(3)])),
+    }),
+  );
+  process.exit(0);
+}
 const tiers = roundTiers(input, round);
-console.log(`# ${hero.name}, round ${round} (${config.gold_per_round[round - 1]} souls)${enemies.length ? `, vs ${enemies.map((e) => heroes.find((h: any) => h.id === e).name).join(', ')}` : ''}${owned.length ? `, holding ${owned.map((id) => items.find((i: any) => i.id === id).name).join(', ')}` : ''}`);
+console.log(
+  `# ${hero.name}, round ${round} (${config.gold_per_round[round - 1]} souls)${enemies.length ? `, vs ${enemies.map((e) => heroes.find((h) => h.id === e)?.name).join(', ')}` : ''}${owned.length ? `, holding ${owned.map((id) => items.find((i) => i.id === id)?.name).join(', ')}` : ''}`,
+);
 advice.sets.forEach((set, i) => {
   console.log(`\n## set ${i + 1}${tiers[i] ? ` (tier ${tiers[i].normal}, rare -> ${tiers[i].rare})` : ''}`);
   for (const r of set) {
     const pick = advice.picks.some((p) => p === r);
-    const parts = Object.entries(r.parts).filter(([, v]) => Math.abs(v) >= 0.005).map(([k, v]) => `${k}${v >= 0 ? '+' : ''}${v.toFixed(2)}`).join(' ');
-    console.log(`  ${pick ? '>>' : '  '} ${(r.item.name + (r.enhanced ? '+' : '')).padEnd(26)} T${r.item.item_tier} ${r.item.item_slot_type.padEnd(8)} sc${r.score.toFixed(2)}  ${parts}`);
+    const parts = Object.entries(r.parts)
+      .filter(([, v]) => Math.abs(v) >= 0.005)
+      .map(([k, v]) => `${k}${v >= 0 ? '+' : ''}${v.toFixed(2)}`)
+      .join(' ');
+    console.log(
+      `  ${pick ? '>>' : '  '} ${(r.item.name + (r.enhanced ? '+' : '')).padEnd(26)} T${r.item.item_tier} ${r.item.item_slot_type.padEnd(8)} sc${r.score.toFixed(2)}  ${parts}`,
+    );
     if (r.why.length) console.log(`       ${r.why.join('; ')}`);
   }
 });
 console.log(`\npick: ${advice.picks.map((p) => p.item.name + (p.enhanced ? '+' : '')).join(' / ')}`);
-if (advice.reroll) console.log(`reroll set ${advice.reroll.set + 1}: its best card scores ${advice.reroll.currentBest.toFixed(2)}, a fresh set is expected to offer ${advice.reroll.expectedBest.toFixed(2)} (rare and enhanced slots keep their bonus through the re-roll; an unseen card is tier ${advice.reroll.pool.rareTier} with ${(advice.reroll.pool.pRare * 100).toFixed(0)}% chance)${advice.reroll.holdValue ? `; holding the re-roll for a later set is worth ${advice.reroll.holdValue.toFixed(2)}` : ''}`);
+if (advice.reroll)
+  console.log(
+    `reroll set ${advice.reroll.set + 1}: its best card scores ${advice.reroll.currentBest.toFixed(2)}, a fresh set is expected to offer ${advice.reroll.expectedBest.toFixed(2)} (rare and enhanced slots keep their bonus through the re-roll; an unseen card is tier ${advice.reroll.pool.rareTier} with ${(advice.reroll.pool.pRare * 100).toFixed(0)}% chance)${advice.reroll.holdValue ? `; holding the re-roll for a later set is worth ${advice.reroll.holdValue.toFixed(2)}` : ''}`,
+  );
 else console.log('reroll: keep all three sets');

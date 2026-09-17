@@ -12,9 +12,9 @@ never exposed.
 
 Two Electron `BrowserWindow`s sharing one renderer bundle (the existing Vite build):
 
-| Window | Purpose | Flags |
-|---|---|---|
-| Control | The current UI: hero picker, advice panel, tier list | normal window |
+| Window  | Purpose                                                                    | Flags                                                                                           |
+| ------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Control | The current UI: hero picker, advice panel, tier list                       | normal window                                                                                   |
 | Overlay | Draws only the highlight boxes and "TAKE" label at true screen coordinates | `transparent`, `frame: false`, `alwaysOnTop`, click-through, sized to cover the Deadlock window |
 
 The main process (Node) does what the browser could not: finds the Deadlock window, reads its screen
@@ -55,7 +55,7 @@ rect, and tracks it as it moves or resizes.
 ### 4. Overlay window (1 day)
 
 - Create with `{ transparent: true, frame: false, alwaysOnTop: true, skipTaskbar: true,
-  focusable: false, hasShadow: false }`, then `setIgnoreMouseEvents(true, { forward: true })` and
+focusable: false, hasShadow: false }`, then `setIgnoreMouseEvents(true, { forward: true })` and
   `setAlwaysOnTop(true, 'screen-saver')`.
 - Bounds = game rect from phase 3, updated on every `game-rect` event.
 - New renderer route `#/overlay` rendering a full-window `<canvas>`. It receives

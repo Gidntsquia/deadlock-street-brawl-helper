@@ -1,0 +1,5 @@
+public/data
+dist
+electron-dist
+release
+scripts/fixtures
