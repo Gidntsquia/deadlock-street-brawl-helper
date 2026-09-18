@@ -28,6 +28,22 @@ let tray: Tray | null = null;
 let lastRect: Rect | null = null;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
+// Electron's own setDisplayMediaRequestHandler implementation throws "Video was requested, but no video
+// stream was provided" as an unhandled rejection *inside Electron*, not something our handler's try/catch
+// can reach, whenever the request asked for video (it always does here) and we deny by calling callback({})
+// with none — this is Electron's documented-by-behavior way of surfacing a denial, confirmed against
+// Electron 33's actual runtime (not just its .d.ts, which allows callback({}) but doesn't say what happens
+// next). Left unhandled, Node just warns by default, but log it instead of leaving a scary, unexplained
+// trace on every deny so it doesn't look like a crash.
+process.on('unhandledRejection', (reason) => {
+  const err = reason instanceof Error ? reason : new Error(String(reason));
+  if (err.message === 'Video was requested, but no video stream was provided') {
+    log('electron-main', 'debug', 'capture.deny.artifact', { message: err.message });
+    return;
+  }
+  log('electron-main', 'error', 'unhandled.rejection', { message: err.message, stack: err.stack });
+});
+
 function loadRoute(win: BrowserWindow, route: string) {
   if (DEV_SERVER_URL) win.loadURL(`${DEV_SERVER_URL}${route}`);
   else win.loadFile(path.join(__dirname, '../dist/index.html'), { hash: route.replace(/^#/, '') });

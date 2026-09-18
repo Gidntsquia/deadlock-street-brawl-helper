@@ -224,8 +224,17 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
       } // getDisplayMedia already consumed this click's activation, so requestWindow may need a second click here; that's fine since capture already started
     } catch (e) {
       stopCapture();
-      setStatus(`capture failed: ${(e as Error).message}`);
-      log('brawl-view', 'error', 'capture.fail', { message: (e as Error).message });
+      const err = e as Error;
+      // Electron denies a capture request by calling callback({}) with no video source; Electron's own
+      // getDisplayMedia implementation turns that into this exact AbortError/message combo (never produced
+      // by any other failure in this app), racing with the captureDenied IPC below that already explains it
+      // to the user — so match on the signature itself rather than on message-arrival order, and don't stomp
+      // the friendlier status with this generic one.
+      const isDenyArtifact = isElectron && err.name === 'AbortError' && err.message === 'Error starting capture';
+      if (!isDenyArtifact) {
+        setStatus(`capture failed: ${err.message}`);
+      }
+      log('brawl-view', 'error', 'capture.fail', { message: err.message, denyArtifact: isDenyArtifact });
     }
   };
   useEffect(() => () => stopCapture(), [stopCapture]);
@@ -253,7 +262,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
     });
   }, [capture]);
 
-  // Electron: main.ts denies getDisplayMedia (callback(null)) instead of falling back to some other window
+  // Electron: main.ts denies getDisplayMedia (callback({})) instead of falling back to some other window
   // when Deadlock isn't found, so tell the user why capture never starts instead of leaving them guessing.
   useEffect(() => {
     if (!isElectron) return;
