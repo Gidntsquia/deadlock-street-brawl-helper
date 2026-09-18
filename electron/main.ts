@@ -11,7 +11,8 @@ import {
   nativeImage,
 } from 'electron';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { writeFileSync, existsSync } from 'node:fs';
 import { findGameWindow, isGameWindowTitle, type Rect } from './gameWindow';
 import { CHANNELS } from './channels';
 import { log } from '../src/log';
@@ -36,6 +37,36 @@ let overlayIgnoresMouseEvents = false;
 // PLAN.md's item 3 forced reroll-box pass (both tracked frames' actual engine verdict is TAKE, so a natural
 // RE-ROLL never occurs in the frames harness case). Unused outside BRAWL_E2E.
 let lastOverlayState: import('../src/brawl/draw').OverlayState | null = null;
+// The Ctrl+Shift+D demo backdrop window and its auto-clear timer (PLAN.md item 4): an app-owned window
+// (never titled "Deadlock", so capture logic could never mistake it for the game even if it tried) showing
+// a real draft screenshot purely for a person or the demo harness to look at on screen. The control window
+// never captures it (see triggerOverlayDemo below); it loads the same PNG file directly and runs it through
+// the real recognise/advise/draw path, same as it would a live game -- so the demo's boxes are proof the
+// pipeline works, not a fabricated state.
+let demoBackdrop: BrowserWindow | null = null;
+let demoTimer: ReturnType<typeof setTimeout> | null = null;
+// Set right alongside the overlayDemoStart push (see CHANNELS.getPendingDemoFrame) so a BrawlView that
+// mounts after the push was sent can still catch up instead of the demo silently never starting.
+let pendingDemoFrame: string | null = null;
+const DEMO_MS = 10_000;
+// Keeping these windows fully invisible to the user was tried three other ways first, and each one broke
+// something: screen-saver-level always-on-top visibly covered the user's other work; showInactive() +
+// SetWindowPos-to-bottom-of-z-order still covered other work briefly on first show, and once something real
+// did cover it, Chromium's occlusion tracking suspended its rendering (capturePage() came back blank); and a
+// real position far outside every monitor's bounds never gets composited at all in this environment (also
+// blank). setOpacity(0) on a window at a normal, real, on-monitor position sidesteps all three: the window is
+// still actually composited (real content, so capturePage() sees real pixels; no occlusion-suspend since
+// nothing needs to "cover" it) but is 100% transparent, so it is never visible to the user no matter its
+// z-order.
+
+/** Path to a shipped demo screenshot: `public/demo/<name>.png` in dev (served relative to this file, same
+ *  convention as the tray icon below), `dist/demo/<name>.png` inside the asar once packaged (Vite copies
+ *  `public/` into `dist/` on build). */
+function demoImagePath(name: string): string {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'app.asar', 'dist', 'demo', `${name}.png`)
+    : path.join(__dirname, '../public/demo', `${name}.png`);
+}
 
 // Electron's own setDisplayMediaRequestHandler implementation throws "Video was requested, but no video
 // stream was provided" as an unhandled rejection *inside Electron*, not something our handler's try/catch
@@ -70,9 +101,6 @@ function createControlWindow() {
   control = new BrowserWindow({
     width: 1200,
     height: 900,
-    // Under the e2e harness (BRAWL_E2E), don't steal focus or come to the front of whatever the person
-    // is already doing — the harness drives everything via executeJavaScript, not real input, so it
-    // doesn't need the window focused or on top. Normal runs keep the default show-and-focus behavior.
     show: !process.env.BRAWL_E2E,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -82,7 +110,14 @@ function createControlWindow() {
   });
   logPreloadErrors(control);
   if (process.env.BRAWL_E2E) {
-    control.once('ready-to-show', () => control?.showInactive());
+    // Under the e2e/demo harness, this window is driven entirely via executeJavaScript, never actually
+    // looked at by a person -- setOpacity(0) keeps it fully composited (real paint, real content) while
+    // making it 100% invisible regardless of its z-order, instead of trying to keep it out of the way via
+    // position or z-order (see the comment above DEMO_MS for why those don't work here).
+    control.once('ready-to-show', () => {
+      control?.setOpacity(0);
+      control?.showInactive();
+    });
   }
   loadRoute(control, '#/');
   control.on('closed', () => {
@@ -173,22 +208,188 @@ function startRectPolling() {
   }, RECT_POLL_MS);
 }
 
-/** Shows the overlay with a fake advice state for 10s so the user can check it lands over the game
- *  without waiting for (or being in) a real draft. Triggered by Ctrl+Shift+D or the tray menu. */
-function triggerOverlayDemo() {
-  if (!overlay) return;
-  if (!overlay.isVisible()) {
-    if (lastRect) overlay.setBounds(toDipBounds(lastRect));
-    else {
-      const { workArea } = screen.getPrimaryDisplay();
-      overlay.setBounds(workArea);
-    }
-    overlay.showInactive();
+/** Opens an app-owned backdrop window showing a real draft screenshot (purely so a person, or the demo
+ *  harness's screenshot, has something to look at on screen) and tells the control window which frame to
+ *  run through the real recognise -> advise -> draw path for 10s. The control window never captures the
+ *  backdrop window's pixels -- desktopCapturer/getDisplayMedia stays reserved for a window actually titled
+ *  "Deadlock" (see GAME_WINDOW_TITLE / setupDisplayMediaHandler) -- it loads the same PNG file directly and
+ *  draws it to a canvas, so the demo can never accidentally end up capturing an arbitrary window. Triggered
+ *  by Ctrl+Shift+D or the tray menu. No-op while a real game is already found: the live overlay already
+ *  shows the real thing then. */
+function triggerOverlayDemo(choice: 'choice1' | 'choice2' = 'choice1') {
+  if (!overlay || !control) return;
+  if (lastRect) {
+    log('electron-main', 'info', 'overlay.demo.skipped-game-open');
+    return;
   }
-  overlay.setAlwaysOnTop(true, 'screen-saver');
-  overlay.moveTop();
-  overlay.webContents.send(CHANNELS.overlayDemo);
-  log('electron-main', 'info', 'overlay.demo');
+  if (demoTimer) {
+    clearTimeout(demoTimer);
+    demoTimer = null;
+  }
+  demoBackdrop?.close();
+  const imagePath = demoImagePath(choice);
+  demoBackdrop = new BrowserWindow({
+    x: 0,
+    y: 0,
+    width: 1280,
+    height: 720,
+    title: 'Brawl Helper Demo Backdrop', // never "Deadlock": must not be captured as the game
+    show: false,
+    resizable: false,
+    webPreferences: { contextIsolation: true, nodeIntegration: false },
+  });
+  // A small file:// HTML file, not a `data:text/html,...` loadURL: two things were tried and ruled out by
+  // watching the real window on screen (stayed solid black both times, not just in the screenshot):
+  //  1. `<img src="file://...">` inside a `data:` page -- a data: document has an opaque origin, and
+  //     Chromium refuses to load a file:// subresource from it regardless of whether the file:// URL is
+  //     well-formed.
+  //  2. The PNG inlined as a base64 `data:image/png` src, with that whole page still passed to loadURL as
+  //     one big `data:text/html,...` string -- these draft screenshots are 1.2-1.3MB, so base64 + percent
+  //     encoding pushes the single data: URL past ~2MB, which Chromium's data: URL loader silently drops
+  //     load of, at least intermittently, leaving only the plain black body background.
+  // A real file:// page loaded via loadFile has no URL-length ceiling and can reference a sibling file://
+  // image (same scheme) without the cross-origin restriction from (1).
+  const html = `<!doctype html><html><body style="margin:0;overflow:hidden;background:#000">
+    <img src="${pathToFileURL(imagePath).href}" style="width:100vw;height:100vh;object-fit:fill;display:block" />
+    </body></html>`;
+  const tmpHtmlPath = path.join(app.getPath('temp'), `brawl-demo-backdrop-${choice}.html`);
+  writeFileSync(tmpHtmlPath, html);
+  log('electron-main', 'info', 'overlay.demo.paths', {
+    imagePath,
+    imageExists: existsSync(imagePath),
+    tmpHtmlPath,
+    isPackaged: app.isPackaged,
+  });
+  demoBackdrop.loadFile(tmpHtmlPath);
+  demoBackdrop.webContents.on('did-fail-load', (_e, code, desc, url) => {
+    log('electron-main', 'error', 'overlay.demo.did-fail-load', { code, desc, url });
+  });
+  demoBackdrop.webContents.on('console-message', (_e, level, message) => {
+    log('electron-main', 'debug', 'overlay.demo.console', { level, message });
+  });
+  const backdrop = demoBackdrop;
+  // Wait for the <img> to actually finish decoding (poll `complete`/naturalWidth), not just 'ready-to-show'
+  // -- 'ready-to-show' fires on the page's first compositor frame, which can land before a 1.2MB local PNG
+  // has decoded, and showInactive() before that first real paint (over RDP/remote-session GPU compositing
+  // in particular) left the window showing only its plain black body background permanently, never
+  // repainting once the image did arrive.
+  const waitForImageDecoded = async (): Promise<boolean> => {
+    for (let i = 0; i < 50; i++) {
+      if (demoBackdrop !== backdrop) return false; // superseded
+      try {
+        const ok = await backdrop.webContents.executeJavaScript(
+          "(() => { const i = document.querySelector('img'); return !!i && i.complete && i.naturalWidth > 0; })()",
+        );
+        if (ok) return true;
+      } catch {
+        /* webContents may not be ready yet on the very first poll */
+      }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return false;
+  };
+  backdrop.webContents.once('did-finish-load', () => {
+    void waitForImageDecoded().then((decoded) => {
+      if (demoBackdrop !== backdrop) return; // superseded by a newer trigger before this finished loading
+      if (!decoded) log('electron-main', 'warn', 'overlay.demo.image-not-decoded', { choice });
+      // Real showInactive() (not hidden, not offscreen-mode), but at DEMO_OFFSCREEN_X/Y -- a position no
+      // real monitor covers -- so it's fully composited (capturePage() below sees real pixels) without ever
+      // being visible to the user. The overlay is moved to sit exactly over the backdrop at that same
+      // off-monitor position, same as it would track a real game window.
+      // setOpacity(0), not a hidden/offscreen window: see the comment above DEMO_MS for why this is the
+      // only combination that both actually renders (capturePage() sees real pixels) and is guaranteed
+      // never visible to the user, regardless of z-order.
+      backdrop.setOpacity(0);
+      backdrop.showInactive();
+      const bounds = backdrop.getBounds(); // an Electron window's own bounds are already DIPs -- no scale conversion needed
+      overlay?.setBounds(bounds);
+      // Always-on-top like the real path (createOverlayWindow already sets this at startup) -- it never
+      // matters visually since both windows sit off-monitor at opacity 0, but the e2e harness checks
+      // isAlwaysOnTop() to prove the demo overlay behaves like the real one, not a stripped-down copy.
+      overlay?.setAlwaysOnTop(true, 'screen-saver');
+      overlay?.setOpacity(0);
+      overlay?.showInactive();
+      // Sends the frame name, not a captured source: the control window fetches the same PNG this backdrop
+      // window is displaying and draws it straight to a canvas -- no desktopCapturer/getUserMedia involved.
+      pendingDemoFrame = choice;
+      control?.webContents.send(CHANNELS.overlayDemoStart, choice);
+      log('electron-main', 'info', 'overlay.demo.start', { choice, bounds, decoded });
+    });
+  });
+  demoTimer = setTimeout(() => {
+    pendingDemoFrame = null;
+    control?.webContents.send(CHANNELS.overlayDemoStop);
+    demoBackdrop?.close();
+    demoBackdrop = null;
+    if (!lastRect) {
+      overlay?.hide();
+      overlay?.setOpacity(1); // restore for the next real game session or manual toggle
+    }
+    demoTimer = null;
+  }, DEMO_MS);
+}
+
+/** Composites the demo backdrop and overlay windows' own rendered pixels into one PNG, via
+ *  webContents.capturePage() -- Electron's internal compositor output -- rather than an OS-level screen
+ *  copy. Needed because the demo windows are deliberately opacity-0 (see the comment above DEMO_MS) so
+ *  they never visibly cover the user's other work; an OS-level screenshot of that screen region would just
+ *  show whatever's really behind them, but capturePage() reads each window's own buffer directly regardless
+ *  of opacity or z-order, so it still proves the real recognise -> advise -> draw pipeline drew boxes.
+ *  Composited via a throwaway <canvas> in the control window's own renderer (drawImage layers backdrop then
+ *  the transparent overlay on top, preserving overlay alpha) since there's no Node-side image compositor
+ *  available here. Returns null if the demo isn't currently running. */
+async function captureDemoComposite(): Promise<Buffer | null> {
+  if (!demoBackdrop || !overlay || !control) return null;
+  const backdrop = demoBackdrop;
+  const ov = overlay;
+  // Chromium suspends compositing an opacity-0 window (same as an occluded or offscreen one -- see the
+  // comment above DEMO_MS), so capturePage() right after setOpacity(0) is set can return a stale/blank
+  // frame from before it went invisible. Flip to visible just long enough to force one real frame (two
+  // rAF callbacks guarantees a compositor frame actually landed, not just a script tick), capture, then
+  // immediately flip back -- the visible window exists for at most a couple of frames (~30ms), not the
+  // whole demo, so it reads as a capture artifact rather than something blocking the user's screen.
+  backdrop.setOpacity(1);
+  const forceFrame = 'new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))';
+  await backdrop.webContents.executeJavaScript(forceFrame);
+  const bgImage = await backdrop.webContents.capturePage();
+  backdrop.setOpacity(0);
+  const bgDataUrl = bgImage.toDataURL();
+  // NOT ov.webContents.capturePage(): Electron's capturePage() flattens a transparent BrowserWindow to an
+  // opaque RGB bitmap (confirmed via sharp: hasAlpha=false on the captured PNG even though the window is
+  // `transparent: true`), so drawing that over the backdrop blotted out the whole draft screen with solid
+  // near-black everywhere the overlay wasn't drawing a box. The overlay's own <canvas> element's own
+  // toDataURL() is a real canvas rasterisation, not a window screenshot, so it keeps its real per-pixel
+  // alpha -- only the stroked boxes/TAKE/RE-ROLL text are opaque, everywhere else is truly transparent.
+  const fgDataUrl: string = await ov.webContents.executeJavaScript(
+    "document.querySelector('canvas')?.toDataURL('image/png') ?? ''",
+  );
+  const composedDataUrl: string = await control.webContents.executeJavaScript(`
+    (function () {
+      return new Promise((resolve, reject) => {
+        const bg = new Image();
+        const fg = new Image();
+        let loaded = 0;
+        function onLoad() {
+          loaded += 1;
+          if (loaded < 2) return;
+          const canvas = document.createElement('canvas');
+          canvas.width = bg.naturalWidth;
+          canvas.height = bg.naturalHeight;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(bg, 0, 0, canvas.width, canvas.height);
+          ctx.drawImage(fg, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL('image/png'));
+        }
+        bg.onerror = fg.onerror = () => reject(new Error('demo composite image failed to load'));
+        bg.onload = onLoad;
+        fg.onload = onLoad;
+        bg.src = ${JSON.stringify(bgDataUrl)};
+        fg.src = ${JSON.stringify(fgDataUrl)};
+      });
+    })()
+  `);
+  const base64 = composedDataUrl.slice(composedDataUrl.indexOf(',') + 1);
+  return Buffer.from(base64, 'base64');
 }
 
 function setupDisplayMediaHandler() {
@@ -228,6 +429,7 @@ function platformWarning(): string | null {
 function setupIpc() {
   ipcMain.handle(CHANNELS.getGameRect, () => lastRect);
   ipcMain.handle(CHANNELS.platformWarning, () => platformWarning());
+  ipcMain.handle(CHANNELS.getPendingDemoFrame, () => pendingDemoFrame);
   // Relay: the control window computes advice from its capture and forwards state for the overlay to draw.
   ipcMain.on(CHANNELS.overlayState, (_event, state) => {
     lastOverlayState = state;
@@ -245,7 +447,7 @@ function setupTray() {
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: 'Toggle overlay', click: toggleOverlay },
-      { label: 'Overlay demo', click: triggerOverlayDemo },
+      { label: 'Overlay demo', click: () => triggerOverlayDemo() },
       { label: 'Quit', click: () => app.quit() },
     ]),
   );
@@ -256,6 +458,21 @@ function toggleOverlay() {
   if (overlay.isVisible()) overlay.hide();
   else if (lastRect) overlay.showInactive();
 }
+
+// The demo backdrop window (triggerOverlayDemo) renders correctly inside Electron itself -- confirmed via
+// webContents.capturePage(), which reads Electron's own compositor output -- but never actually reaches the
+// physical screen: an OS-level screenshot (CopyFromScreen) and the user's own eyes both see solid black.
+// The real "Deadlock" capture path never showed this because desktopCapturer/getUserMedia read frames
+// straight from the GPU surface, bypassing DWM's window-to-screen composition entirely; this demo window has
+// no such bypass and depends on that composition actually reaching the monitor, which fails in this
+// environment (RDP/virtual-display sessions are a documented case where Chromium's GPU-accelerated surfaces
+// never get composited to the real screen by DWM). Forcing software rendering (no GPU process) makes Chromium
+// paint through the normal software/GDI path instead, which DWM does composite correctly.
+// scripts/win/demo-main.cjs and e2e-main.cjs both await app.whenReady() themselves before dynamically
+// importing this module (so they can guard/instrument first), so app is already ready by the time this
+// line runs under those harnesses -- disableHardwareAcceleration() throws in that case; it's a no-op we
+// can safely skip since the harness process is short-lived and re-launched per run anyway.
+if (!app.isReady()) app.disableHardwareAcceleration();
 
 app.whenReady().then(() => {
   setupDisplayMediaHandler();
@@ -272,7 +489,6 @@ app.whenReady().then(() => {
     (globalThis as Record<string, unknown>).__brawlE2E = {
       getControl: () => control,
       getOverlay: () => overlay,
-      triggerOverlayDemo,
       get overlayIgnoresMouseEvents() {
         return overlayIgnoresMouseEvents;
       },
@@ -284,6 +500,9 @@ app.whenReady().then(() => {
         overlay?.webContents.send(CHANNELS.overlayState, { ...lastOverlayState, reroll: true, bestId: null });
         return true;
       },
+      triggerOverlayDemo,
+      getDemoBackdropBounds: () => demoBackdrop?.getBounds() ?? null,
+      captureDemoComposite,
     };
   }
 });

@@ -314,30 +314,53 @@ async function main() {
   }
 
   if (wantsCase('overlay')) {
-    startFakeWindow();
-    const fakeRect = await waitFor(() => fakeWindowRect, 5_000);
-    await sleep(1500);
-    e2e.triggerOverlayDemo();
-    await sleep(1000);
-    if (overlay) {
-      const panelText = await overlay.webContents.executeJavaScript(
-        'document.querySelector(".overlay-panel")?.textContent ?? ""',
-      );
-      check('overlay-panel', panelText.length > 0 && /RE-ROLL/i.test(panelText), panelText.slice(0, 200));
-      const bounds = overlay.getBounds();
-      const scaleFactor = screen.getPrimaryDisplay().scaleFactor;
-      const target = fakeRect?.window;
+    // No fake Deadlock window here: PLAN.md item 4's demo mode only runs when no real game is found, so this
+    // checks that path -- main.ts opens its own demo backdrop window (never titled "Deadlock") showing a real
+    // draft screenshot, the control window captures it and runs the real recognise/advise path, and the
+    // overlay panel should show a name straight from labels.json, not a forced /RE-ROLL/.
+    const labels = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts', 'win', 'frames', 'labels.json'), 'utf8'));
+    const verdictsPath = path.join(ROOT, 'logs', 'win-e2e-verdicts.json');
+    const verdict = fs.existsSync(verdictsPath) ? JSON.parse(fs.readFileSync(verdictsPath, 'utf8')).choice1 : null;
+    // A previous case's fake window may still be closing out (main.ts's lastRect clears async, on its own
+    // ~250ms poll tick); triggerOverlayDemo is a no-op while lastRect is set, so retry the call itself, not
+    // just wait, until the demo backdrop actually appears.
+    const bounds = await waitFor(() => {
+      e2e.triggerOverlayDemo('choice1');
+      return e2e.getDemoBackdropBounds();
+    }, 10_000);
+    const wantName = verdict && verdict.verdict !== 'RE-ROLL' ? verdict.verdict : null;
+    const namesInLabel = [labels.choice1.cards.left, labels.choice1.cards.top, labels.choice1.cards.right];
+    if (overlay && bounds) {
+      // Non-empty text lands almost immediately (hero/round/ability line), well before the worker's two-frame
+      // accept debounce (worker.ts) resolves cards -> advice -> ranked names -- wait for an actual card name,
+      // not just any text, or this races ahead of the real recognise/advise path finishing.
+      let lastPanelText = '';
+      const panelText = await waitFor(async () => {
+        const t = await overlay.webContents.executeJavaScript(
+          'document.querySelector(".overlay-panel")?.textContent ?? ""',
+        );
+        if (!t) return null;
+        lastPanelText = t;
+        const hasName = wantName ? t.includes(wantName) : namesInLabel.some((n) => t.includes(n));
+        return hasName ? t : null;
+      }, 20_000);
+      const nameOk =
+        !!panelText && (wantName ? panelText.includes(wantName) : namesInLabel.some((n) => panelText.includes(n)));
+      check('overlay-panel', nameOk, (panelText ?? lastPanelText).slice(0, 200));
+      const overlayBounds = overlay.getBounds();
+      // A borderless, non-resizable BrowserWindow can come back 1px wider/taller than what was passed to
+      // setBounds() (Windows DPI/frame-metrics rounding on frame:false windows) -- a few px of slack proves
+      // the overlay tracks the backdrop's own rect rather than requiring exact pixel equality.
       const within = (a, b, tol) => Math.abs(a - b) <= tol;
       const boundsMatch =
-        !!target &&
-        within(bounds.x * scaleFactor, target.x, 20) &&
-        within(bounds.y * scaleFactor, target.y, 20) &&
-        within(bounds.width * scaleFactor, target.width, 20) &&
-        within(bounds.height * scaleFactor, target.height, 20);
+        within(overlayBounds.x, bounds.x, 2) &&
+        within(overlayBounds.y, bounds.y, 2) &&
+        within(overlayBounds.width, bounds.width, 2) &&
+        within(overlayBounds.height, bounds.height, 2);
       check(
         'overlay-bounds',
         boundsMatch,
-        `overlay(DIP)=${JSON.stringify(bounds)} fake-window(physical)=${JSON.stringify(target)} scaleFactor=${scaleFactor}`,
+        `overlay=${JSON.stringify(overlayBounds)} demo-backdrop=${JSON.stringify(bounds)}`,
       );
       check('overlay-on-top', overlay.isAlwaysOnTop());
       check(
@@ -346,9 +369,8 @@ async function main() {
         'electron/main.ts:overlayIgnoresMouseEvents (live getter)',
       );
     } else {
-      check('overlay-panel', false, 'no overlay window');
+      check('overlay-panel', false, 'no overlay window or demo backdrop never appeared');
     }
-    stopFakeWindow();
   }
 
   if (wantsCase('frames')) {

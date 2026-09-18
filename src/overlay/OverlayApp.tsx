@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import { drawReads, type DrawnRect, type OverlayState } from '../brawl/draw';
-import { cardAnchors } from '../brawl/recognise';
 import { log } from '../log';
 
 declare global {
@@ -9,37 +8,6 @@ declare global {
   }
 }
 
-const DEMO_MS = 10_000;
-
-const DEMO_STATE: OverlayState = {
-  reads: cardAnchors(2560, 1440).map((a, k) => ({
-    card: a.name,
-    match: { itemId: k + 1, x: a.cx - a.icon / 2, y: a.cy - a.icon / 2, edge: a.icon, score: 1, margin: 0.5 },
-    present: true,
-    itemId: k + 1,
-    tier: 2,
-    rare: false,
-    enhanced: false,
-  })),
-  bestId: null,
-  reroll: true, // demo shows both the (dimmed) card boxes and the RE-ROLL box at once, so a single check covers both
-  frameW: 2560,
-  frameH: 1440,
-  advice: {
-    hero: 'Infernus',
-    round: 2,
-    choice: 1,
-    reroll: { expectedBest: 2.31, currentBest: 2.0 },
-    ranked: [
-      { name: 'Berserker', score: 2.14, enhanced: false, usage: 0.41, winRate: 0.56 },
-      { name: 'Slowing Bullets', score: 1.9, enhanced: false, usage: 0.33, winRate: 0.52 },
-      { name: 'Extra Health', score: 1.6, enhanced: false, usage: 0.28, winRate: 0.5 },
-    ],
-    abilityLine: 'Catalyst > Afterburn Firestorm Flame Dash',
-    status: 'demo mode · Ctrl+Shift+D',
-  },
-};
-
 /** Renders in the transparent, click-through overlay window: the highlight boxes/"TAKE" label on the
  *  canvas, plus a fixed HTML panel (bottom-left, out of the inventory grid and ability bar) mirroring the
  *  pop-out's ranked cards, RE-ROLL banner and ability line, so the player never has to alt-tab. */
@@ -47,9 +15,6 @@ export default function OverlayApp() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const stateRef = useRef<OverlayState | null>(null);
   const [panelState, setPanelState] = useState<OverlayState | null>(null);
-  // While a demo is showing, real capture-driven overlayState updates (which keep arriving on their own
-  // tick if the game happens to also be captured right now) must not clobber it before its 10s are up.
-  const demoActiveRef = useRef(false);
 
   const draw = (state: OverlayState) => {
     const c = canvasRef.current;
@@ -97,33 +62,9 @@ export default function OverlayApp() {
       return;
     }
     return api.onOverlayState((state) => {
-      if (demoActiveRef.current) return;
       stateRef.current = state;
       setPanelState(state);
       draw(state);
-    });
-  }, []);
-
-  // Ctrl+Shift+D demo mode: shows a fake state (three boxes, a sample RE-ROLL box, sample advice panel)
-  // for 10s so the overlay can be checked without waiting for, or being in, a real draft.
-  useEffect(() => {
-    const api = window.brawlAPI;
-    if (!api) return;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    return api.onOverlayDemo(() => {
-      log('overlay', 'info', 'overlay.demo.start');
-      demoActiveRef.current = true;
-      stateRef.current = DEMO_STATE;
-      setPanelState(DEMO_STATE);
-      draw(DEMO_STATE);
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        demoActiveRef.current = false;
-        stateRef.current = null;
-        setPanelState(null);
-        const c = canvasRef.current;
-        c?.getContext('2d')?.clearRect(0, 0, c.width, c.height);
-      }, DEMO_MS);
     });
   }, []);
 

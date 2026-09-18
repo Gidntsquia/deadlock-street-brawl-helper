@@ -30,11 +30,22 @@ const api = {
     };
   },
   getPlatformWarning: (): Promise<string | null> => ipcRenderer.invoke(CHANNELS.platformWarning),
-  onOverlayDemo: (cb: () => void) => {
-    const listener = () => cb();
-    ipcRenderer.on(CHANNELS.overlayDemo, listener);
+  getPendingDemoFrame: (): Promise<string | null> => ipcRenderer.invoke(CHANNELS.getPendingDemoFrame),
+  // Control window only: main.ts found no real game and wants the named demo frame (e.g. "choice1") run
+  // through the real recognise -> engine path (PLAN.md item 4) -- fetched and drawn directly, never captured
+  // via desktopCapturer/getUserMedia (that stays reserved for a window actually titled "Deadlock").
+  onOverlayDemoStart: (cb: (frame: string) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, frame: string) => cb(frame);
+    ipcRenderer.on(CHANNELS.overlayDemoStart, listener);
     return () => {
-      ipcRenderer.removeListener(CHANNELS.overlayDemo, listener);
+      ipcRenderer.removeListener(CHANNELS.overlayDemoStart, listener);
+    };
+  },
+  onOverlayDemoStop: (cb: () => void) => {
+    const listener = () => cb();
+    ipcRenderer.on(CHANNELS.overlayDemoStop, listener);
+    return () => {
+      ipcRenderer.removeListener(CHANNELS.overlayDemoStop, listener);
     };
   },
 };

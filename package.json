@@ -24,7 +24,8 @@
     "win:setup": "bash scripts/win/setup.sh",
     "win:sync": "bash scripts/win/sync.sh",
     "win:e2e": "bash scripts/win/run-e2e.sh",
-    "win:dev": "bash scripts/win/run-dev.sh"
+    "win:dev": "bash scripts/win/run-dev.sh",
+    "win:demo": "bash scripts/win/run-demo.sh"
   },
   "dependencies": {
     "koffi": "^2.9.0",

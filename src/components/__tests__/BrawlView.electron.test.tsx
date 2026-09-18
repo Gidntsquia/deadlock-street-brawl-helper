@@ -35,7 +35,9 @@ let onGameRectCb: ((rect: { x: number; y: number; width: number; height: number 
       onCaptureDeniedCb = undefined;
     };
   },
-  onOverlayDemo: () => () => {},
+  onOverlayDemoStart: () => () => {},
+  onOverlayDemoStop: () => () => {},
+  getPendingDemoFrame: () => Promise.resolve(null),
   getPlatformWarning: () => Promise.resolve(null),
 };
 
