@@ -14,6 +14,7 @@ import {
   type IconIndex,
   type Offer,
   type RankedOffer,
+  type RerollAdvice,
 } from '../brawl';
 import type { WorkerIn, WorkerOut } from '../brawl/worker';
 import { drawReads } from '../brawl/draw';
@@ -197,6 +198,19 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
   };
   useEffect(() => () => stopCapture(), [stopCapture]);
 
+  // Belt-and-braces: if the <video> element instance ever changes (React remounting it for any reason)
+  // while a capture stream is live, re-attach it instead of leaving the new element with no srcObject.
+  useEffect(() => {
+    const v = videoRef.current;
+    const stream = streamRef.current;
+    if (!v || !stream) return;
+    if (v.srcObject !== stream) {
+      v.srcObject = stream;
+      void v.play();
+      log('brawl-view', 'info', 'capture.rebind');
+    }
+  });
+
   // Electron: no picker to click through (main.ts serves the Deadlock window via setDisplayMediaRequestHandler),
   // so start capture as soon as the game window is found instead of waiting for a click.
   useEffect(() => {
@@ -336,60 +350,26 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
       return n.filter((o) => o.itemId).slice(0, 3);
     });
 
-  if (error) return <div className="error">{error}</div>;
-  if (!input) return <div className="loading">Loading Street Brawl data…</div>;
-
+  // Never early-return before the <video>: doing so unmounts the hidden element holding the capture
+  // stream, so the worker loop stops getting frames on any hero change (loaded.heroId !== hero.id
+  // reopens this loading gap until the new hero's analytics resolve). Show the loading/error state
+  // inside the advice area instead.
   const advicePanel = (
-    <div className="brawl-advice">
-      {!cards.length && (
-        <div className="muted">
-          {capture === 'on'
-            ? status
-            : 'No cards yet. Start the screen capture above, or pick the three cards yourself in "Cards on screen" below.'}
-        </div>
-      )}
-      {took_ && (
-        <div className="muted">
-          Took {took_} · {owned.length} owned
-        </div>
-      )}
-      {ranked.map((r, k) => (
-        <button
-          key={r.item.id}
-          className={`brawl-card ${k === 0 ? 'best' : ''}`}
-          onClick={() => took(r)}
-          title={`score ${r.score.toFixed(2)} · ${
-            capture === 'on' ? 'picks are read from the inventory grid; click only if it missed' : 'I took this one'
-          }`}
-        >
-          <ItemTile item={r.item} />
-          <span className="brawl-card-body">
-            <b>
-              {k === 0 ? 'TAKE' : `#${k + 1}`} {r.item.name}
-              {r.enhanced ? ' (enhanced)' : ''}
-            </b>
-            <small>
-              {k === 0 ? 'best' : `−${((1 - r.score / ranked[0].score) * 100).toFixed(0)}% vs best`} · used by{' '}
-              {(r.usage * 100).toFixed(0)}% of {hero.name}s
-              {r.winRate !== null ? `, wins ${(r.winRate * 100).toFixed(0)}%` : ''}
-              {r.known ? '' : ' · no brawl data'}
-            </small>
-            {r.why.length > 0 && <small>{r.why.join('; ')}</small>}
-          </span>
-        </button>
-      ))}
-      {reroll && (
-        <div className="brawl-reroll">
-          Re-roll this set: best card {reroll.currentBest.toFixed(2)}, a fresh set should offer{' '}
-          {reroll.expectedBest.toFixed(2)} (rare and enhanced slots stay rare and enhanced)
-          {reroll.holdValue > 0 ? ` (saving it for a later set is worth ${reroll.holdValue.toFixed(2)})` : ''}{' '}
-          <button className="btn" onClick={rerolled}>
-            I re-rolled
-          </button>
-        </div>
-      )}
-      {cards.length > 0 && !reroll && <div className="muted">Keep this set{rerolls ? '' : ' (no re-rolls left)'}.</div>}
-    </div>
+    <AdvicePanel
+      input={input}
+      error={error}
+      cards={cards}
+      capture={capture}
+      status={status}
+      took_={took_}
+      owned={owned}
+      ranked={ranked}
+      reroll={reroll}
+      rerolls={rerolls}
+      hero={hero}
+      took={took}
+      rerolled={rerolled}
+    />
   );
 
   return (
@@ -421,7 +401,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
             >
               {[1, 2, 3, 4, 5].map((r) => (
                 <option key={r} value={r}>
-                  {r} ({input.config.gold_per_round[r - 1]} souls)
+                  {r} ({config?.gold_per_round[r - 1] ?? '…'} souls)
                 </option>
               ))}
             </select>
@@ -616,3 +596,97 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
 }
 
 const toOffer = (r: CardRead): Offer => ({ itemId: r.itemId, enhanced: r.enhanced });
+
+interface AdvicePanelProps {
+  input: BrawlInput | null;
+  error: string | null;
+  cards: Offer[];
+  capture: 'off' | 'starting' | 'on';
+  status: string;
+  took_: string;
+  owned: number[];
+  ranked: RankedOffer[];
+  reroll: RerollAdvice | null;
+  rerolls: number;
+  hero: Hero;
+  took: (r: RankedOffer) => void;
+  rerolled: () => void;
+}
+
+/** Split out so the loading/error state (shown while `input` is null, e.g. right after a hero change)
+ *  never has to gate what renders above it in BrawlView — see the "never early-return before <video>" note. */
+function AdvicePanel({
+  input,
+  error,
+  cards,
+  capture,
+  status,
+  took_,
+  owned,
+  ranked,
+  reroll,
+  rerolls,
+  hero,
+  took,
+  rerolled,
+}: AdvicePanelProps) {
+  if (!input) {
+    return (
+      <div className="brawl-advice">
+        {error ? <div className="error">{error}</div> : <div className="loading">Loading Street Brawl data…</div>}
+      </div>
+    );
+  }
+  return (
+    <div className="brawl-advice">
+      {!cards.length && (
+        <div className="muted">
+          {capture === 'on'
+            ? status
+            : 'No cards yet. Start the screen capture above, or pick the three cards yourself in "Cards on screen" below.'}
+        </div>
+      )}
+      {took_ && (
+        <div className="muted">
+          Took {took_} · {owned.length} owned
+        </div>
+      )}
+      {ranked.map((r, k) => (
+        <button
+          key={r.item.id}
+          className={`brawl-card ${k === 0 ? 'best' : ''}`}
+          onClick={() => took(r)}
+          title={`score ${r.score.toFixed(2)} · ${
+            capture === 'on' ? 'picks are read from the inventory grid; click only if it missed' : 'I took this one'
+          }`}
+        >
+          <ItemTile item={r.item} />
+          <span className="brawl-card-body">
+            <b>
+              {k === 0 ? 'TAKE' : `#${k + 1}`} {r.item.name}
+              {r.enhanced ? ' (enhanced)' : ''}
+            </b>
+            <small>
+              {k === 0 ? 'best' : `−${((1 - r.score / ranked[0].score) * 100).toFixed(0)}% vs best`} · used by{' '}
+              {(r.usage * 100).toFixed(0)}% of {hero.name}s
+              {r.winRate !== null ? `, wins ${(r.winRate * 100).toFixed(0)}%` : ''}
+              {r.known ? '' : ' · no brawl data'}
+            </small>
+            {r.why.length > 0 && <small>{r.why.join('; ')}</small>}
+          </span>
+        </button>
+      ))}
+      {reroll && (
+        <div className="brawl-reroll">
+          Re-roll this set: best card {reroll.currentBest.toFixed(2)}, a fresh set should offer{' '}
+          {reroll.expectedBest.toFixed(2)} (rare and enhanced slots stay rare and enhanced)
+          {reroll.holdValue > 0 ? ` (saving it for a later set is worth ${reroll.holdValue.toFixed(2)})` : ''}{' '}
+          <button className="btn" onClick={rerolled}>
+            I re-rolled
+          </button>
+        </div>
+      )}
+      {cards.length > 0 && !reroll && <div className="muted">Keep this set{rerolls ? '' : ' (no re-rolls left)'}.</div>}
+    </div>
+  );
+}

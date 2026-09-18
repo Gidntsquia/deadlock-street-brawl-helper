@@ -17,4 +17,7 @@ export default defineConfig(({ mode }) => ({
       ]),
   ],
   server: { host: true },
+  test: {
+    environmentMatchGlobs: [['src/components/**', 'jsdom']],
+  },
 }));
