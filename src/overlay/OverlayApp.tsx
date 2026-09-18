@@ -41,6 +41,9 @@ export default function OverlayApp() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const stateRef = useRef<OverlayState | null>(null);
   const [panelState, setPanelState] = useState<OverlayState | null>(null);
+  // While a demo is showing, real capture-driven overlayState updates (which keep arriving on their own
+  // tick if the game happens to also be captured right now) must not clobber it before its 10s are up.
+  const demoActiveRef = useRef(false);
 
   const draw = (state: OverlayState) => {
     const c = canvasRef.current;
@@ -82,6 +85,7 @@ export default function OverlayApp() {
       return;
     }
     return api.onOverlayState((state) => {
+      if (demoActiveRef.current) return;
       stateRef.current = state;
       setPanelState(state);
       draw(state);
@@ -96,11 +100,13 @@ export default function OverlayApp() {
     let timer: ReturnType<typeof setTimeout> | null = null;
     return api.onOverlayDemo(() => {
       log('overlay', 'info', 'overlay.demo.start');
+      demoActiveRef.current = true;
       stateRef.current = DEMO_STATE;
       setPanelState(DEMO_STATE);
       draw(DEMO_STATE);
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
+        demoActiveRef.current = false;
         stateRef.current = null;
         setPanelState(null);
         const c = canvasRef.current;
