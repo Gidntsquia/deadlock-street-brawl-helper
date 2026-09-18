@@ -39,3 +39,13 @@ Repo constitution for planner / worker / evaluator agents. Overrides generic sta
 - Layout anchors in the recogniser are for 2560×1440; other 16:9 sizes scale. No fixtures exist for other
   resolutions.
 - User docs live in the GitHub wiki; README is quickstart only. `plans/` is gitignored planner state.
+- The game window is matched by exact title `Deadlock` (`electron/main.ts`, `electron/gameWindow.ts`), never
+  by substring: the app's own window is "Deadlock Street Brawl Helper".
+- `screenshots/` is gitignored reference material (full draft frames the user supplies); it is not a fixture
+  directory and nothing in tests may depend on it.
+- Component tests (anything rendering React, e.g. `<BrawlView/>`) live under `src/components/__tests__/`
+  and run in `jsdom` via `vite.config.ts`'s `test.environmentMatchGlobs`; the rest of the suite (`src/brawl`,
+  `electron`, `scripts`) stays on the default Node environment. Don't add a global jsdom environment.
+- `OverlayState` (`src/brawl/draw.ts`) is the full contract between the control window and the Electron
+  overlay: card reads, the re-roll flag/rect, and the `advice` panel data (names, not ids — the overlay has
+  no item/ability catalog). Extend it there, not with ad hoc IPC payloads.

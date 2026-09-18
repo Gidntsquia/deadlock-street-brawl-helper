@@ -53,9 +53,13 @@ npm run dist   # Windows only; builds release/*.exe (installer + portable)
 ```
 
 Start Deadlock in borderless windowed mode, then launch the exe: capture starts on its own once the
-Deadlock window is found, no picker dialog. Ctrl+Shift+O toggles the overlay; the tray icon has a
-Quit item. If Deadlock isn't running, the app says "Deadlock window not found" instead of capturing
-some other window. The browser path above still works cross-platform and needs no packaging.
+Deadlock window is found, no picker dialog. The advice — ranked cards, RE-ROLL banner, ability order —
+is drawn straight onto the game in a small always-on-top panel, so you never have to alt-tab.
+Ctrl+Shift+O toggles the overlay; Ctrl+Shift+D shows it with sample advice for 10s so you can check
+placement without a live draft; the tray icon also has a Quit item. If Deadlock isn't running, the app
+says "Deadlock window not found" instead of capturing some other window (matched by the game's exact
+window title, so the app's own window is never mistaken for it). The browser path above still works
+cross-platform and needs no packaging.
 
 ## Features 🔬
 
@@ -63,14 +67,20 @@ some other window. The browser path above still works cross-platform and needs n
   the screen. Nothing is sent to the game.
 - Cards are ranked for the hero you're playing, from how often the item is picked in Street Brawl,
   its win rate there, and how well it scales that hero's abilities.
-- Re-roll advice compares the best card in front of you with what a fresh set is expected to offer.
+- Re-roll advice compares the best card in front of you with what a fresh set is expected to offer, shown
+  as an unmissable amber banner; the on-screen box moves to the "Use Re-Roll" button instead of a card.
   A re-rolled rare or enhanced slot stays rare or enhanced, which is part of the call.
+- An ability upgrade order for the hero you're playing, ranked by Street Brawl usage and win rate, with
+  the step you're probably on now highlighted.
+- Your hero is auto-detected from the scoreboard as soon as the draft screen is read, with an "auto"
+  badge next to the name so you can see it happened; you can still pick a hero manually.
 - The enemy heroes read off the scoreboard move the ranking toward items that do well against them.
 - The legendary items that only appear in Street Brawl are ranked alongside everything else.
 - A second tab grades every hero and every draftable item S, A, B or C from the last 30 days.
 - If the capture misses a card you can pick the three yourself, and the ranking updates.
 - No backend. Everything runs in the browser off the snapshot in the repo.
 - Your hero, tab, round and enemy picks are remembered across reloads (stored in the browser only).
+- Switching hero mid-draft (by hand or auto-detect) never interrupts the capture.
 
 ## Documentation 📚
 
