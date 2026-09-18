@@ -102,4 +102,21 @@ describe('BrawlView (Electron capture-denied)', () => {
     onGameRectCb?.({ x: 0, y: 0, width: 1280, height: 720 });
     await waitFor(() => expect(calls()).toBe(before + 1));
   });
+
+  it('shows "capture failed: <message>" for an AbortError that is not accompanied by the capture-denied IPC', async () => {
+    (navigator as unknown as { mediaDevices: unknown }).mediaDevices = {
+      // Same AbortError shape as a real denial, but main.ts never sent the capture-denied IPC for it —
+      // must not be guessed as a denial from the error's name/message alone.
+      getDisplayMedia: vi.fn(() => Promise.reject(new DOMException('Error starting capture', 'AbortError'))),
+    };
+    const heroes = readJson('heroes.json') as Hero[];
+    const items = readJson('items.json') as Item[];
+    const abilities = readJson('abilities.json') as Ability[];
+    const hero = heroes.find((h) => h.id === 1)!;
+
+    render(<BrawlView hero={hero} heroes={heroes} items={items} abilities={abilities} onHero={() => {}} />);
+
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('capture failed:'));
+    expect(screen.getByRole('status').textContent).not.toContain('Deadlock window not found');
+  });
 });

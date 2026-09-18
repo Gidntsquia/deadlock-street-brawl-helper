@@ -7,7 +7,7 @@ process.env.BRAWL_E2E = '1';
 const path = require('node:path');
 const { spawnSync, spawn } = require('node:child_process');
 const fs = require('node:fs');
-const { app } = require('electron');
+const { app, screen } = require('electron');
 
 const ROOT = path.join(__dirname, '..', '..');
 const FAKE_PS1 = path.join(__dirname, 'fake-deadlock.ps1');
@@ -41,29 +41,49 @@ function runPs(args) {
 }
 
 const DEBUG_LOG = path.join(ROOT, 'logs', 'win-e2e-debug.log');
+try {
+  fs.mkdirSync(path.dirname(DEBUG_LOG), { recursive: true });
+  fs.writeFileSync(DEBUG_LOG, `${new Date().toISOString()} --- run start ---\n`);
+} catch {
+  /* best effort */
+}
 function dbg(msg) {
   try {
     fs.appendFileSync(DEBUG_LOG, `${new Date().toISOString()} ${msg}\n`);
   } catch {
     /* best effort */
   }
-  console.log(msg);
+  process.stdout.write(msg + '\n'); // not console.log: console.log is wrapped below to call dbg()
 }
 
 let fakeProc = null;
-function startFakeWindow() {
+let fakeWindowRect = null; // { pid, client:{x,y,width,height}, window:{...} } parsed from fake-deadlock.ps1's stdout
+function startFakeWindow(args = []) {
   stopFakeWindow();
+  fakeWindowRect = null;
   dbg(`spawning fake-deadlock.ps1: ${FAKE_PS1} exists=${fs.existsSync(FAKE_PS1)}`);
   // NOTE: detached:true here made the child exit almost instantly on Windows (code 0, no window,
   // no pidfile written) instead of blocking in Application.Run — verified by isolating the spawn
   // outside Electron entirely. Non-detached works correctly; we kill it explicitly via -Stop in
   // stopFakeWindow()/finish(), so we don't need OS-level detachment.
-  fakeProc = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', FAKE_PS1], {
+  fakeProc = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', FAKE_PS1, ...args], {
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: false,
   });
   dbg(`fake-deadlock pid=${fakeProc.pid}`);
-  fakeProc.stdout?.on('data', (d) => dbg('fake-deadlock stdout: ' + d.toString()));
+  fakeProc.stdout?.on('data', (d) => {
+    const text = d.toString();
+    dbg('fake-deadlock stdout: ' + text);
+    for (const line of text.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('{')) continue;
+      try {
+        fakeWindowRect = JSON.parse(trimmed);
+      } catch {
+        /* not our JSON line */
+      }
+    }
+  });
   fakeProc.stderr?.on('data', (d) => dbg('fake-deadlock stderr: ' + d.toString()));
   fakeProc.on('error', (e) => dbg('fake-deadlock spawn error: ' + e.message));
   fakeProc.on('exit', (code, sig) => dbg(`fake-deadlock exited code=${code} sig=${sig}`));
@@ -85,11 +105,18 @@ async function waitFor(fn, timeoutMs, stepMs = 200) {
 
 // main.ts's own unhandledRejection handler filters exactly one known Electron artifact to debug and logs
 // everything else via src/log.ts's console.error(JSON...) — count those (main process, not renderer).
+// Also mirrors every main-process console.log/console.error line into the debug log file.
 let mainProcessUnhandledCount = 0;
 const realConsoleError = console.error.bind(console);
 console.error = (...args) => {
   if (typeof args[0] === 'string' && args[0].includes('"msg":"unhandled.rejection"')) mainProcessUnhandledCount++;
+  dbg('main-process stderr: ' + args.map(String).join(' '));
   realConsoleError(...args);
+};
+const realConsoleLog = console.log.bind(console);
+console.log = (...args) => {
+  dbg('main-process stdout: ' + args.map(String).join(' '));
+  realConsoleLog(...args);
 };
 
 const PID_FILE = path.join(require('node:os').tmpdir(), 'brawl-fake-deadlock.pid');
@@ -116,7 +143,11 @@ function checkNoRealGameOpen() {
   const ourPid = fs.existsSync(PID_FILE) ? Number(fs.readFileSync(PID_FILE, 'utf8').trim()) : null;
   const foreign = titledDeadlock.filter((p) => p !== ourPid);
   if (foreign.length > 0) {
-    check('real-game-open', false, `pid(s) ${foreign.join(',')} have a window titled 'Deadlock' that this harness did not start`);
+    check(
+      'real-game-open',
+      false,
+      `pid(s) ${foreign.join(',')} have a window titled 'Deadlock' that this harness did not start`,
+    );
     return false;
   }
   return true;
@@ -163,7 +194,23 @@ async function main() {
     check('app-boot', false, 'control window never created');
     return finish(1);
   }
-  await sleep(500); // let preload/render settle
+
+  // Attached before any capture attempt (including the auto-start-on-mount one) so capture-start-seen below
+  // can prove at least one capture.start line was ever emitted, not just that the retry-window count is low.
+  // Every renderer console-message and main-process log line also goes to logs/win-e2e-debug.log.
+  let captureStartTotal = 0;
+  let captureStartWindow = 0;
+  const onControlConsole = (_e, _level, message) => {
+    dbg('control console: ' + message);
+    if (/"msg":"capture\.attempt"/.test(message)) {
+      captureStartTotal++;
+      captureStartWindow++;
+    }
+  };
+  control.webContents.on('console-message', onControlConsole);
+  overlay?.webContents.on('console-message', (_e, _level, message) => dbg('overlay console: ' + message));
+
+  await waitFor(() => control.webContents.executeJavaScript('document.readyState === "complete"'), 10_000);
 
   if (wantsCase('boot')) {
     let preloadError = false;
@@ -175,31 +222,33 @@ async function main() {
       const overlayApi = await overlay.webContents.executeJavaScript('typeof window.brawlAPI');
       check('preload-overlay', overlayApi === 'object', `typeof window.brawlAPI = ${overlayApi}`);
     }
-    const bodyLen = await control.webContents.executeJavaScript('document.body.innerText.length');
-    check('render', bodyLen > 50, `body.innerText.length=${bodyLen}`);
+    // waitFor only stops on a truthy return, so a raw length (truthy even at e.g. 18, the "Loading
+    // snapshots…" placeholder) would resolve immediately; only resolve once it's actually past the
+    // threshold, and keep the last-seen length for the failure detail either way.
+    let lastBodyLen = 0;
+    const renderedLen = await waitFor(async () => {
+      lastBodyLen = await control.webContents.executeJavaScript('document.body.innerText.length');
+      return lastBodyLen > 50 ? lastBodyLen : null;
+    }, 10_000);
+    check('render', !!renderedLen, `body.innerText.length=${lastBodyLen}`);
     await sleep(300);
     check('no-preload-error', !preloadError);
   }
 
   if (wantsCase('capture-denied')) {
     stopFakeWindow();
-    let captureStartCount = 0;
-    const onConsole = (_e, _level, message) => {
-      if (/"msg":"capture\.start"/.test(message)) captureStartCount++;
-    };
-    control.webContents.on('console-message', onConsole);
 
     await sleep(6000); // Electron's auto-start-on-mount attempt should have been denied by now
+    check('capture-start-seen', captureStartTotal >= 1, `capture.attempt lines seen since boot: ${captureStartTotal}`);
     const statusText = await control.webContents.executeJavaScript(
       'document.querySelector(".brawl-status")?.textContent ?? ""',
     );
     check('status-text', statusText.includes('Deadlock window not found'), `status="${statusText}"`);
 
-    captureStartCount = 0; // only count retries from here
+    captureStartWindow = 0; // only count retries from here
     mainProcessUnhandledCount = 0;
     await sleep(10_000);
-    check('no-retry-loop', captureStartCount <= 1, `capture.start console lines in 10s: ${captureStartCount}`);
-    control.webContents.removeListener('console-message', onConsole);
+    check('no-retry-loop', captureStartWindow <= 1, `capture.attempt console lines in 10s: ${captureStartWindow}`);
 
     check(
       'no-unhandled',
@@ -210,6 +259,7 @@ async function main() {
 
   if (wantsCase('capture-recover') || wantsCase('capture-found')) {
     startFakeWindow();
+    const fakeRect = await waitFor(() => fakeWindowRect, 5_000);
     await sleep(1500);
     const rect = await waitFor(
       () =>
@@ -218,7 +268,21 @@ async function main() {
       15_000,
     );
     if (wantsCase('capture-found')) {
-      check('game-rect', !!rect && rect.width > 0, JSON.stringify(rect));
+      const scaleFactor = screen.getPrimaryDisplay().scaleFactor;
+      const within = (a, b, tol) => Math.abs(a - b) <= tol;
+      const target = fakeRect?.window;
+      const rectMatches =
+        !!rect &&
+        !!target &&
+        within(rect.x, target.x, 20) &&
+        within(rect.y, target.y, 20) &&
+        within(rect.width, target.width, 20) &&
+        within(rect.height, target.height, 20);
+      check(
+        'game-rect',
+        rectMatches,
+        `measured=${JSON.stringify(rect)} fake-window=${JSON.stringify(target)} scaleFactor=${scaleFactor}`,
+      );
     }
     await sleep(3000);
     const streamState = await control.webContents.executeJavaScript(
@@ -251,6 +315,7 @@ async function main() {
 
   if (wantsCase('overlay')) {
     startFakeWindow();
+    const fakeRect = await waitFor(() => fakeWindowRect, 5_000);
     await sleep(1500);
     e2e.triggerOverlayDemo();
     await sleep(1000);
@@ -260,9 +325,26 @@ async function main() {
       );
       check('overlay-panel', panelText.length > 0 && /RE-ROLL/i.test(panelText), panelText.slice(0, 200));
       const bounds = overlay.getBounds();
-      check('overlay-bounds', bounds.width > 0 && bounds.height > 0, JSON.stringify(bounds));
+      const scaleFactor = screen.getPrimaryDisplay().scaleFactor;
+      const target = fakeRect?.window;
+      const within = (a, b, tol) => Math.abs(a - b) <= tol;
+      const boundsMatch =
+        !!target &&
+        within(bounds.x * scaleFactor, target.x, 20) &&
+        within(bounds.y * scaleFactor, target.y, 20) &&
+        within(bounds.width * scaleFactor, target.width, 20) &&
+        within(bounds.height * scaleFactor, target.height, 20);
+      check(
+        'overlay-bounds',
+        boundsMatch,
+        `overlay(DIP)=${JSON.stringify(bounds)} fake-window(physical)=${JSON.stringify(target)} scaleFactor=${scaleFactor}`,
+      );
       check('overlay-on-top', overlay.isAlwaysOnTop());
-      check('click-through', !!e2e.overlayIgnoresMouseEvents, 'electron/main.ts:overlayIgnoresMouseEvents');
+      check(
+        'click-through',
+        !!e2e.overlayIgnoresMouseEvents,
+        'electron/main.ts:overlayIgnoresMouseEvents (live getter)',
+      );
     } else {
       check('overlay-panel', false, 'no overlay window');
     }

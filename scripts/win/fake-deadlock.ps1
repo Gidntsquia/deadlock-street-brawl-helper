@@ -15,14 +15,28 @@ Add-Type -AssemblyName System.Drawing
 
 # Make this process DPI-aware so Bounds/PointToScreen below return physical pixels, matching what
 # koffi's GetWindowRect sees in the real app (electron/gameWindow.ts) - not DIPs scaled by Windows.
+# Also brings in SetWindowPos/ShowWindow so the window can be dropped to the bottom of the z-order
+# without ever taking focus - desktopCapturer/getDisplayMedia capture a window's content directly from
+# its handle regardless of z-order or visibility, so the harness doesn't need this window on top, and
+# leaving it (and the app windows) behind whatever the person is already doing keeps the e2e run out of
+# their way.
 Add-Type @"
 using System.Runtime.InteropServices;
 public class NativeDpi {
   [DllImport("user32.dll")]
   public static extern bool SetProcessDPIAware();
+  [DllImport("user32.dll")]
+  public static extern bool SetWindowPos(System.IntPtr hWnd, System.IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint flags);
+  [DllImport("user32.dll")]
+  public static extern bool ShowWindow(System.IntPtr hWnd, int nCmdShow);
 }
 "@
 [void][NativeDpi]::SetProcessDPIAware()
+$HWND_BOTTOM = [System.IntPtr]0
+$SWP_NOMOVE = 0x2
+$SWP_NOSIZE = 0x1
+$SWP_NOACTIVATE = 0x10
+$SW_SHOWNOACTIVATE = 4
 
 $pidFile = Join-Path $env:TEMP 'brawl-fake-deadlock.pid'
 
@@ -52,6 +66,7 @@ $form.BackColor = [System.Drawing.Color]::FromArgb(255, 0, 255)
 $form.StartPosition = 'Manual'
 $form.Location = New-Object System.Drawing.Point(0, 0)
 $form.FormBorderStyle = 'Sizable'
+$form.ShowInTaskbar = $true
 
 [System.IO.File]::WriteAllText($pidFile, [string]$PID)
 
@@ -62,7 +77,13 @@ $form.Add_Shown({
     client = @{ x = $clientTopLeft.X; y = $clientTopLeft.Y; width = $form.ClientSize.Width; height = $form.ClientSize.Height }
     window = @{ x = $form.Bounds.X; y = $form.Bounds.Y; width = $form.Bounds.Width; height = $form.Bounds.Height }
   }
-  Write-Output ($info | ConvertTo-Json -Compress)
-  $form.Activate()
+  [Console]::Out.WriteLine(($info | ConvertTo-Json -Compress))
+  [Console]::Out.Flush()
+  # Never steal focus, and drop to the bottom of the z-order so it doesn't sit on top of whatever
+  # windows the person already has open - the harness reads this window's pixels directly, not off the
+  # screen, so it doesn't need to be visible on top to be captured correctly.
+  [void][NativeDpi]::ShowWindow($form.Handle, $SW_SHOWNOACTIVATE)
+  [void][NativeDpi]::SetWindowPos($form.Handle, $HWND_BOTTOM, 0, 0, 0, 0, ($SWP_NOMOVE -bor $SWP_NOSIZE -bor $SWP_NOACTIVATE))
 })
+$form.WindowState = 'Normal'
 [System.Windows.Forms.Application]::Run($form)

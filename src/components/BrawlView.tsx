@@ -58,6 +58,12 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
   const workerRef = useRef<Worker | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  // Set by the capture-denied IPC handler below, reset at the start of every startCapture() attempt.
+  // main.ts sends this IPC synchronously before getDisplayMedia's promise rejects (see
+  // BrawlView.electron.test.tsx's mock), so by the time the catch block below runs it reliably reflects
+  // whether *this* attempt was actually denied by main.ts, rather than guessing from the rejection's
+  // name/message (which Electron could change without warning).
+  const deniedIpcRef = useRef(false);
   const offeredRef = useRef<Set<number>>(new Set()); // every card offered this game: settles inventory reads
   const ownedRef = useRef<number[]>([]);
   const cardsRef = useRef<Offer[]>([]);
@@ -198,6 +204,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
   }, []);
   /** One click: start the screen capture (needs the click's user activation) and then open the always-on-top overlay. */
   const startCapture = async () => {
+    deniedIpcRef.current = false;
     try {
       setCapture('starting');
       setStatus('loading icon index…');
@@ -207,6 +214,10 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
       for (const i of items) tiers[i.id] = i.item_tier;
       w.postMessage({ type: 'init', index, tiers, intervalMs: CAPTURE_MS } satisfies WorkerIn);
       workerRef.current = w;
+      // Logged before the call, unlike capture.start below, so a denied/failed attempt still leaves a
+      // trace — the e2e harness's retry-loop checks count this line, not capture.start, since a denial
+      // never reaches capture.start at all.
+      log('brawl-view', 'info', 'capture.attempt');
       const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 5 }, audio: false });
       streamRef.current = stream;
       stream.getVideoTracks()[0].addEventListener('ended', stopCapture);
@@ -228,11 +239,10 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
     } catch (e) {
       stopCapture(); // clears status to '' — always re-set it below, never leave it blank
       const err = e as Error;
-      // Electron denies a capture request by calling callback({}) with no video source; Electron's own
-      // getDisplayMedia implementation turns that into this exact AbortError/message combo (never produced
-      // by any other failure in this app). Recognising it here (rather than only via the capture-denied IPC,
-      // which races stopCapture's status clear above) means the friendly message always survives.
-      const isDenyArtifact = isElectron && err.name === 'AbortError' && err.message === 'Error starting capture';
+      // Only treat this as "Deadlock window not found" when main.ts's capture-denied IPC actually arrived
+      // for this attempt (see deniedIpcRef above); any other failure shows the real error message instead
+      // of assuming it was a denial.
+      const isDenyArtifact = isElectron && deniedIpcRef.current;
       if (isDenyArtifact) {
         setDenied(true);
         setStatus('Deadlock window not found');
@@ -297,6 +307,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
   useEffect(() => {
     if (!isElectron) return;
     return window.brawlAPI!.onCaptureDenied(() => {
+      deniedIpcRef.current = true;
       setDenied(true);
       setStatus('Deadlock window not found');
     });

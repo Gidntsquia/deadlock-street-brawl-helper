@@ -27,6 +27,10 @@ let overlay: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let lastRect: Rect | null = null;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+// Mirrors the value passed to the last setIgnoreMouseEvents() call, so the e2e harness can assert the
+// *actual* live click-through state instead of the literal `true` createOverlayWindow() happens to pass
+// today (electron/main.ts has no BrowserWindow getter to read this back).
+let overlayIgnoresMouseEvents = false;
 
 // Electron's own setDisplayMediaRequestHandler implementation throws "Video was requested, but no video
 // stream was provided" as an unhandled rejection *inside Electron*, not something our handler's try/catch
@@ -61,6 +65,10 @@ function createControlWindow() {
   control = new BrowserWindow({
     width: 1200,
     height: 900,
+    // Under the e2e harness (BRAWL_E2E), don't steal focus or come to the front of whatever the person
+    // is already doing — the harness drives everything via executeJavaScript, not real input, so it
+    // doesn't need the window focused or on top. Normal runs keep the default show-and-focus behavior.
+    show: !process.env.BRAWL_E2E,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -68,6 +76,9 @@ function createControlWindow() {
     },
   });
   logPreloadErrors(control);
+  if (process.env.BRAWL_E2E) {
+    control.once('ready-to-show', () => control?.showInactive());
+  }
   loadRoute(control, '#/');
   control.on('closed', () => {
     control = null;
@@ -93,6 +104,7 @@ function createOverlayWindow() {
   });
   logPreloadErrors(overlay);
   overlay.setIgnoreMouseEvents(true, { forward: true });
+  overlayIgnoresMouseEvents = true;
   overlay.setAlwaysOnTop(true, 'screen-saver');
   loadRoute(overlay, '#/overlay');
   overlay.on('closed', () => {
@@ -255,7 +267,9 @@ app.whenReady().then(() => {
       getControl: () => control,
       getOverlay: () => overlay,
       triggerOverlayDemo,
-      overlayIgnoresMouseEvents: true, // set unconditionally in createOverlayWindow; no BrowserWindow getter exists to read it back live
+      get overlayIgnoresMouseEvents() {
+        return overlayIgnoresMouseEvents;
+      },
     };
   }
 });

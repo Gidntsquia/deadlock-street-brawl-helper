@@ -76,3 +76,16 @@ Repo constitution for planner / worker / evaluator agents. Overrides generic sta
 - `electron/preload.ts` must build to CommonJS (`electron-dist/preload.cjs`, forced via a Vite lib build in
   `vite.config.ts`) — Electron's sandboxed preload loader rejects an ESM preload without any visible error;
   the symptom is `window.brawlAPI` staying `undefined`.
+- `scripts/win/e2e-main.cjs`'s `waitFor(fn, timeoutMs)` resolves on the first **truthy** return of `fn()`.
+  Polling for a numeric threshold (not just existence) needs the `> N` check done inside the callback, or it
+  resolves on the first small-but-truthy value.
+- PowerShell console output written from inside a WinForms event handler (e.g. `Add_Shown`), redirected
+  through a pipe to a Node child process, is not reliably flushed per line by `Write-Output`/`Write-Host`.
+  Use `[Console]::Out.WriteLine(...)` then `[Console]::Out.Flush()` (see `fake-deadlock.ps1`).
+- `BrawlView.tsx` logs `capture.attempt` before every `getDisplayMedia` call (success or failure) and
+  `capture.start` only after a successful attempt + `video.play()`. Anything that needs to observe denied
+  attempts (e.g. e2e retry-loop checks) must count `capture.attempt`, not `capture.start`.
+- The e2e fake window (`fake-deadlock.ps1`) and, under `BRAWL_E2E`, the control window
+  (`electron/main.ts`) never steal focus or come to the front — `SW_SHOWNOACTIVATE`/`SetWindowPos(HWND_BOTTOM)`
+  and `showInactive()` respectively. This doesn't affect capture: `desktopCapturer`/`getDisplayMedia` read a
+  window's pixels by handle regardless of z-order or visibility.

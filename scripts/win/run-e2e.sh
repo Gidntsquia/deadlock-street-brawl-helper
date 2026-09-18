@@ -27,5 +27,8 @@ else
   echo "ERROR: no report at $WIN_COPY/logs/win-e2e.json" >&2
   EXIT_CODE=1
 fi
+if [ -f "$WIN_COPY/logs/win-e2e-debug.log" ]; then
+  cp "$WIN_COPY/logs/win-e2e-debug.log" "$REPO_ROOT/logs/win-e2e-debug.log"
+fi
 
 exit $EXIT_CODE
