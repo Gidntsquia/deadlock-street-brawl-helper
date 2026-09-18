@@ -35,7 +35,16 @@ export default function OverlayApp() {
       ctx.clearRect(0, 0, c.width, c.height);
       const showing = state.reads.some((r) => r.present);
       if (!showing || !state.frameW || !state.frameH) return;
-      drawReads(ctx, state.reads, state.bestId, c.width / state.frameW, c.height / state.frameH);
+      drawReads(
+        ctx,
+        state.reads,
+        state.bestId,
+        c.width / state.frameW,
+        c.height / state.frameH,
+        state.frameW,
+        state.frameH,
+        state.reroll,
+      );
     });
   }, []);
 

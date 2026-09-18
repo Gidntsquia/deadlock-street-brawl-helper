@@ -30,6 +30,22 @@ export const cardAnchors = (width: number, height: number) => {
   return BRAWL_LAYOUT.cards.map((c) => ({ name: c.name, cx: c.cx * sx, cy: c.cy * sy, icon: BRAWL_LAYOUT.icon * sx }));
 };
 
+/** The "Use Re-Roll" pill on the draft screen, measured at 2560x1440 from the user's screenshots
+ *  (screenshots/brawl/reroll-choice{1,2}.png, gitignored): a light-bordered pill roughly 1140-1420 x 913-996. */
+export const REROLL_BUTTON = { x0: 1140, y0: 913, x1: 1420, y1: 996 } as const;
+
+/** Re-roll button rect for an arbitrary screen size. */
+export const rerollButtonRect = (width: number, height: number) => {
+  const sx = width / BRAWL_LAYOUT.ref.width,
+    sy = height / BRAWL_LAYOUT.ref.height;
+  return {
+    x0: REROLL_BUTTON.x0 * sx,
+    y0: REROLL_BUTTON.y0 * sy,
+    x1: REROLL_BUTTON.x1 * sx,
+    y1: REROLL_BUTTON.y1 * sy,
+  };
+};
+
 export interface DecodedIndex {
   size: number;
   ids: number[];

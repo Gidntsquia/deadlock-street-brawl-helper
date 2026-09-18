@@ -61,6 +61,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
   const prevCardsRef = useRef<Offer[]>([]); // the set on screen before the current one: the pick shows up in the grid after the screen has moved on
   const readsRef = useRef<CardRead[]>([]); // latest card positions on screen, for the preview highlight
   const rankedRef = useRef<RankedOffer[]>([]);
+  const rerollRef = useRef<RerollAdvice | null>(null);
   const previewRef = useRef<HTMLCanvasElement | null>(null);
   useEffect(() => {
     ownedRef.current = owned;
@@ -113,6 +114,9 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
     rankedRef.current = ranked;
   }, [ranked]);
   const reroll = advice?.reroll && rerolls > 0 ? advice.reroll : null;
+  useEffect(() => {
+    rerollRef.current = reroll;
+  }, [reroll]);
   const tiers = input ? roundTiers(input, round) : [];
   const topItems = useMemo(() => (input ? topItemsByTier(input) : []), [input]);
   const abilityOrder = useMemo(() => (input ? brawlAbilityOrder(input) : null), [input]);
@@ -255,19 +259,21 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
         { type: 'frame', width: data.width, height: data.height, buffer: data.data.buffer, prefer } satisfies WorkerIn,
         [data.data.buffer],
       );
-      const bestId = rankedRef.current[0]?.item.id ?? null;
+      const rerollNow = !!rerollRef.current;
+      const bestId = rerollNow ? null : (rankedRef.current[0]?.item.id ?? null);
       const pv = previewRef.current;
       if (pv) {
         const pctx = pv.getContext('2d');
         if (pctx) {
           const scale = pv.width / v.videoWidth;
           pctx.drawImage(v, 0, 0, pv.width, pv.height);
-          drawReads(pctx, readsRef.current, bestId, scale, scale);
+          drawReads(pctx, readsRef.current, bestId, scale, scale, v.videoWidth, v.videoHeight, rerollNow);
         }
       }
       window.brawlAPI?.sendOverlayState({
         reads: readsRef.current,
         bestId,
+        reroll: rerollNow,
         frameW: v.videoWidth,
         frameH: v.videoHeight,
       });
@@ -491,6 +497,15 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
             <h2>
               {hero.name} · round {round}, choice {choice}
             </h2>
+            {reroll && (
+              <div className="brawl-reroll-banner">
+                RE-ROLL this set — expected best {reroll.expectedBest.toFixed(2)} vs {reroll.currentBest.toFixed(2)} on
+                screen
+                <button className="btn" onClick={rerolled}>
+                  I re-rolled
+                </button>
+              </div>
+            )}
             {abilityOrder && abilityOrder.steps.length > 0 && (
               <div className="muted brawl-ability-line">
                 {abilityOrder.steps.map((s, k) => (
@@ -682,6 +697,14 @@ function AdvicePanel({
   }
   return (
     <div className="brawl-advice">
+      {reroll && (
+        <div className="brawl-reroll-banner">
+          RE-ROLL this set — expected best {reroll.expectedBest.toFixed(2)} vs {reroll.currentBest.toFixed(2)} on screen
+          <button className="btn" onClick={rerolled}>
+            I re-rolled
+          </button>
+        </div>
+      )}
       {!cards.length && (
         <div className="muted">
           {capture === 'on'
@@ -697,7 +720,7 @@ function AdvicePanel({
       {ranked.map((r, k) => (
         <button
           key={r.item.id}
-          className={`brawl-card ${k === 0 ? 'best' : ''}`}
+          className={`brawl-card ${k === 0 && !reroll ? 'best' : ''}`}
           onClick={() => took(r)}
           title={`score ${r.score.toFixed(2)} · ${
             capture === 'on' ? 'picks are read from the inventory grid; click only if it missed' : 'I took this one'
@@ -706,7 +729,7 @@ function AdvicePanel({
           <ItemTile item={r.item} />
           <span className="brawl-card-body">
             <b>
-              {k === 0 ? 'TAKE' : `#${k + 1}`} {r.item.name}
+              {k === 0 && !reroll ? 'TAKE' : `#${k + 1}`} {r.item.name}
               {r.enhanced ? ' (enhanced)' : ''}
             </b>
             <small>
@@ -719,15 +742,8 @@ function AdvicePanel({
           </span>
         </button>
       ))}
-      {reroll && (
-        <div className="brawl-reroll">
-          Re-roll this set: best card {reroll.currentBest.toFixed(2)}, a fresh set should offer{' '}
-          {reroll.expectedBest.toFixed(2)} (rare and enhanced slots stay rare and enhanced)
-          {reroll.holdValue > 0 ? ` (saving it for a later set is worth ${reroll.holdValue.toFixed(2)})` : ''}{' '}
-          <button className="btn" onClick={rerolled}>
-            I re-rolled
-          </button>
-        </div>
+      {reroll && reroll.holdValue > 0 && (
+        <div className="muted">saving this set for a later choice is worth {reroll.holdValue.toFixed(2)}</div>
       )}
       {cards.length > 0 && !reroll && <div className="muted">Keep this set{rerolls ? '' : ' (no re-rolls left)'}.</div>}
     </div>

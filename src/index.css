@@ -926,17 +926,26 @@ footer {
   font-size: 12px;
   opacity: 0.8;
 }
-.brawl-reroll {
-  padding: 10px;
+.brawl-reroll-banner {
+  padding: 12px;
   border-radius: 10px;
-  background: rgba(217, 138, 43, 0.18);
-  border: 1px solid var(--warn);
-  font-size: 13px;
-  font-weight: 700;
+  background: #ffb020;
+  color: #1a1200;
+  border: 2px solid #a86400;
+  font-size: 15px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 10px;
   align-items: center;
+  justify-content: space-between;
+  order: -1;
+}
+.pip .brawl-reroll-banner {
+  font-size: 13px;
+  padding: 8px 10px;
 }
 .brawl-ability-order {
   margin: 6px 0 0;
