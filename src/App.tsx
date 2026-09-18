@@ -23,6 +23,11 @@ export default function App() {
   const [tab, setTab] = usePersisted<Tab>('tab', isTab, 'advisor');
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [heroSource, setHeroSource] = useState<'detected' | 'manual'>('manual');
+  const handleHero = (id: number, source: 'detected' | 'manual' = 'manual') => {
+    setHeroId(id);
+    setHeroSource(source);
+  };
 
   useEffect(() => {
     loadCore()
@@ -50,7 +55,14 @@ export default function App() {
       <header className="app-header">
         {tab === 'advisor' && <img src={img(hero.images.small)} alt="" />}
         <div>
-          <h1>{tab === 'advisor' ? `${hero.name} Street Brawl` : 'Street Brawl Tier List'}</h1>
+          <h1>
+            {tab === 'advisor' ? `${hero.name} Street Brawl` : 'Street Brawl Tier List'}
+            {tab === 'advisor' && heroSource === 'detected' && (
+              <span className="hero-auto-badge" title="Auto-detected from the scoreboard">
+                auto
+              </span>
+            )}
+          </h1>
           <div className="sub">
             {tab === 'advisor' ? 'Deadlock Street Brawl Helper' : 'Heroes and items graded by win rate and usage'}, data
             from the 30 days to {fetchedDate}
@@ -94,7 +106,7 @@ export default function App() {
                   key={h.id}
                   ref={match ? (el) => el?.scrollIntoView({ block: 'nearest', inline: 'center' }) : undefined}
                   className={`hero-chip ${h.id === heroId ? 'active' : ''} ${match ? 'match' : ''}`}
-                  onClick={() => setHeroId(h.id)}
+                  onClick={() => handleHero(h.id, 'manual')}
                   role="tab"
                   aria-selected={h.id === heroId}
                 >
@@ -107,7 +119,7 @@ export default function App() {
           <select
             className="hero-select"
             value={heroId}
-            onChange={(e) => setHeroId(Number(e.target.value))}
+            onChange={(e) => handleHero(Number(e.target.value), 'manual')}
             aria-label="Select hero"
           >
             {heroes.map((h) => (
@@ -116,7 +128,7 @@ export default function App() {
               </option>
             ))}
           </select>
-          <BrawlView hero={hero} heroes={heroes} items={items} abilities={abilities} onHero={setHeroId} />
+          <BrawlView hero={hero} heroes={heroes} items={items} abilities={abilities} onHero={handleHero} />
         </>
       ) : (
         <TierList heroes={heroes} items={items} />

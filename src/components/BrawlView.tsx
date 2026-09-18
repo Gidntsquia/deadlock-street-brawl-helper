@@ -32,7 +32,7 @@ interface Props {
   heroes: Hero[];
   items: Item[];
   abilities: Ability[];
-  onHero: (id: number) => void;
+  onHero: (id: number, source?: 'detected' | 'manual') => void;
 }
 
 /** Street Brawl draft advisor: the three cards on screen (read from a screen capture or typed in), ranked for this hero. */
@@ -295,10 +295,14 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
         if (meta.round) setRound(meta.round);
         if (meta.choice) setChoice(meta.choice);
         // the square-topped portrait is the player's: switch the app's hero to it (the enemies are then the other side)
+        if (!meta.self) {
+          log('brawl-view', 'debug', 'hero.detect.miss', { bar: meta.bar });
+        }
         const me = meta.self && heroes.some((h) => h.id === meta.self) ? meta.self : heroId;
         if (me !== heroId) {
-          log('brawl-view', 'info', 'hero.switch', { from: heroId, to: me });
-          onHero(me);
+          const score = [...meta.bar.left, ...meta.bar.right].find((m) => m.heroId === me)?.score;
+          log('brawl-view', 'info', 'hero.detect', { from: heroId, to: me, score });
+          onHero(me, 'detected');
           setOwned([]);
           offeredRef.current.clear();
         }
@@ -324,14 +328,19 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
         if (pick) setTook(byId.get(pick)?.name ?? '');
         if (after.length !== before.length || gained.length) setOwned(after);
       }
+      const heroDetected = r.accepted && r.meta!.self && r.meta!.self === heroId;
       const names =
-        seen === 3 ? r.reads.map((x) => byId.get(x.itemId)?.name ?? '?').join(' / ') : `${seen}/3 cards found`;
+        seen === 3
+          ? r.reads.map((x) => byId.get(x.itemId)?.name ?? '?').join(' / ')
+          : heroDetected
+            ? `hero: ${hero.name} · ${seen}/3 cards found`
+            : `${seen}/3 cards found`;
       setStatus(`${names} · ${r.ms.toFixed(0)} ms`);
     };
     w.addEventListener('message', onMessage);
     sendFrame(); // the worker's first tick may have arrived before this listener existed
     return () => w.removeEventListener('message', onMessage);
-  }, [capture, byId, heroId, heroes, onHero]);
+  }, [capture, byId, heroId, heroes, onHero, hero]);
 
   const took = (r: RankedOffer) => {
     setOwned((o) => [...o, r.item.id]);
