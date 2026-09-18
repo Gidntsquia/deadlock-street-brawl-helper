@@ -165,12 +165,16 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
     captureGenRef.current += 1;
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
+    const hadDemo = !!demoImgRef.current;
     demoImgRef.current = null;
     workerRef.current?.terminate();
     workerRef.current = null;
     setCapture('off');
     setStatus('');
-    log('brawl-view', 'info', 'capture.stop');
+    // Diagnosing eval round 6's "0/3 cards found" overlay-demo flake needs to see, from logs alone, whether
+    // a stopCapture() call ever clears a demo image out from under an in-flight demo start — hadDemo/gen let
+    // a failing run be told apart from a passing one after the fact.
+    log('brawl-view', 'info', 'capture.stop', { hadDemo, gen: captureGenRef.current });
   }, []);
   const hasDpip = () => 'documentPictureInPicture' in window;
   /** Always-on-top overlay in Chrome/Edge (Document Picture-in-Picture); a plain popup window elsewhere (Firefox has no
@@ -357,9 +361,16 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
       const base = (import.meta as { env?: { BASE_URL?: string } }).env?.BASE_URL ?? '/';
       const image = new Image();
       image.src = `${base}demo/${frame}.png`;
+      log('brawl-view', 'info', 'demo.frame.start', { frame, gen: captureGenRef.current });
       image
         .decode()
         .then(() => {
+          log('brawl-view', 'info', 'demo.frame.decoded', {
+            frame,
+            gen: captureGenRef.current,
+            w: image.naturalWidth,
+            h: image.naturalHeight,
+          });
           // stopCapture() unconditionally clears demoImgRef.current (it's also the real-capture teardown
           // path), so it must run BEFORE the ref is set here -- setting the ref first and then calling
           // stopCapture() wipes it right back to null, and startCapture() falls through to the real
@@ -369,7 +380,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
           demoImgRef.current = image;
           void startCapture();
         })
-        .catch((e) => log('brawl-view', 'error', 'demo.image.fail', { message: String(e) }));
+        .catch((e) => log('brawl-view', 'error', 'demo.image.fail', { frame, message: String(e) }));
     };
     const offStart = window.brawlAPI!.onOverlayDemoStart(runDemoFrame);
     // main.ts may have already pushed overlayDemoStart before this effect (and its listener above) existed
@@ -397,6 +408,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
     const w = workerRef.current;
     if (!w) return;
     const canvas = document.createElement('canvas');
+    let lastLoggedSource = '';
     const sendFrame = () => {
       // Demo mode draws the shipped PNG (decoded once on load, see the onOverlayDemoStart handler above)
       // instead of the <video> element; same source/width/height shape either way from here on.
@@ -404,6 +416,14 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
       const src: CanvasImageSource | null = demo ?? videoRef.current;
       const srcW = demo ? demo.naturalWidth : (videoRef.current?.videoWidth ?? 0);
       const srcH = demo ? demo.naturalHeight : (videoRef.current?.videoHeight ?? 0);
+      // Logged only on change (this runs every CAPTURE_MS) -- diagnosing eval round 6's overlay-demo flake
+      // needs to see, from logs alone, which source sendFrame actually drew and at what size, without
+      // flooding logs/app.jsonl on every tick.
+      const sourceSig = `${demo ? 'demo' : videoRef.current ? 'video' : 'none'}:${srcW}x${srcH}:gen=${captureGenRef.current}`;
+      if (sourceSig !== lastLoggedSource) {
+        lastLoggedSource = sourceSig;
+        log('brawl-view', 'debug', 'frame.source', { source: sourceSig });
+      }
       if (!src || !srcW) {
         w.postMessage({ type: 'idle' } satisfies WorkerIn);
         return;

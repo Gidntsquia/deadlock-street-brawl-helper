@@ -60,8 +60,10 @@ writes a pass/fail report to `logs/win-e2e.json`. `npm run win:demo -- choice1` 
 real app with no Deadlock window required: it opens an app-owned demo backdrop showing a real draft-screen
 screenshot, runs it through the real recognise/advise/draw pipeline (Ctrl+Shift+D does the same thing when
 you're already running the app), and saves what the overlay actually drew to `logs/win-demo.png` — a quick
-way to see the advice box for real without needing a live draft. It refuses to run if a real window titled
-"Deadlock" is already open, the same guard `win:e2e` uses.
+way to see the advice box for real without needing a live draft. Nothing appears on screen while it runs —
+it uses the same harness isolation as `win:e2e`, so the PNG is the only output; run Ctrl+Shift+D from a
+normal `npm run win:dev` session instead if you want to see it live on the desktop. It refuses to run if a
+real window titled "Deadlock" is already open, the same guard `win:e2e` uses.
 
 Start Deadlock in borderless windowed mode, then launch the exe: capture starts on its own once the
 Deadlock window is found, no picker dialog. The advice — ranked cards, RE-ROLL banner, ability order —

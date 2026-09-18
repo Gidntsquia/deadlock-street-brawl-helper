@@ -38,5 +38,12 @@ fi
 if [ -f "$WIN_COPY/logs/win-e2e-debug.log" ]; then
   cp "$WIN_COPY/logs/win-e2e-debug.log" "$REPO_ROOT/logs/win-e2e-debug.log"
 fi
+# The `frames` case saves what capture actually received per labelled frame (win-e2e-frame-<name>.png) next
+# to the JSON report on the Windows side; AGENTS.md says these land in repo logs/, so copy them back too.
+shopt -s nullglob
+for f in "$WIN_COPY"/logs/win-e2e-frame-*.png; do
+  cp "$f" "$REPO_ROOT/logs/"
+done
+shopt -u nullglob
 
 exit $EXIT_CODE

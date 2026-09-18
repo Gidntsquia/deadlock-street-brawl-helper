@@ -41,7 +41,13 @@ Repo constitution for planner / worker / evaluator agents. Overrides generic sta
   recognise/advise/draw pipeline (same code path Ctrl+Shift+D uses when a live game triggers it), and saves
   the overlay's own composited output to `logs/win-demo.png`. Refuses to run if a real "Deadlock" window is
   already open (same guard as `win:e2e`). Verify with `npx tsx scripts/win/check-demo-png.ts logs/win-demo.png`
-  (`frame-visible: true`, `green-on-best: true`) or by opening the PNG.
+  (`frame-visible: true`, `green-on-best: true`) or by opening the PNG. Nothing is actually visible on the
+  desktop while this runs: it sets `BRAWL_E2E=1` internally (to reach the `__brawlE2E` test hook), which puts
+  both the backdrop and overlay windows off-monitor at opacity 0 — the same isolation `win:e2e` relies on so a
+  harness run never disturbs the user's other windows. `logs/win-demo.png` (a real canvas rasterisation of the
+  overlay, not a screen grab) is the only way to see the result; there is nothing to look at on the monitor
+  itself. To actually see it on screen, use the real Ctrl+Shift+D demo path in a normal (non-`BRAWL_E2E`)
+  `npm run win:dev` session instead.
 
 ## Manual checks (the harness can't cover these)
 

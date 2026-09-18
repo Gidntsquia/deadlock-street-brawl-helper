@@ -285,6 +285,28 @@ async function main() {
         rectMatches,
         `measured=${JSON.stringify(rect)} fake-window=${JSON.stringify(target)} scaleFactor=${scaleFactor}`,
       );
+      // Eval round 6: overlay-bounds only ever compared the overlay to the demo backdrop (both already in
+      // DIPs, so it never exercised the DPI/scale conversion round-4 flagged). Check it here too, against
+      // the real capture path: overlay.getBounds() is DIPs, the fake window's printed rect is physical px.
+      if (overlay && target) {
+        const overlayBounds = overlay.getBounds();
+        const overlayPhys = {
+          x: overlayBounds.x * scaleFactor,
+          y: overlayBounds.y * scaleFactor,
+          width: overlayBounds.width * scaleFactor,
+          height: overlayBounds.height * scaleFactor,
+        };
+        const boundsMatch =
+          within(overlayPhys.x, target.x, 20) &&
+          within(overlayPhys.y, target.y, 20) &&
+          within(overlayPhys.width, target.width, 20) &&
+          within(overlayPhys.height, target.height, 20);
+        check(
+          'overlay-bounds',
+          boundsMatch,
+          `overlay(DIP)=${JSON.stringify(overlayBounds)} overlay*scale=${JSON.stringify(overlayPhys)} fake-window=${JSON.stringify(target)} scaleFactor=${scaleFactor}`,
+        );
+      }
     }
     await sleep(3000);
     const streamState = await control.webContents.executeJavaScript(
@@ -370,7 +392,7 @@ async function main() {
         within(overlayBounds.width, bounds.width, 2) &&
         within(overlayBounds.height, bounds.height, 2);
       check(
-        'overlay-bounds',
+        'overlay-bounds-demo',
         boundsMatch,
         `overlay=${JSON.stringify(overlayBounds)} demo-backdrop=${JSON.stringify(bounds)}`,
       );
@@ -378,7 +400,7 @@ async function main() {
       check(
         'click-through',
         !!e2e.overlayIgnoresMouseEvents,
-        'electron/main.ts:overlayIgnoresMouseEvents (live getter)',
+        `overlayIgnoresMouseEvents=${e2e.overlayIgnoresMouseEvents} (electron/main.ts live getter, mirrors the value passed to the last setIgnoreMouseEvents() call)`,
       );
     } else {
       check('overlay-panel', false, 'no overlay window or demo backdrop never appeared');
