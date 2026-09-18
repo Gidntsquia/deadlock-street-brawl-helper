@@ -40,26 +40,27 @@ function loadDwmapi(koffi: typeof import('koffi')) {
   };
 }
 
-/** Finds a top-level window whose title includes `titleSubstring` (case-insensitive), minimised or not. */
-export function findGameWindow(titleSubstring: string): Rect | null {
+/** Exact match (trimmed, case-insensitive) so the game's window ('Deadlock') is never confused with the
+ *  app's own control window ('Deadlock Street Brawl Helper'), which contains it as a substring. */
+export function isGameWindowTitle(title: string, needle: string): boolean {
+  return title.trim().toLowerCase() === needle.trim().toLowerCase();
+}
+
+/** Finds a top-level window whose title exactly matches `title` (case-insensitive, trimmed), minimised or not.
+ *  `exclude` skips handles known to belong to this app's own windows even if they somehow matched. */
+export function findGameWindow(title: string, exclude?: Set<bigint>): Rect | null {
   if (process.platform !== 'win32') return null; // dev/build only ever runs the real lookup on Windows
   try {
     user32 ??= loadUser32(koffi);
     dwmapi ??= loadDwmapi(koffi);
-    const needle = titleSubstring.toLowerCase();
     let handle: unknown = null;
     const buf = Buffer.alloc(512);
     user32.EnumWindows(
       koffi.register((hwnd: unknown) => {
+        if (exclude?.has(BigInt(koffi.address(hwnd)))) return true;
         if (!user32!.IsWindowVisible(hwnd)) return true;
         const len = user32!.GetWindowTextW(hwnd, buf, 256);
-        if (
-          len > 0 &&
-          buf
-            .toString('utf16le', 0, len * 2)
-            .toLowerCase()
-            .includes(needle)
-        ) {
+        if (len > 0 && isGameWindowTitle(buf.toString('utf16le', 0, len * 2), title)) {
           handle = hwnd;
           return false;
         }

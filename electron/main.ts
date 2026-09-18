@@ -12,13 +12,14 @@ import {
 } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { findGameWindow, type Rect } from './gameWindow';
+import { findGameWindow, isGameWindowTitle, type Rect } from './gameWindow';
 import { CHANNELS } from './channels';
 import { log } from '../src/log';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL;
-const GAME_WINDOW_TITLE = 'Deadlock';
+const GAME_WINDOW_TITLE = 'Deadlock'; // exact match only (electron/gameWindow.ts#isGameWindowTitle):
+// the app's own control window is titled "Deadlock Street Brawl Helper" and must never match.
 const RECT_POLL_MS = 250; // ~4 Hz, per the plan
 
 let control: BrowserWindow | null = null;
@@ -90,10 +91,24 @@ function rectsEqual(a: Rect | null, b: Rect | null) {
   return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
 }
 
+/** Native window handles for this app's own windows, so findGameWindow can never latch onto them even if
+ *  a title match somehow slipped through. */
+function ownWindowHandles(): Set<bigint> {
+  const handles = new Set<bigint>();
+  for (const w of BrowserWindow.getAllWindows()) {
+    try {
+      handles.add(w.getNativeWindowHandle().readBigUInt64LE());
+    } catch {
+      /* not on win32, or window already destroyed */
+    }
+  }
+  return handles;
+}
+
 function startRectPolling() {
   if (pollTimer) return;
   pollTimer = setInterval(() => {
-    const found = findGameWindow(GAME_WINDOW_TITLE);
+    const found = findGameWindow(GAME_WINDOW_TITLE, ownWindowHandles());
     if (!rectsEqual(found, lastRect)) {
       lastRect = found;
       log('electron-main', 'info', found ? 'window.found' : 'window.lost', found ?? undefined);
@@ -116,7 +131,9 @@ function setupDisplayMediaHandler() {
   session.defaultSession.setDisplayMediaRequestHandler(
     async (_request, callback) => {
       const sources = await desktopCapturer.getSources({ types: ['window'] });
-      const match = sources.find((s) => s.name.toLowerCase().includes(GAME_WINDOW_TITLE.toLowerCase()));
+      const ownIds = new Set([control?.getMediaSourceId(), overlay?.getMediaSourceId()].filter(Boolean));
+      log('electron-main', 'debug', 'capture.candidates', { names: sources.map((s) => s.name) });
+      const match = sources.find((s) => !ownIds.has(s.id) && isGameWindowTitle(s.name, GAME_WINDOW_TITLE));
       log('electron-main', match ? 'info' : 'warn', match ? 'capture.chosen' : 'capture.denied', { name: match?.name });
       if (!match) {
         control?.webContents.send(CHANNELS.captureDenied);
