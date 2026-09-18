@@ -146,6 +146,10 @@ function createOverlayWindow() {
   overlay.setIgnoreMouseEvents(true, { forward: true });
   overlayIgnoresMouseEvents = true;
   overlay.setAlwaysOnTop(true, 'screen-saver');
+  // Under the harness nobody looks at the overlay (checks read it via capturePage/executeJavaScript), and it
+  // is always-on-top: left visible it would draw over whatever the person is working in. Same opacity-0
+  // approach as the control window above.
+  if (process.env.BRAWL_E2E) overlay.setOpacity(0);
   loadRoute(overlay, '#/overlay');
   overlay.on('closed', () => {
     overlay = null;
@@ -316,17 +320,27 @@ function triggerOverlayDemo(choice: 'choice1' | 'choice2' = 'choice1') {
       log('electron-main', 'info', 'overlay.demo.start', { choice, bounds, decoded });
     });
   });
-  demoTimer = setTimeout(() => {
-    pendingDemoFrame = null;
-    control?.webContents.send(CHANNELS.overlayDemoStop);
-    demoBackdrop?.close();
-    demoBackdrop = null;
-    if (!lastRect) {
-      overlay?.hide();
-      overlay?.setOpacity(1); // restore for the next real game session or manual toggle
-    }
+  demoTimer = setTimeout(stopOverlayDemo, DEMO_MS);
+}
+
+/** Ends demo mode immediately: same cleanup DEMO_MS's auto-clear timer runs, factored out so it can also be
+ *  called on demand (the e2e harness needs this -- without an explicit stop, the `frames` case's first
+ *  iteration can start while a demo triggered by the earlier `overlay` case is still active, and the control
+ *  window keeps drawing the demo PNG instead of switching to that iteration's real fake-window capture). */
+function stopOverlayDemo() {
+  if (demoTimer) {
+    clearTimeout(demoTimer);
     demoTimer = null;
-  }, DEMO_MS);
+  }
+  pendingDemoFrame = null;
+  control?.webContents.send(CHANNELS.overlayDemoStop);
+  demoBackdrop?.close();
+  demoBackdrop = null;
+  if (!lastRect) {
+    overlay?.hide();
+    // restore for the next real game session or manual toggle (the harness keeps it invisible throughout)
+    if (!process.env.BRAWL_E2E) overlay?.setOpacity(1);
+  }
 }
 
 /** Composites the demo backdrop and overlay windows' own rendered pixels into one PNG, via
@@ -501,6 +515,7 @@ app.whenReady().then(() => {
         return true;
       },
       triggerOverlayDemo,
+      stopOverlayDemo,
       getDemoBackdropBounds: () => demoBackdrop?.getBounds() ?? null,
       captureDemoComposite,
     };

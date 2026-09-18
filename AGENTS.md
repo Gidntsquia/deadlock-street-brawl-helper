@@ -31,9 +31,33 @@ Repo constitution for planner / worker / evaluator agents. Overrides generic sta
 - `npm run win:dev` — the actual way to run the app from WSL: syncs, then launches real Windows
   `electron.exe` from the Windows copy.
 - `npm run win:e2e [-- --only <case1,case2>]` — drives real Windows `electron.exe` end to end (boot,
-  capture-denied, capture-found/recover, overlay) and writes `logs/win-e2e.json`. Opens real windows on the
-  desktop for ~1-2 min; don't touch a window it didn't create. `--only selftest-fail` is a deliberately
-  failing case that proves the harness can fail — it never runs as part of the default full run.
+  capture-denied, capture-found/recover, overlay, frames) and writes `logs/win-e2e.json`. Opens real windows
+  on the desktop for ~1-2 min (a full default run takes ~100-110s; the harness's own hard timeout is 180s,
+  raised from 90s once `frames`/`overlay` were added — see the gotcha below). Don't touch a window it didn't
+  create. `--only selftest-fail` is a deliberately failing case that proves the harness can fail — it never
+  runs as part of the default full run.
+- `npm run win:demo -- choice1|choice2` — no real Deadlock window needed: opens an app-owned demo backdrop
+  showing a real draft-screen screenshot (`public/demo/choice1.png`/`choice2.png`), runs it through the real
+  recognise/advise/draw pipeline (same code path Ctrl+Shift+D uses when a live game triggers it), and saves
+  the overlay's own composited output to `logs/win-demo.png`. Refuses to run if a real "Deadlock" window is
+  already open (same guard as `win:e2e`). Verify with `npx tsx scripts/win/check-demo-png.ts logs/win-demo.png`
+  (`frame-visible: true`, `green-on-best: true`) or by opening the PNG.
+
+## Manual checks (the harness can't cover these)
+
+Do these by hand on real Windows with a real Deadlock client at least once per release, since nothing
+in `win:e2e`/`win:demo` drives the actual game:
+
+- Start Deadlock in both **Borderless Windowed** and real **Fullscreen** (Video settings). The overlay
+  must actually appear on top of the game in borderless; in true fullscreen exclusive mode it may not
+  (this is a Windows/game limitation, not something the app can fix — confirm the app at least doesn't
+  crash or mis-detect the window in that mode).
+- Trigger Ctrl+Shift+D while the real game is running and _not_ in a draft: confirm it shows the 10s
+  sample-advice demo without disturbing an already-running real capture, and that it never captures the
+  real Deadlock window's live pixels for the demo (only ever the app's own backdrop PNG).
+- Play (or replay) a real Street Brawl draft end to end and confirm the advice box tracks the actual
+  draft screen, re-roll banner appears when expected, and the box genuinely feels click-through (clicks
+  through the overlay reach the game underneath, no accidental focus steal).
 
 ## Conventions
 
@@ -76,8 +100,19 @@ Repo constitution for planner / worker / evaluator agents. Overrides generic sta
 - `electron-dist/main.js` is built as ESM (package.json has `"type": "module"`); load it from a CommonJS
   script with dynamic `import(pathToFileURL(...).href)`, not `require()`.
 - `electron/preload.ts` must build to CommonJS (`electron-dist/preload.cjs`, forced via a Vite lib build in
-  `vite.config.ts`) — Electron's sandboxed preload loader rejects an ESM preload without any visible error;
-  the symptom is `window.brawlAPI` staying `undefined`.
+  `vite.config.ts`) — Electron's sandboxed preload loader rejects an ESM preload. Electron does emit a `preload-error` event for
+  this, but nothing logged it before; `logPreloadErrors()` in `electron/main.ts` now logs it as
+  `preload.error`. The visible symptom is `window.brawlAPI` staying `undefined`.
+- Harness ordering: in `e2e-main.cjs`'s `frames` case, hero/round/choice are set **before** the fake window is
+  spawned. Changing the Round/Choice selects clears the accepted cards and the worker never re-sends a set it
+  already accepted, so setting them after capture starts leaves advice null for that frame.
+- `fake-deadlock.ps1` scales its screenshot once into a 1280x720 bitmap (`BackgroundImage`); do not go back to
+  scaling inside a PowerShell `Paint` handler (slow repaints left the window blank on screen).
+- Under `BRAWL_E2E` both the control window and the overlay run at opacity 0 and the fake window sits at the
+  bottom of the z-order, so a harness run never covers the person's other windows. The `frames` case saves
+  what capture received to `logs/win-e2e-frame-<name>.png`.
+- The harness never screen-grabs the desktop (`CopyFromScreen` etc.); only the window titled "Deadlock" may be
+  captured, including by diagnostic scripts.
 - `scripts/win/e2e-main.cjs`'s `waitFor(fn, timeoutMs)` resolves on the first **truthy** return of `fn()`.
   Polling for a numeric threshold (not just existence) needs the `> N` check done inside the callback, or it
   resolves on the first small-but-truthy value.
@@ -97,7 +132,7 @@ Repo constitution for planner / worker / evaluator agents. Overrides generic sta
   comparing against `window.__overlayDrawn` (frame px in the _captured_ frame's own resolution) — see
   `runFramesCase` in `scripts/win/e2e-main.cjs`.
 - `fake-deadlock.ps1`'s window is `FormBorderStyle = 'None'` (borderless): desktopCapturer/getDisplayMedia
-  (Windows Graphics Capture) captures a window's *full bounds* including title bar/border chrome, not just
+  (Windows Graphics Capture) captures a window's _full bounds_ including title bar/border chrome, not just
   its client area. With a title bar, the captured frame came back non-16:9 (e.g. 1282x758 for a 1280x720
   client) and every fixed-layout anchor in the recogniser was silently offset — a real Deadlock window is
   presumably borderless already, so this was a harness-only artifact, not a real-world recogniser problem.
@@ -117,3 +152,17 @@ Repo constitution for planner / worker / evaluator agents. Overrides generic sta
 - The e2e-only forced-reroll hook lives on `__brawlE2E.forceReroll()` in `electron/main.ts`: it resends the
   last real, capture-derived `OverlayState` with `reroll:true`/`bestId:null` — never a fabricated state —
   for PLAN.md item 3's `reroll-box` check when no frame naturally verdicts RE-ROLL.
+- `scripts/win/e2e-main.cjs`'s hard timeout is 180s (`main()`'s `setTimeout`), not 90s — a full default run
+  (all cases) takes ~100-110s once `frames`/`overlay` are included, and the old 90s ceiling cut the run off
+  mid-teardown, which cascaded into spurious failures on whichever case happened to be running last (not a
+  real bug in that case). Raise it again if more cases are added and full runs start bumping the new ceiling.
+- `win:demo`'s and `win:e2e`'s `overlay` case both must wait for a real ranked-best signal
+  (`.brawl-card.best` in the control window / `.overlay-panel` text containing an actual card name), not
+  just for _some_ status text to render — status text (hero/round/ability line) appears immediately, well
+  before the worker's two-frame accept debounce (`worker.ts`) resolves cards into a ranked pick. Waiting on
+  the earlier signal produces a real-looking but blank screenshot / a false pass on stale text.
+- `webContents.capturePage()` flattens a `transparent: true` `BrowserWindow` to an opaque bitmap (no alpha),
+  confirmed with `sharp` (`hasAlpha: false` on the output despite the window being transparent). To composite
+  a transparent overlay's real content over another layer, read the overlay's own `<canvas>` element's
+  `toDataURL('image/png')` instead (via `executeJavaScript`) — that's a real per-pixel-alpha rasterisation,
+  not a window screenshot. See `captureDemoComposite()` in `electron/main.ts`.

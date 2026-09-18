@@ -74,24 +74,27 @@ $form.Location = New-Object System.Drawing.Point(0, 0)
 $form.FormBorderStyle = 'None'
 $form.ShowInTaskbar = $true
 
-# PictureBox's SizeMode=StretchImage uses GDI's default (low-quality) interpolation, which blurs the
-# draft-card icons enough that the recogniser's icon matcher misses them. Draw manually on a Panel with
-# HighQualityBicubic instead, so the captured frame stays sharp enough to match like a real screenshot.
+# The frame is scaled ONCE, up front, into a client-sized bitmap and set as the form's BackgroundImage, so
+# every repaint is a native blit. The earlier version scaled the 2000x1125 PNG with HighQualityBicubic
+# inside a PowerShell Paint scriptblock on every WM_PAINT: slow enough that the window sat unpainted (seen
+# on screen as a blank dark gradient, and by the app as a frame with no cards) whenever a repaint landed
+# mid-run. HighQualityBicubic is still required: GDI's default stretch blurs the card icons past what the
+# recogniser's icon matcher accepts.
 if ($Image) {
   if (-not (Test-Path $Image)) {
     Write-Error "Image not found: $Image"
     exit 1
   }
-  $script:frameImage = [System.Drawing.Image]::FromFile((Resolve-Path $Image))
-  $panel = New-Object System.Windows.Forms.Panel
-  $panel.Dock = 'Fill'
-  $panel.Add_Paint({
-    param($s, $e)
-    $e.Graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
-    $e.Graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
-    $e.Graphics.DrawImage($script:frameImage, 0, 0, $s.ClientSize.Width, $s.ClientSize.Height)
-  })
-  $form.Controls.Add($panel)
+  $src = [System.Drawing.Image]::FromFile((Resolve-Path $Image))
+  $scaled = New-Object System.Drawing.Bitmap 1280, 720
+  $g = [System.Drawing.Graphics]::FromImage($scaled)
+  $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+  $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+  $g.DrawImage($src, 0, 0, 1280, 720)
+  $g.Dispose()
+  $src.Dispose()
+  $form.BackgroundImage = $scaled
+  $form.BackgroundImageLayout = 'None'
 }
 
 [System.IO.File]::WriteAllText($pidFile, [string]$PID)

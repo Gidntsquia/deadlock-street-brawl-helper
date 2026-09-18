@@ -1,6 +1,8 @@
 // Windows-only Electron test harness. Run by real electron.exe (never Linux Electron): sets BRAWL_E2E=1,
 // requires the REAL electron-dist/main.js (not a stub), drives it via executeJavaScript, and writes one
-// JSON report. Filter cases with --only <name1,name2,...>. Hard timeout 90s.
+// JSON report. Filter cases with --only <name1,name2,...>. Hard timeout 180s (raised from 90s once the
+// `frames` and `overlay` cases were added -- a full default run takes ~100-110s end to end, and the old 90s
+// ceiling cut it off mid-teardown, cascading into spurious failures on whichever case ran last).
 'use strict';
 process.env.BRAWL_E2E = '1';
 
@@ -155,9 +157,9 @@ function checkNoRealGameOpen() {
 
 async function main() {
   const timeout = setTimeout(() => {
-    console.log('HARNESS TIMEOUT after 90s');
+    console.log('HARNESS TIMEOUT after 180s');
     finish(1);
-  }, 90_000);
+  }, 180_000);
 
   if (!checkNoRealGameOpen()) {
     clearTimeout(timeout);
@@ -324,6 +326,16 @@ async function main() {
     // A previous case's fake window may still be closing out (main.ts's lastRect clears async, on its own
     // ~250ms poll tick); triggerOverlayDemo is a no-op while lastRect is set, so retry the call itself, not
     // just wait, until the demo backdrop actually appears.
+    // Let the previous case's capture teardown finish first: its stopCapture() clears the renderer's demo
+    // image ref, so if it lands after the demo has started, the frame loop falls back to the dead <video>
+    // (last magenta frame) and the panel sits at "0/3 cards found" until DEMO_MS expires.
+    await waitFor(async () => {
+      const status = await control.webContents.executeJavaScript(
+        'document.querySelector(".brawl-status")?.textContent ?? ""',
+      );
+      return status.includes('not found');
+    }, 5_000);
+    await sleep(500);
     const bounds = await waitFor(() => {
       e2e.triggerOverlayDemo('choice1');
       return e2e.getDemoBackdropBounds();
@@ -371,6 +383,15 @@ async function main() {
     } else {
       check('overlay-panel', false, 'no overlay window or demo backdrop never appeared');
     }
+    // Without this, the `frames` case's first iteration can start while this case's demo is still active
+    // (only DEMO_MS=10s auto-clears it otherwise) -- the control window keeps drawing the demo PNG instead
+    // of switching to that iteration's real fake-window capture, so its first frame reads blank/stale state.
+    if (typeof e2e.stopOverlayDemo === 'function') e2e.stopOverlayDemo();
+    await waitFor(() => e2e.getDemoBackdropBounds() === null, 5_000);
+    // Extra settle: main.ts's rect poll (250ms) and the renderer's stopCapture()/state teardown both need a
+    // beat to actually finish, or the `frames` case's first fake window can spawn while a stale getDisplayMedia
+    // attempt from mid-teardown is still in flight and gets denied before the real rect is ever seen.
+    await sleep(1_000);
   }
 
   if (wantsCase('frames')) {
@@ -466,16 +487,10 @@ async function runFramesCase(e2e, control, overlay, getCaptureStartTotal) {
     // previous frame can never leak into this frame's boxes/pixels checks if capture fails to recover.
     const captureBaseline = getCaptureStartTotal();
     if (overlay) await overlay.webContents.executeJavaScript('window.__overlayDrawn = []');
-    startFakeWindow(['-Image', imgPath]);
-    await waitFor(() => fakeWindowRect, 5_000);
-    await sleep(1500);
-
-    // Closing the previous frame's fake window invalidates that window's capture handle (WGC fires
-    // "target source has been closed"), which stops the video track. The app's own retry loop only fires
-    // after a denied getDisplayMedia call, not after a capture that stopped for this reason, so each new
-    // frame needs to explicitly restart capture if it's not already running.
-    await waitForCaptureOn(control, getCaptureStartTotal, captureBaseline);
-
+    // Hero/round/choice are set BEFORE this frame's window exists (so before capture can start): changing
+    // the Round/Choice selects clears the accepted cards, and the worker never re-sends a set it has already
+    // accepted -- set them after a fast capture start and the cards are wiped for good (advice stays null,
+    // no card is ever marked best).
     await control.webContents.executeJavaScript(`
       (() => {
         ${setSelectJs}
@@ -485,6 +500,15 @@ async function runFramesCase(e2e, control, overlay, getCaptureStartTotal) {
       })();
     `);
     await sleep(500);
+    startFakeWindow(['-Image', imgPath]);
+    await waitFor(() => fakeWindowRect, 5_000);
+    await sleep(1500);
+
+    // Closing the previous frame's fake window invalidates that window's capture handle (WGC fires
+    // "target source has been closed"), which stops the video track. The app's own retry loop only fires
+    // after a denied getDisplayMedia call, not after a capture that stopped for this reason, so each new
+    // frame needs to explicitly restart capture if it's not already running.
+    await waitForCaptureOn(control, getCaptureStartTotal, captureBaseline);
 
     let statusText = '';
     await waitFor(async () => {
@@ -497,6 +521,28 @@ async function runFramesCase(e2e, control, overlay, getCaptureStartTotal) {
     const dbgVidSize = await control.webContents.executeJavaScript(
       '(() => { const v = document.querySelector("video"); return v ? { w: v.videoWidth, h: v.videoHeight } : null; })()',
     );
+    // Evidence of what capture actually received from the fake "Deadlock" window (the only window the app
+    // ever captures): saved per frame so a blank/unpainted fake window is visible in logs/, not guessed at.
+    try {
+      const dataUrl = await control.webContents.executeJavaScript(`
+        (() => {
+          const v = document.querySelector('video');
+          if (!v || !v.videoWidth) return null;
+          const c = document.createElement('canvas');
+          c.width = v.videoWidth; c.height = v.videoHeight;
+          c.getContext('2d').drawImage(v, 0, 0);
+          return c.toDataURL('image/png');
+        })()
+      `);
+      if (dataUrl) {
+        fs.writeFileSync(
+          path.join(path.dirname(REPORT_PATH), `win-e2e-frame-${frameName}.png`),
+          Buffer.from(dataUrl.split(',')[1], 'base64'),
+        );
+      }
+    } catch (e) {
+      dbg('frame dump failed: ' + e.message);
+    }
     const namesOk = ['left', 'top', 'right'].every((k) => statusText.includes(label.cards[k]));
     check(`cards-read-${frameName}`, namesOk, `${statusText} video=${JSON.stringify(dbgVidSize)}`);
 

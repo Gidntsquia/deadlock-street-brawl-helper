@@ -56,7 +56,12 @@ Developing from WSL? `npm run dev:electron` run inside WSL boots Linux Electron 
 never find or capture the Deadlock window. Use `npm run win:dev` instead — it syncs the repo to a native
 Windows path and launches real Windows `electron.exe` from there. (Running `dev:electron` from an actual
 Windows terminal, in that synced copy, also works.) `npm run win:e2e` runs the same way end to end and
-writes a pass/fail report to `logs/win-e2e.json`.
+writes a pass/fail report to `logs/win-e2e.json`. `npm run win:demo -- choice1` (or `choice2`) launches the
+real app with no Deadlock window required: it opens an app-owned demo backdrop showing a real draft-screen
+screenshot, runs it through the real recognise/advise/draw pipeline (Ctrl+Shift+D does the same thing when
+you're already running the app), and saves what the overlay actually drew to `logs/win-demo.png` — a quick
+way to see the advice box for real without needing a live draft. It refuses to run if a real window titled
+"Deadlock" is already open, the same guard `win:e2e` uses.
 
 Start Deadlock in borderless windowed mode, then launch the exe: capture starts on its own once the
 Deadlock window is found, no picker dialog. The advice — ranked cards, RE-ROLL banner, ability order —
