@@ -1,12 +1,33 @@
 import type { CardRead } from './recognise';
 import { rerollButtonRect } from './recognise';
 
+export interface OverlayAdviceCard {
+  name: string;
+  score: number;
+  enhanced: boolean;
+  usage: number;
+  winRate: number | null;
+}
+
+/** Everything the overlay panel needs to render the same advice as the pop-out, without alt-tabbing:
+ *  names not ids, since the overlay window has no access to the item/ability catalog. */
+export interface OverlayAdvice {
+  hero: string;
+  round: number;
+  choice: number;
+  reroll: { expectedBest: number; currentBest: number } | null;
+  ranked: OverlayAdviceCard[];
+  abilityLine: string;
+  status: string;
+}
+
 export interface OverlayState {
   reads: CardRead[];
   bestId: number | null;
   reroll: boolean;
   frameW: number;
   frameH: number;
+  advice: OverlayAdvice | null;
 }
 
 /** Draws the highlight boxes for the current card reads, scaled from capture-frame pixels to the target

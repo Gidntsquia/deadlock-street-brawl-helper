@@ -120,7 +120,32 @@ function startRectPolling() {
         overlay.hide();
       }
     }
+    // The game re-focusing (e.g. after an alt-tab elsewhere, or a fullscreen toast) can cover the overlay
+    // even though it's marked always-on-top; re-assert every tick while the game is found so it never
+    // silently drops behind, without waiting for the next rect change.
+    if (found && overlay) {
+      overlay.setAlwaysOnTop(true, 'screen-saver');
+      overlay.moveTop();
+    }
   }, RECT_POLL_MS);
+}
+
+/** Shows the overlay with a fake advice state for 10s so the user can check it lands over the game
+ *  without waiting for (or being in) a real draft. Triggered by Ctrl+Shift+D or the tray menu. */
+function triggerOverlayDemo() {
+  if (!overlay) return;
+  if (!overlay.isVisible()) {
+    if (lastRect) overlay.setBounds(toDipBounds(lastRect));
+    else {
+      const { workArea } = screen.getPrimaryDisplay();
+      overlay.setBounds(workArea);
+    }
+    overlay.showInactive();
+  }
+  overlay.setAlwaysOnTop(true, 'screen-saver');
+  overlay.moveTop();
+  overlay.webContents.send(CHANNELS.overlayDemo);
+  log('electron-main', 'info', 'overlay.demo');
 }
 
 function setupDisplayMediaHandler() {
@@ -164,6 +189,7 @@ function setupTray() {
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: 'Toggle overlay', click: toggleOverlay },
+      { label: 'Overlay demo', click: triggerOverlayDemo },
       { label: 'Quit', click: () => app.quit() },
     ]),
   );
@@ -183,6 +209,7 @@ app.whenReady().then(() => {
   setupTray();
   startRectPolling();
   globalShortcut.register('CommandOrControl+Shift+O', toggleOverlay);
+  globalShortcut.register('CommandOrControl+Shift+D', triggerOverlayDemo);
 });
 
 app.on('window-all-closed', () => {

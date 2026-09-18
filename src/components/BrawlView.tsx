@@ -18,7 +18,7 @@ import {
   brawlAbilityOrder,
 } from '../brawl';
 import type { WorkerIn, WorkerOut } from '../brawl/worker';
-import { drawReads } from '../brawl/draw';
+import { drawReads, type OverlayAdvice } from '../brawl/draw';
 import { ItemTile } from './ItemTile';
 import { log } from '../log';
 import { usePersisted, isNumber, isNumberArray } from '../hooks/usePersisted';
@@ -62,6 +62,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
   const readsRef = useRef<CardRead[]>([]); // latest card positions on screen, for the preview highlight
   const rankedRef = useRef<RankedOffer[]>([]);
   const rerollRef = useRef<RerollAdvice | null>(null);
+  const overlayAdviceRef = useRef<OverlayAdvice | null>(null);
   const previewRef = useRef<HTMLCanvasElement | null>(null);
   useEffect(() => {
     ownedRef.current = owned;
@@ -122,6 +123,29 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
   const abilityOrder = useMemo(() => (input ? brawlAbilityOrder(input) : null), [input]);
   // Street Brawl gives roughly one ability point per draft choice: round 1 choice 1 is step 1, etc.
   const abilityStepNow = (round - 1) * 3 + choice - 1;
+  useEffect(() => {
+    overlayAdviceRef.current = input
+      ? {
+          hero: hero.name,
+          round,
+          choice,
+          reroll: reroll ? { expectedBest: reroll.expectedBest, currentBest: reroll.currentBest } : null,
+          ranked: ranked.map((r) => ({
+            name: r.item.name,
+            score: r.score,
+            enhanced: r.enhanced,
+            usage: r.usage,
+            winRate: r.winRate,
+          })),
+          abilityLine: abilityOrder
+            ? abilityOrder.steps
+                .map((s, k) => (k === abilityStepNow ? `> ${s.ability.name}` : s.ability.name))
+                .join(' ')
+            : '',
+          status,
+        }
+      : null;
+  }, [input, hero, round, choice, reroll, ranked, abilityOrder, abilityStepNow, status]);
 
   const stopCapture = useCallback(() => {
     streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -276,6 +300,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
         reroll: rerollNow,
         frameW: v.videoWidth,
         frameH: v.videoHeight,
+        advice: overlayAdviceRef.current,
       });
     };
     const onMessage = (ev: MessageEvent<WorkerOut>) => {

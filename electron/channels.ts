@@ -4,4 +4,5 @@ export const CHANNELS = {
   gameRect: 'game-rect',
   overlayState: 'overlay-state',
   captureDenied: 'capture-denied',
+  overlayDemo: 'overlay-demo',
 } as const;

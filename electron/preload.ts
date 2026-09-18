@@ -28,6 +28,13 @@ const api = {
       ipcRenderer.removeListener(CHANNELS.captureDenied, listener);
     };
   },
+  onOverlayDemo: (cb: () => void) => {
+    const listener = () => cb();
+    ipcRenderer.on(CHANNELS.overlayDemo, listener);
+    return () => {
+      ipcRenderer.removeListener(CHANNELS.overlayDemo, listener);
+    };
+  },
 };
 
 export type BrawlApi = typeof api;

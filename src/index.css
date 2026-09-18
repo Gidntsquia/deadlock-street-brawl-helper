@@ -1239,3 +1239,46 @@ footer {
     margin: 0 20px;
   }
 }
+
+/* Electron overlay window: transparent, click-through, drawn on top of the game itself. Positioned clear of
+   the inventory grid (right side) and the ability bar (bottom-centre): left 0-17%, y 40-78% of the window. */
+.overlay-panel {
+  position: fixed;
+  left: 1%;
+  top: 40%;
+  width: 16%;
+  max-height: 38%;
+  overflow: hidden;
+  pointer-events: none;
+  background: rgba(10, 16, 16, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: #fff;
+  font-family:
+    system-ui,
+    -apple-system,
+    sans-serif;
+  font-size: 18px;
+  line-height: 1.35;
+}
+.overlay-panel-head {
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+.overlay-panel-reroll {
+  color: #ffb020;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+.overlay-panel-card {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.overlay-panel-ability,
+.overlay-panel-status {
+  margin-top: 6px;
+  font-size: 14px;
+  opacity: 0.85;
+}
