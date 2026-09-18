@@ -17,6 +17,7 @@ mkdir -p "$WIN_COPY"
 rsync -a --delete \
   --exclude node_modules --exclude .git --exclude dist --exclude electron-dist \
   --exclude release --exclude plans --exclude screenshots --exclude logs \
+  --exclude .package-lock.hash \
   "$REPO_ROOT"/ "$WIN_COPY"/
 
 WIN_COPY_WIN=$(wslpath -w "$WIN_COPY")

@@ -92,11 +92,50 @@ console.error = (...args) => {
   realConsoleError(...args);
 };
 
+const PID_FILE = path.join(require('node:os').tmpdir(), 'brawl-fake-deadlock.pid');
+
+// Must run before any stopFakeWindow()/finish() call: lists every window titled exactly "Deadlock" and
+// fails hard if one exists that this harness did not itself start (i.e. its pid isn't the one recorded by
+// fake-deadlock.ps1's own pid file). Nothing is stopped either way — that's fake-deadlock.ps1 -Stop's job,
+// scoped to its own pid file.
+function checkNoRealGameOpen() {
+  const ps = spawnSync(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-Command',
+      "Get-Process | Where-Object { $_.MainWindowTitle -eq 'Deadlock' } | Select-Object -ExpandProperty Id",
+    ],
+    { encoding: 'utf8' },
+  );
+  const titledDeadlock = (ps.stdout || '')
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map(Number);
+  const ourPid = fs.existsSync(PID_FILE) ? Number(fs.readFileSync(PID_FILE, 'utf8').trim()) : null;
+  const foreign = titledDeadlock.filter((p) => p !== ourPid);
+  if (foreign.length > 0) {
+    check('real-game-open', false, `pid(s) ${foreign.join(',')} have a window titled 'Deadlock' that this harness did not start`);
+    return false;
+  }
+  return true;
+}
+
 async function main() {
   const timeout = setTimeout(() => {
     console.log('HARNESS TIMEOUT after 90s');
     finish(1);
   }, 90_000);
+
+  if (!checkNoRealGameOpen()) {
+    clearTimeout(timeout);
+    const report = { platform: process.platform, electron: process.versions.electron, checks };
+    fs.mkdirSync(path.dirname(REPORT_PATH), { recursive: true });
+    fs.writeFileSync(REPORT_PATH, JSON.stringify(report, null, 2));
+    console.log(JSON.stringify(report));
+    return app.exit(1);
+  }
 
   await app.whenReady();
   check('platform', process.platform === 'win32', `process.platform=${process.platform}`);
