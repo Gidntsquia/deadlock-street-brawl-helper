@@ -50,6 +50,9 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
   const [cards, setCards] = useState<Offer[]>([]);
   const [capture, setCapture] = useState<'off' | 'starting' | 'on'>('off');
   const [status, setStatus] = useState('');
+  // Electron only: main.ts denied the last capture attempt (Deadlock isn't open). Blocks the auto-start
+  // effect from retrying on every rect tick; cleared once the game window actually appears.
+  const [denied, setDenied] = useState(false);
   const [pip, setPip] = useState<Window | null>(null);
   const [took_, setTook] = useState<string>('');
   const workerRef = useRef<Worker | null>(null);
@@ -223,18 +226,21 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
         }
       } // getDisplayMedia already consumed this click's activation, so requestWindow may need a second click here; that's fine since capture already started
     } catch (e) {
-      stopCapture();
+      stopCapture(); // clears status to '' — always re-set it below, never leave it blank
       const err = e as Error;
       // Electron denies a capture request by calling callback({}) with no video source; Electron's own
       // getDisplayMedia implementation turns that into this exact AbortError/message combo (never produced
-      // by any other failure in this app), racing with the captureDenied IPC below that already explains it
-      // to the user — so match on the signature itself rather than on message-arrival order, and don't stomp
-      // the friendlier status with this generic one.
+      // by any other failure in this app). Recognising it here (rather than only via the capture-denied IPC,
+      // which races stopCapture's status clear above) means the friendly message always survives.
       const isDenyArtifact = isElectron && err.name === 'AbortError' && err.message === 'Error starting capture';
-      if (!isDenyArtifact) {
+      if (isDenyArtifact) {
+        setDenied(true);
+        setStatus('Deadlock window not found');
+        log('brawl-view', 'warn', 'capture.fail', { message: err.message, denyArtifact: true });
+      } else {
         setStatus(`capture failed: ${err.message}`);
+        log('brawl-view', 'error', 'capture.fail', { message: err.message, denyArtifact: false });
       }
-      log('brawl-view', 'error', 'capture.fail', { message: err.message, denyArtifact: isDenyArtifact });
     }
   };
   useEffect(() => () => stopCapture(), [stopCapture]);
@@ -252,21 +258,39 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
     }
   });
 
-  // Electron: no picker to click through (main.ts serves the Deadlock window via setDisplayMediaRequestHandler),
-  // so start capture as soon as the game window is found instead of waiting for a click.
+  // Electron: no picker to click through (main.ts serves the Deadlock window via setDisplayMediaRequestHandler,
+  // or denies the request if Deadlock isn't open) — attempt capture once on mount rather than waiting for the
+  // game window to be found first; main.ts's own handler is what decides allow vs. deny.
+  useEffect(() => {
+    if (!isElectron) return;
+    void startCapture();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally mount-only: never re-attempt here
+  }, []);
+
+  // After a denial, don't retry on every rect tick (that's the unthrottled retry loop): only retry once the
+  // game window actually appears again (rect null → non-null).
   useEffect(() => {
     if (!isElectron) return;
     return window.brawlAPI!.onGameRect((rect) => {
-      if (rect && capture === 'off') void startCapture();
-      else if (!rect && capture !== 'off') stopCapture();
+      if (rect && capture === 'off' && denied) {
+        setDenied(false);
+        void startCapture();
+      } else if (!rect && capture !== 'off') {
+        stopCapture();
+      }
     });
-  }, [capture]);
+  }, [capture, denied]);
 
   // Electron: main.ts denies getDisplayMedia (callback({})) instead of falling back to some other window
   // when Deadlock isn't found, so tell the user why capture never starts instead of leaving them guessing.
+  // The startCapture catch above also sets this status directly (that promise-rejection path races this IPC
+  // message), so both agree on the same text rather than one clobbering the other.
   useEffect(() => {
     if (!isElectron) return;
-    return window.brawlAPI!.onCaptureDenied(() => setStatus('Deadlock window not found'));
+    return window.brawlAPI!.onCaptureDenied(() => {
+      setDenied(true);
+      setStatus('Deadlock window not found');
+    });
   }, []);
 
   // frame loop: the worker asks for a frame ('tick'), the page draws the video to a canvas and sends the pixels,
