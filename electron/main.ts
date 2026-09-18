@@ -49,16 +49,25 @@ function loadRoute(win: BrowserWindow, route: string) {
   else win.loadFile(path.join(__dirname, '../dist/index.html'), { hash: route.replace(/^#/, '') });
 }
 
+/** Logs a preload load failure instead of leaving `window.brawlAPI` silently undefined (the symptom
+ *  a bad preload build — e.g. emitted as ESM — produces with no other visible error). */
+function logPreloadErrors(win: BrowserWindow) {
+  win.webContents.on('preload-error', (_event, preloadPath, error) => {
+    log('electron-main', 'error', 'preload.error', { preloadPath, message: error.message, stack: error.stack });
+  });
+}
+
 function createControlWindow() {
   control = new BrowserWindow({
     width: 1200,
     height: 900,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
     },
   });
+  logPreloadErrors(control);
   loadRoute(control, '#/');
   control.on('closed', () => {
     control = null;
@@ -77,11 +86,12 @@ function createOverlayWindow() {
     resizable: false,
     show: false,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
     },
   });
+  logPreloadErrors(overlay);
   overlay.setIgnoreMouseEvents(true, { forward: true });
   overlay.setAlwaysOnTop(true, 'screen-saver');
   loadRoute(overlay, '#/overlay');
@@ -226,6 +236,16 @@ app.whenReady().then(() => {
   startRectPolling();
   globalShortcut.register('CommandOrControl+Shift+O', toggleOverlay);
   globalShortcut.register('CommandOrControl+Shift+D', triggerOverlayDemo);
+  // Test-only hook: scripts/win/e2e-main.cjs requires this exact module (not a stub) so it needs a way to
+  // reach the real windows/handlers it just created. Inert unless BRAWL_E2E is set.
+  if (process.env.BRAWL_E2E) {
+    (globalThis as Record<string, unknown>).__brawlE2E = {
+      getControl: () => control,
+      getOverlay: () => overlay,
+      triggerOverlayDemo,
+      overlayIgnoresMouseEvents: true, // set unconditionally in createOverlayWindow; no BrowserWindow getter exists to read it back live
+    };
+  }
 });
 
 app.on('window-all-closed', () => {
