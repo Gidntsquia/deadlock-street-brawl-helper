@@ -7,7 +7,7 @@ process.env.BRAWL_E2E = '1';
 const path = require('node:path');
 const { spawnSync, spawn } = require('node:child_process');
 const fs = require('node:fs');
-const { app, BrowserWindow } = require('electron');
+const { app } = require('electron');
 
 const ROOT = path.join(__dirname, '..', '..');
 const FAKE_PS1 = path.join(__dirname, 'fake-deadlock.ps1');
@@ -172,9 +172,12 @@ async function main() {
   if (wantsCase('capture-recover') || wantsCase('capture-found')) {
     startFakeWindow();
     await sleep(1500);
-    const rect = await waitFor(() => e2e.getControl() && control.webContents.executeJavaScript(
-      'window.brawlAPI ? window.brawlAPI.getGameRect() : null',
-    ), 15_000);
+    const rect = await waitFor(
+      () =>
+        e2e.getControl() &&
+        control.webContents.executeJavaScript('window.brawlAPI ? window.brawlAPI.getGameRect() : null'),
+      15_000,
+    );
     if (wantsCase('capture-found')) {
       check('game-rect', !!rect && rect.width > 0, JSON.stringify(rect));
     }
@@ -200,7 +203,8 @@ async function main() {
           return [d[0], d[1], d[2]];
         })()
       `);
-      const isMagenta = !!centre && Math.abs(centre[0] - 255) <= 30 && Math.abs(centre[1] - 0) <= 30 && Math.abs(centre[2] - 255) <= 30;
+      const isMagenta =
+        !!centre && Math.abs(centre[0] - 255) <= 30 && Math.abs(centre[1] - 0) <= 30 && Math.abs(centre[2] - 255) <= 30;
       check('not-self', isMagenta, JSON.stringify(centre));
     }
     stopFakeWindow();

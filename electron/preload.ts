@@ -28,6 +28,7 @@ const api = {
       ipcRenderer.removeListener(CHANNELS.captureDenied, listener);
     };
   },
+  getPlatformWarning: (): Promise<string | null> => ipcRenderer.invoke(CHANNELS.platformWarning),
   onOverlayDemo: (cb: () => void) => {
     const listener = () => cb();
     ipcRenderer.on(CHANNELS.overlayDemo, listener);

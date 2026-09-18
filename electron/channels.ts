@@ -5,4 +5,5 @@ export const CHANNELS = {
   overlayState: 'overlay-state',
   captureDenied: 'capture-denied',
   overlayDemo: 'overlay-demo',
+  platformWarning: 'platform-warning',
 } as const;

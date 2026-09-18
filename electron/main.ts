@@ -197,8 +197,20 @@ function setupDisplayMediaHandler() {
   );
 }
 
+/** Only real Windows electron.exe can find the game window or capture it (koffi's win32 calls and
+ *  desktopCapturer's window matching both no-op elsewhere) — `npm run dev:electron` run inside WSL boots
+ *  Linux Electron under WSLg instead, so warn loudly rather than let capture silently never find anything.
+ *  `npm run win:dev` is what actually runs Windows Electron from WSL. */
+function platformWarning(): string | null {
+  if (process.platform === 'win32') return null;
+  const msg = `platform.unsupported: process.platform=${process.platform} — run "npm run win:dev" from WSL (or "npm run dev:electron" from a Windows terminal in the synced Windows copy), not dev:electron inside WSL`;
+  log('electron-main', 'warn', 'platform.unsupported', { platform: process.platform });
+  return msg;
+}
+
 function setupIpc() {
   ipcMain.handle(CHANNELS.getGameRect, () => lastRect);
+  ipcMain.handle(CHANNELS.platformWarning, () => platformWarning());
   // Relay: the control window computes advice from its capture and forwards state for the overlay to draw.
   ipcMain.on(CHANNELS.overlayState, (_event, state) => {
     overlay?.webContents.send(CHANNELS.overlayState, state);

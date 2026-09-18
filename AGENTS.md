@@ -8,8 +8,13 @@ Repo constitution for planner / worker / evaluator agents. Overrides generic sta
 - Lint: oxlint (`.oxlintrc.json`). Format: Prettier. Tests: vitest. Typecheck: `tsc -b` over
   `tsconfig.app.json` / `tsconfig.node.json` / `tsconfig.electron.json` / `tsconfig.scripts.json`
   (all `strict`); the last one covers `scripts/*.ts` (the CLI, the recogniser, and their tests).
-- Desktop: Electron 33 + electron-builder + koffi (Win32 window rect). Windows-only at runtime; build/verify
-  from a Windows terminal, not WSL2.
+- Desktop: Electron 33 + electron-builder + koffi (Win32 window rect). Windows-only at runtime. Launch and
+  verify with the `win:*` npm scripts from WSL (see below) — they sync to and run from a native Windows path
+  because koffi and Electron don't work reliably over `\\wsl$\`. `npm run dev:electron` run directly inside
+  WSL boots Linux Electron under WSLg instead of Windows Electron: `findGameWindow`/capture always return
+  null there, and `main.ts` logs `platform.unsupported` (surfaced in the status line) when
+  `process.platform !== 'win32'`. Running `dev:electron` from an actual Windows terminal, inside the synced
+  Windows copy, also works.
 - Data: static JSON + webp under `public/data/`, produced by `scripts/fetch-data.mjs` from deadlock-api.com.
   No backend, no database, no secrets, no `.env`.
 
@@ -20,6 +25,15 @@ Repo constitution for planner / worker / evaluator agents. Overrides generic sta
 - `npm run brawl -- --hero 1 --round 2 --set "…"` — engine CLI without the screen reader.
 - `npm run fetch-data` — full brawl refresh (~1400 requests, ~9 min). Do not run casually; a weekly
   GitHub Action does it.
+- `npm run win:setup` — once per machine; installs Node on the Windows side via winget (may prompt UAC).
+- `npm run win:sync` — rsyncs the repo to `/mnt/c/Users/<user>/brawl-helper-win` and builds there. Never
+  `rsync --delete` over that copy's `node_modules`; it's gitignored and stays out of this repo.
+- `npm run win:dev` — the actual way to run the app from WSL: syncs, then launches real Windows
+  `electron.exe` from the Windows copy.
+- `npm run win:e2e [-- --only <case1,case2>]` — drives real Windows `electron.exe` end to end (boot,
+  capture-denied, capture-found/recover, overlay) and writes `logs/win-e2e.json`. Opens real windows on the
+  desktop for ~1-2 min; don't touch a window it didn't create. `--only selftest-fail` is a deliberately
+  failing case that proves the harness can fail — it never runs as part of the default full run.
 
 ## Conventions
 
@@ -49,3 +63,16 @@ Repo constitution for planner / worker / evaluator agents. Overrides generic sta
 - `OverlayState` (`src/brawl/draw.ts`) is the full contract between the control window and the Electron
   overlay: card reads, the re-roll flag/rect, and the `advice` panel data (names, not ids — the overlay has
   no item/ability catalog). Extend it there, not with ad hoc IPC payloads.
+- koffi callback params (e.g. `EnumWindows`) need a real prototype via `koffi.proto(...)`, not a bare
+  `'void *'` — the latter silently enumerates zero windows instead of throwing (see `electron/gameWindow.ts`).
+- Never pass `detached: true` to `child_process.spawn('powershell.exe', ...)` on Windows: the child exits
+  almost immediately (code 0, no window, no side effects) instead of running. Plain (non-detached) spawn
+  blocks correctly; kill it explicitly instead of relying on OS-level detachment
+  (see `scripts/win/e2e-main.cjs`).
+- `.ps1` files must stay ASCII-only (no em dashes/curly quotes): Windows PowerShell 5.1's default script
+  encoding mangles non-ASCII bytes into parser errors.
+- `electron-dist/main.js` is built as ESM (package.json has `"type": "module"`); load it from a CommonJS
+  script with dynamic `import(pathToFileURL(...).href)`, not `require()`.
+- `electron/preload.ts` must build to CommonJS (`electron-dist/preload.cjs`, forced via a Vite lib build in
+  `vite.config.ts`) — Electron's sandboxed preload loader rejects an ESM preload without any visible error;
+  the symptom is `window.brawlAPI` staying `undefined`.

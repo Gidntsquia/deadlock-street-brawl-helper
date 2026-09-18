@@ -52,6 +52,12 @@ Deadlock window, with no floating overlay window to place by hand.
 npm run dist   # Windows only; builds release/*.exe (installer + portable)
 ```
 
+Developing from WSL? `npm run dev:electron` run inside WSL boots Linux Electron under WSLg, which can
+never find or capture the Deadlock window. Use `npm run win:dev` instead — it syncs the repo to a native
+Windows path and launches real Windows `electron.exe` from there. (Running `dev:electron` from an actual
+Windows terminal, in that synced copy, also works.) `npm run win:e2e` runs the same way end to end and
+writes a pass/fail report to `logs/win-e2e.json`.
+
 Start Deadlock in borderless windowed mode, then launch the exe: capture starts on its own once the
 Deadlock window is found, no picker dialog. The advice — ranked cards, RE-ROLL banner, ability order —
 is drawn straight onto the game in a small always-on-top panel, so you never have to alt-tab.

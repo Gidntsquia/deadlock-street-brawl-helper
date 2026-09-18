@@ -267,6 +267,15 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally mount-only: never re-attempt here
   }, []);
 
+  // Surfaces main.ts's platform.unsupported warning (Electron not running on real win32, e.g. dev:electron
+  // launched inside WSL under WSLg) in the status line, so it's visible instead of only in the log.
+  useEffect(() => {
+    if (!isElectron) return;
+    void window.brawlAPI!.getPlatformWarning().then((warning) => {
+      if (warning) setStatus(warning);
+    });
+  }, []);
+
   // After a denial, don't retry on every rect tick (that's the unthrottled retry loop): only retry once the
   // game window actually appears again (rect null → non-null).
   useEffect(() => {

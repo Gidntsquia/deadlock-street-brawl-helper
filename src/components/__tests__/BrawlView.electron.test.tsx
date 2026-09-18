@@ -36,6 +36,7 @@ let onGameRectCb: ((rect: { x: number; y: number; width: number; height: number 
     };
   },
   onOverlayDemo: () => () => {},
+  getPlatformWarning: () => Promise.resolve(null),
 };
 
 // jsdom has no Worker; BrawlView only needs postMessage/terminate to exist for these tests.
