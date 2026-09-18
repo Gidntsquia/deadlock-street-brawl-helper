@@ -14,13 +14,18 @@ const DWMWA_EXTENDED_FRAME_BOUNDS = 9;
 let user32: ReturnType<typeof loadUser32> | null = null;
 let dwmapi: ReturnType<typeof loadDwmapi> | null = null;
 
+// EnumWindows needs a real callback prototype (not a bare 'void *') so koffi can build a native
+// trampoline for it; without this it silently enumerates zero windows instead of throwing, which is
+// why findGameWindow used to return null even with a matching window on screen.
+const WndEnumProc = koffi.proto('bool __stdcall WndEnumProc(void *hwnd, intptr_t lParam)');
+
 function loadUser32(koffi: typeof import('koffi')) {
   const lib = koffi.load('user32.dll');
   return {
     FindWindowW: lib.func('__stdcall', 'FindWindowW', 'void *', ['str16', 'str16']),
     IsIconic: lib.func('__stdcall', 'IsIconic', 'bool', ['void *']),
     IsWindow: lib.func('__stdcall', 'IsWindow', 'bool', ['void *']),
-    EnumWindows: lib.func('__stdcall', 'EnumWindows', 'bool', ['void *', 'intptr_t']),
+    EnumWindows: lib.func('__stdcall', 'EnumWindows', 'bool', [koffi.pointer(WndEnumProc), 'intptr_t']),
     GetWindowTextW: lib.func('__stdcall', 'GetWindowTextW', 'int', ['void *', 'void *', 'int']),
     IsWindowVisible: lib.func('__stdcall', 'IsWindowVisible', 'bool', ['void *']),
   };
@@ -65,7 +70,7 @@ export function findGameWindow(title: string, exclude?: Set<bigint>): Rect | nul
           return false;
         }
         return true;
-      }, koffi.pointer('void *')),
+      }, koffi.pointer(WndEnumProc)),
       0,
     );
     if (!handle || user32.IsIconic(handle)) return null;
