@@ -20,7 +20,11 @@
     "icon-index": "node scripts/build-icon-index.mjs",
     "brawl": "npx tsx scripts/brawl-cli.ts",
     "brawl:see": "npx tsx scripts/brawl-recognise.ts",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "win:setup": "bash scripts/win/setup.sh",
+    "win:sync": "bash scripts/win/sync.sh",
+    "win:e2e": "bash scripts/win/run-e2e.sh",
+    "win:dev": "bash scripts/win/run-dev.sh"
   },
   "dependencies": {
     "koffi": "^2.9.0",
