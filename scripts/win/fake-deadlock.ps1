@@ -7,7 +7,8 @@
 # ASCII only in this file: Windows PowerShell 5.1's default script encoding mangles non-ASCII bytes
 # (em dashes, curly quotes) into parser errors.
 param(
-  [switch]$Stop
+  [switch]$Stop,
+  [string]$Image
 )
 
 Add-Type -AssemblyName System.Windows.Forms
@@ -59,14 +60,39 @@ if ($existing) {
   exit 1
 }
 
+# Borderless: a real Deadlock window is a borderless fullscreen-style window with no title bar, so its
+# window rect equals its client rect. desktopCapturer/getDisplayMedia (Chromium's Windows Graphics Capture)
+# captures a window's *full bounds*, chrome included -- with FormBorderStyle other than None, that meant the
+# captured frame included ~38px of title bar the recogniser's frame-px anchors never accounted for, silently
+# shifting every anchor down and breaking icon matching on this frame only (found via item 3's frames case).
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'Deadlock'
 $form.ClientSize = New-Object System.Drawing.Size(1280, 720)
 $form.BackColor = [System.Drawing.Color]::FromArgb(255, 0, 255)
 $form.StartPosition = 'Manual'
 $form.Location = New-Object System.Drawing.Point(0, 0)
-$form.FormBorderStyle = 'Sizable'
+$form.FormBorderStyle = 'None'
 $form.ShowInTaskbar = $true
+
+# PictureBox's SizeMode=StretchImage uses GDI's default (low-quality) interpolation, which blurs the
+# draft-card icons enough that the recogniser's icon matcher misses them. Draw manually on a Panel with
+# HighQualityBicubic instead, so the captured frame stays sharp enough to match like a real screenshot.
+if ($Image) {
+  if (-not (Test-Path $Image)) {
+    Write-Error "Image not found: $Image"
+    exit 1
+  }
+  $script:frameImage = [System.Drawing.Image]::FromFile((Resolve-Path $Image))
+  $panel = New-Object System.Windows.Forms.Panel
+  $panel.Dock = 'Fill'
+  $panel.Add_Paint({
+    param($s, $e)
+    $e.Graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+    $e.Graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+    $e.Graphics.DrawImage($script:frameImage, 0, 0, $s.ClientSize.Width, $s.ClientSize.Height)
+  })
+  $form.Controls.Add($panel)
+}
 
 [System.IO.File]::WriteAllText($pidFile, [string]$PID)
 

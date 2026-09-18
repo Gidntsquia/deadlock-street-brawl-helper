@@ -50,4 +50,29 @@ describe('drawReads', () => {
     const rerollRect = ctx.strokeRect.mock.calls.find(([x0, y0]) => x0 === REROLL_BUTTON.x0 && y0 === REROLL_BUTTON.y0);
     expect(rerollRect).toBeDefined();
   });
+
+  it('returns the drawn rects in frame px, tagged best/card/reroll', () => {
+    const ctx = stubCtx();
+    const reads = [read(1, 10), read(2, 200)];
+    const drawn = drawReads(ctx, reads, 1, 2, 2, 2560, 1440, false);
+    expect(drawn).toEqual([
+      { kind: 'best', card: 'x', x0: 10, y0: 100, x1: 60, y1: 150 },
+      { kind: 'card', card: 'x', x0: 200, y0: 100, x1: 250, y1: 150 },
+    ]);
+  });
+
+  it('includes a reroll rect at REROLL_BUTTON when reroll is true, no card marked best', () => {
+    const ctx = stubCtx();
+    const reads = [read(1, 10), read(2, 200)];
+    const drawn = drawReads(ctx, reads, 1, 1, 1, 2560, 1440, true);
+    expect(drawn.filter((d) => d.kind === 'best')).toHaveLength(0);
+    expect(drawn.find((d) => d.kind === 'reroll')).toEqual({
+      kind: 'reroll',
+      card: null,
+      x0: REROLL_BUTTON.x0,
+      y0: REROLL_BUTTON.y0,
+      x1: REROLL_BUTTON.x1,
+      y1: REROLL_BUTTON.y1,
+    });
+  });
 });

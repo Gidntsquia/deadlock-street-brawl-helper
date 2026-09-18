@@ -9,6 +9,14 @@ WIN_COPY_WIN=$(wslpath -w "$WIN_COPY")
 
 "$(dirname "${BASH_SOURCE[0]}")/sync.sh" || exit 1
 
+# Recompute each labelled frame's independent engine verdict (in-process, not via the CLI -- see
+# scripts/win/compute-verdicts.ts) and stage it into the Windows copy's logs/, since sync.sh's rsync
+# excludes logs/ and the Windows-side harness (running as electron.exe over there) has no way to reach
+# back into this WSL process to compute it itself.
+npx tsx "$REPO_ROOT/scripts/win/compute-verdicts.ts" || exit 1
+mkdir -p "$WIN_COPY/logs"
+cp "$REPO_ROOT/logs/win-e2e-verdicts.json" "$WIN_COPY/logs/win-e2e-verdicts.json"
+
 # "--only a,b" forwarded to e2e-main.cjs unchanged.
 EXTRA=""
 if [ "${1:-}" = "--only" ]; then

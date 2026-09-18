@@ -1,0 +1,27 @@
+{
+  "_note": "boxes are frame-px rects at 2000x1125 (this frame's resolution), hand-measured by the worker directly from the pixels of scripts/win/frames/choice1.png and choice2.png (a Python/Pillow script scanning for each icon's cream card background and the reroll button's gray pill border, then visually cross-checked against the rendered image) -- not copied from src/brawl/recognise.ts's recogniser layout constants and not produced by running the recogniser. Both frames share the same three-card + reroll layout position (Deadlock always draws the choice UI at the same screen coordinates regardless of which items are offered), confirmed by measuring choice2 independently and finding the same box edges.",
+  "choice1": {
+    "hero": "Infernus",
+    "round": 1,
+    "choice": 1,
+    "cards": { "left": "Extended Magazine", "top": "Extra Regen", "right": "Extra Health" },
+    "boxes": {
+      "left": { "x0": 488, "y0": 596, "x1": 624, "y1": 734 },
+      "top": { "x0": 930, "y0": 340, "x1": 1068, "y1": 478 },
+      "right": { "x0": 1374, "y0": 598, "x1": 1512, "y1": 734 },
+      "reroll": { "x0": 909, "y0": 715, "x1": 1091, "y1": 780 }
+    }
+  },
+  "choice2": {
+    "hero": "Infernus",
+    "round": 1,
+    "choice": 2,
+    "cards": { "left": "Swift Striker", "top": "Spirit Shredder Bullets", "right": "Weakening Headshot" },
+    "boxes": {
+      "left": { "x0": 488, "y0": 596, "x1": 624, "y1": 734 },
+      "top": { "x0": 930, "y0": 340, "x1": 1068, "y1": 478 },
+      "right": { "x0": 1374, "y0": 598, "x1": 1512, "y1": 734 },
+      "reroll": { "x0": 909, "y0": 715, "x1": 1091, "y1": 780 }
+    }
+  }
+}

@@ -57,6 +57,8 @@ Repo constitution for planner / worker / evaluator agents. Overrides generic sta
   by substring: the app's own window is "Deadlock Street Brawl Helper".
 - `screenshots/` is gitignored reference material (full draft frames the user supplies); it is not a fixture
   directory and nothing in tests may depend on it.
+- `scripts/win/frames/` is the tracked full-frame set for the Windows harness (two real draft screenshots +
+  hand-measured `labels.json`), unlike `screenshots/` above which stays gitignored and untested-against.
 - Component tests (anything rendering React, e.g. `<BrawlView/>`) live under `src/components/__tests__/`
   and run in `jsdom` via `vite.config.ts`'s `test.environmentMatchGlobs`; the rest of the suite (`src/brawl`,
   `electron`, `scripts`) stays on the default Node environment. Don't add a global jsdom environment.
@@ -89,3 +91,29 @@ Repo constitution for planner / worker / evaluator agents. Overrides generic sta
   (`electron/main.ts`) never steal focus or come to the front — `SW_SHOWNOACTIVATE`/`SetWindowPos(HWND_BOTTOM)`
   and `showInactive()` respectively. This doesn't affect capture: `desktopCapturer`/`getDisplayMedia` read a
   window's pixels by handle regardless of z-order or visibility.
+- `scripts/win/frames/labels.json`'s `boxes` are frame px at the source PNGs' own 2000x1125 resolution, not
+  at whatever resolution the fake window's capture ends up at. `fake-deadlock.ps1 -Image` stretches the PNG
+  to fill the whole (16:9) client area, so the harness scales label boxes by `capturedFrameW / 2000` before
+  comparing against `window.__overlayDrawn` (frame px in the _captured_ frame's own resolution) — see
+  `runFramesCase` in `scripts/win/e2e-main.cjs`.
+- `fake-deadlock.ps1`'s window is `FormBorderStyle = 'None'` (borderless): desktopCapturer/getDisplayMedia
+  (Windows Graphics Capture) captures a window's *full bounds* including title bar/border chrome, not just
+  its client area. With a title bar, the captured frame came back non-16:9 (e.g. 1282x758 for a 1280x720
+  client) and every fixed-layout anchor in the recogniser was silently offset — a real Deadlock window is
+  presumably borderless already, so this was a harness-only artifact, not a real-world recogniser problem.
+- Closing one fake-deadlock.ps1 window and opening the next (as the `frames` harness case does per labelled
+  frame) invalidates the old window's WGC capture handle ("target source has been closed") and stops the
+  video track. `BrawlView.tsx`'s game-rect effect retries `startCapture()` whenever the game window is
+  present and `capture === 'off'`, regardless of `denied` (not just after a getDisplayMedia denial) — this
+  covers that case too, since a stale-track stop never sets `denied`. Don't gate that retry on `denied`
+  again; it was the root cause of a capture that never recovered after the first window swap.
+- `video.srcObject`/`videoWidth` are not a reliable "is capture actually running" signal in the harness:
+  `stopCapture()` never clears `srcObject`, so a dead, frozen `<video>` keeps reporting its last-known
+  size forever. Poll a fresh `capture.attempt` console line count instead (see `waitForCaptureOn` /
+  `captureStartTotal` in `scripts/win/e2e-main.cjs`).
+- `drawReads` (`src/brawl/draw.ts`) returns the rects it actually stroked (`DrawnRect[]`, frame px, tagged
+  `card`/`best`/`reroll`); `OverlayApp.tsx` stashes the latest list on `window.__overlayDrawn`, gated by
+  `window.brawlAPI.isE2E` (from `electron/preload.ts`, `BRAWL_E2E=1`) so it's a no-op outside the harness.
+- The e2e-only forced-reroll hook lives on `__brawlE2E.forceReroll()` in `electron/main.ts`: it resends the
+  last real, capture-derived `OverlayState` with `reroll:true`/`bestId:null` — never a fabricated state —
+  for PLAN.md item 3's `reroll-box` check when no frame naturally verdicts RE-ROLL.

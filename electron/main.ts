@@ -31,6 +31,11 @@ let pollTimer: ReturnType<typeof setInterval> | null = null;
 // *actual* live click-through state instead of the literal `true` createOverlayWindow() happens to pass
 // today (electron/main.ts has no BrowserWindow getter to read this back).
 let overlayIgnoresMouseEvents = false;
+// Last OverlayState relayed to the overlay window, kept only so the e2e harness's forceReroll() hook can
+// resend a reroll:true clone of it -- real capture-derived reads, not a fabricated OverlayState -- for
+// PLAN.md's item 3 forced reroll-box pass (both tracked frames' actual engine verdict is TAKE, so a natural
+// RE-ROLL never occurs in the frames harness case). Unused outside BRAWL_E2E.
+let lastOverlayState: import('../src/brawl/draw').OverlayState | null = null;
 
 // Electron's own setDisplayMediaRequestHandler implementation throws "Video was requested, but no video
 // stream was provided" as an unhandled rejection *inside Electron*, not something our handler's try/catch
@@ -225,6 +230,7 @@ function setupIpc() {
   ipcMain.handle(CHANNELS.platformWarning, () => platformWarning());
   // Relay: the control window computes advice from its capture and forwards state for the overlay to draw.
   ipcMain.on(CHANNELS.overlayState, (_event, state) => {
+    lastOverlayState = state;
     overlay?.webContents.send(CHANNELS.overlayState, state);
   });
 }
@@ -269,6 +275,14 @@ app.whenReady().then(() => {
       triggerOverlayDemo,
       get overlayIgnoresMouseEvents() {
         return overlayIgnoresMouseEvents;
+      },
+      // Forces a reroll:true resend of the *real*, capture-derived last OverlayState -- for PLAN.md item
+      // 3's forced reroll-box check when no frame's natural engine verdict is RE-ROLL. Returns false (no
+      // send) if no real state has been relayed yet.
+      forceReroll: () => {
+        if (!lastOverlayState) return false;
+        overlay?.webContents.send(CHANNELS.overlayState, { ...lastOverlayState, reroll: true, bestId: null });
+        return true;
       },
     };
   }

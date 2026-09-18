@@ -30,11 +30,25 @@ export interface OverlayState {
   advice: OverlayAdvice | null;
 }
 
+/** One box `drawReads` actually stroked, in capture-frame px (unscaled by scaleX/scaleY) — so a caller that
+ *  knows the canvas's own scale relative to the frame can turn these back into canvas px, and something that
+ *  only has frame-px labels (e.g. the e2e harness comparing against `scripts/win/frames/labels.json`) can
+ *  compare directly without redoing the scale math. */
+export interface DrawnRect {
+  kind: 'card' | 'best' | 'reroll';
+  card: string | null; // read.card ("left"/"top"/"right") for card/best, null for reroll
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
 /** Draws the highlight boxes for the current card reads, scaled from capture-frame pixels to the target
  *  canvas size. Shared by the preview canvas (BrawlView) and the Electron overlay window. When `reroll`
  *  is true, no card is boxed as best (the engine says re-roll, not take): the "Use Re-Roll" button is
  *  boxed instead, at its position in the `frameW`x`frameH` capture frame, so the box on the game always
- *  matches the advice. */
+ *  matches the advice. Returns every box actually stroked, in frame px, for callers (e.g. the e2e harness)
+ *  that need to verify what was drawn without re-deriving it from the reads. */
 export function drawReads(
   ctx: CanvasRenderingContext2D,
   reads: CardRead[],
@@ -44,7 +58,8 @@ export function drawReads(
   frameW: number,
   frameH: number,
   reroll = false,
-) {
+): DrawnRect[] {
+  const drawn: DrawnRect[] = [];
   for (const read of reads) {
     if (!read.present) continue;
     const isBest = !reroll && read.itemId === bestId;
@@ -57,6 +72,7 @@ export function drawReads(
       ctx.font = 'bold 13px sans-serif';
       ctx.fillText('TAKE', x * scaleX, Math.max(12, y * scaleY - 6));
     }
+    drawn.push({ kind: isBest ? 'best' : 'card', card: read.card, x0: x, y0: y, x1: x + edge, y1: y + edge });
   }
   if (reroll) {
     const rect = rerollButtonRect(frameW, frameH);
@@ -70,5 +86,7 @@ export function drawReads(
     ctx.fillStyle = '#ffb020';
     ctx.font = 'bold 13px sans-serif';
     ctx.fillText('RE-ROLL', x0, Math.max(12, y0 - 6));
+    drawn.push({ kind: 'reroll', card: null, x0: rect.x0, y0: rect.y0, x1: rect.x1, y1: rect.y1 });
   }
+  return drawn;
 }

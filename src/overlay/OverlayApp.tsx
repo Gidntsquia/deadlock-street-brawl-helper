@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { drawReads, type OverlayState } from '../brawl/draw';
+import { drawReads, type DrawnRect, type OverlayState } from '../brawl/draw';
 import { cardAnchors } from '../brawl/recognise';
 import { log } from '../log';
+
+declare global {
+  interface Window {
+    __overlayDrawn?: DrawnRect[];
+  }
+}
 
 const DEMO_MS = 10_000;
 
@@ -52,8 +58,11 @@ export default function OverlayApp() {
     if (!ctx) return;
     ctx.clearRect(0, 0, c.width, c.height);
     const showing = state.reads.some((r) => r.present);
-    if (!showing || !state.frameW || !state.frameH) return;
-    drawReads(
+    if (!showing || !state.frameW || !state.frameH) {
+      if (window.brawlAPI?.isE2E) window.__overlayDrawn = [];
+      return;
+    }
+    const drawn = drawReads(
       ctx,
       state.reads,
       state.bestId,
@@ -63,6 +72,9 @@ export default function OverlayApp() {
       state.frameH,
       state.reroll,
     );
+    // e2e-only: expose exactly what was stroked (frame px) so the harness can verify boxes without
+    // re-deriving them from reads (PLAN.md item 3's boxes-<frame> check).
+    if (window.brawlAPI?.isE2E) window.__overlayDrawn = drawn;
   };
 
   useEffect(() => {

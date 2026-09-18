@@ -5,6 +5,7 @@ import { CHANNELS } from './channels';
 
 const api = {
   isElectron: true as const,
+  isE2E: process.env.BRAWL_E2E === '1',
   getGameRect: (): Promise<Rect | null> => ipcRenderer.invoke(CHANNELS.getGameRect),
   onGameRect: (cb: (rect: Rect | null) => void) => {
     const listener = (_e: Electron.IpcRendererEvent, rect: Rect | null) => cb(rect);

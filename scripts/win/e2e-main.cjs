@@ -351,8 +351,338 @@ async function main() {
     stopFakeWindow();
   }
 
+  if (wantsCase('frames')) {
+    await runFramesCase(e2e, control, overlay, () => captureStartTotal);
+  }
+
   clearTimeout(timeout);
   finish(checks.every((c) => c.pass) ? 0 : 1);
+}
+
+// Intersection-over-union of two {x0,y0,x1,y1} rects in the same coordinate space.
+function iou(a, b) {
+  const x0 = Math.max(a.x0, b.x0),
+    y0 = Math.max(a.y0, b.y0);
+  const x1 = Math.min(a.x1, b.x1),
+    y1 = Math.min(a.y1, b.y1);
+  const inter = Math.max(0, x1 - x0) * Math.max(0, y1 - y0);
+  const areaA = (a.x1 - a.x0) * (a.y1 - a.y0);
+  const areaB = (b.x1 - b.x0) * (b.y1 - b.y0);
+  const union = areaA + areaB - inter;
+  return union > 0 ? inter / union : 0;
+}
+
+function scaleBox(box, scale) {
+  return { x0: box.x0 * scale, y0: box.y0 * scale, x1: box.x1 * scale, y1: box.y1 * scale };
+}
+
+// Closing the previous frame's fake window invalidates that window's capture handle (WGC fires "target
+// source has been closed"), which stops the video track. BrawlView.tsx now retries automatically once the
+// game window reappears (see the onGameRect effect there) -- this waits for that retry to actually land.
+// video.srcObject/videoWidth are NOT reliable signals here: stopCapture() never clears srcObject, so a
+// dead, frozen video element still reports its last-known videoWidth/height forever. Instead wait for a
+// fresh "capture.attempt" console line (getCaptureStartTotal, a running count since boot) past the
+// baseline taken right before this frame's fake window was spawned, then for the status line to stop
+// saying the window isn't found.
+async function waitForCaptureOn(control, getCaptureStartTotal, baseline) {
+  await waitFor(() => getCaptureStartTotal() > baseline, 10_000);
+  await waitFor(async () => {
+    const status = await control.webContents.executeJavaScript(
+      'document.querySelector(".brawl-status")?.textContent ?? ""',
+    );
+    return !status.includes('not found');
+  }, 10_000);
+  await waitFor(
+    () =>
+      control.webContents.executeJavaScript(
+        '(() => { const v = document.querySelector("video"); return !!(v && v.srcObject && v.videoWidth > 0); })()',
+      ),
+    10_000,
+  );
+}
+
+// Item 3: the fake window shows real draft frames (scripts/win/frames/*.png) and the harness checks the
+// real pipeline against hand-measured labels (scripts/win/frames/labels.json) -- never against the
+// recogniser's own output, which would be circular.
+async function runFramesCase(e2e, control, overlay, getCaptureStartTotal) {
+  const FRAMES_DIR = path.join(ROOT, 'scripts', 'win', 'frames');
+  const labels = JSON.parse(fs.readFileSync(path.join(FRAMES_DIR, 'labels.json'), 'utf8'));
+  const verdictsPath = path.join(ROOT, 'logs', 'win-e2e-verdicts.json');
+  if (!fs.existsSync(verdictsPath)) {
+    check('frames', false, `missing ${verdictsPath} -- run-e2e.sh should stage this from compute-verdicts.ts`);
+    return;
+  }
+  const verdicts = JSON.parse(fs.readFileSync(verdictsPath, 'utf8'));
+
+  const setSelectJs = `
+    function __setSelect(sel, value) {
+      const el = document.querySelector(sel);
+      if (!el) return false;
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+      setter.call(el, String(value));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    }
+    function __setHero(name) {
+      const el = document.querySelector('.hero-select');
+      if (!el) return false;
+      const opt = [...el.options].find((o) => o.textContent.includes(name));
+      if (!opt) return false;
+      return __setSelect('.hero-select', opt.value);
+    }
+  `;
+
+  let anyNaturalReroll = false;
+  let lastFrameName = null;
+
+  for (const [frameName, label] of Object.entries(labels)) {
+    if (frameName.startsWith('_')) continue;
+    lastFrameName = frameName;
+    const imgPath = path.join(FRAMES_DIR, `${frameName}.png`);
+    // Snapshot before spawning this frame's window, then wait for a fresh capture.attempt past it -- see
+    // waitForCaptureOn. Also clear the overlay's last-drawn bookkeeping up front so a stale pass from the
+    // previous frame can never leak into this frame's boxes/pixels checks if capture fails to recover.
+    const captureBaseline = getCaptureStartTotal();
+    if (overlay) await overlay.webContents.executeJavaScript('window.__overlayDrawn = []');
+    startFakeWindow(['-Image', imgPath]);
+    await waitFor(() => fakeWindowRect, 5_000);
+    await sleep(1500);
+
+    // Closing the previous frame's fake window invalidates that window's capture handle (WGC fires
+    // "target source has been closed"), which stops the video track. The app's own retry loop only fires
+    // after a denied getDisplayMedia call, not after a capture that stopped for this reason, so each new
+    // frame needs to explicitly restart capture if it's not already running.
+    await waitForCaptureOn(control, getCaptureStartTotal, captureBaseline);
+
+    await control.webContents.executeJavaScript(`
+      (() => {
+        ${setSelectJs}
+        __setHero(${JSON.stringify(label.hero)});
+        __setSelect('select[aria-label="Round"]', ${label.round});
+        __setSelect('select[aria-label="Choice"]', ${label.choice});
+      })();
+    `);
+    await sleep(500);
+
+    let statusText = '';
+    await waitFor(async () => {
+      statusText = await control.webContents.executeJavaScript(
+        'document.querySelector(".brawl-status")?.textContent ?? ""',
+      );
+      return statusText.split(' / ').length === 3 ? statusText : null;
+    }, 15_000);
+
+    const dbgVidSize = await control.webContents.executeJavaScript(
+      '(() => { const v = document.querySelector("video"); return v ? { w: v.videoWidth, h: v.videoHeight } : null; })()',
+    );
+    const namesOk = ['left', 'top', 'right'].every((k) => statusText.includes(label.cards[k]));
+    check(`cards-read-${frameName}`, namesOk, `${statusText} video=${JSON.stringify(dbgVidSize)}`);
+
+    const expected = verdicts[frameName]?.verdict ?? null;
+    if (expected === 'RE-ROLL') anyNaturalReroll = true;
+    // adviceText depends on the hero's analytics fetch (started when __setHero ran above) resolving and
+    // adviseDraft() re-running -- poll instead of a flat sleep so a slow fetch doesn't false-fail this.
+    let adviceText = null;
+    await waitFor(async () => {
+      adviceText = await control.webContents.executeJavaScript(`
+        (() => {
+          const banner = document.querySelector('.brawl-reroll-banner');
+          if (banner) return 'RE-ROLL';
+          const best = document.querySelector('.brawl-card.best b');
+          return best ? best.textContent.replace(/^TAKE\\s*/, '').trim() : null;
+        })()
+      `);
+      return adviceText;
+    }, 10_000);
+    check(
+      `verdict-${frameName}`,
+      !!expected && !!adviceText && adviceText.startsWith(expected),
+      `advice="${adviceText}" expected="${expected}"`,
+    );
+
+    const vidSize = await control.webContents.executeJavaScript(
+      '(() => { const v = document.querySelector("video"); return v ? { w: v.videoWidth, h: v.videoHeight } : null; })()',
+    );
+    const expectedBestPos = Object.entries(label.cards).find(([, name]) => name === expected)?.[0] ?? null;
+    // The control window's advice text and the overlay window's redraw are two separate IPC-relayed
+    // renders (OverlayState → overlay window) -- overlay can lag control by a render tick. Poll until the
+    // overlay actually shows a 'best' box at the expected position instead of racing it.
+    let drawn = overlay ? await overlay.webContents.executeJavaScript('window.__overlayDrawn ?? []') : [];
+    if (overlay && expectedBestPos) {
+      await waitFor(async () => {
+        drawn = await overlay.webContents.executeJavaScript('window.__overlayDrawn ?? []');
+        return drawn.some((r) => r.card === expectedBestPos && r.kind === 'best');
+      }, 5_000);
+    }
+    // Gated on namesOk: if this frame's cards were never actually read (e.g. capture didn't recover in
+    // time), window.__overlayDrawn could still be showing a stale pass from the previous frame -- an
+    // honest fail here beats a spurious pass.
+    let boxesOk = !!vidSize && namesOk;
+    const boxDetail = [];
+    if (vidSize) {
+      const scale = vidSize.w / 2000; // labels.json boxes are frame px at the source PNG's own 2000x1125
+      for (const posKey of ['left', 'top', 'right']) {
+        const labelBox = scaleBox(label.boxes[posKey], scale);
+        const drawnBox = drawn.find((r) => r.card === posKey);
+        const score = drawnBox ? iou(labelBox, drawnBox) : 0;
+        const cx = (labelBox.x0 + labelBox.x1) / 2,
+          cy = (labelBox.y0 + labelBox.y1) / 2;
+        const contains = !!drawnBox && cx >= drawnBox.x0 && cx <= drawnBox.x1 && cy >= drawnBox.y0 && cy <= drawnBox.y1;
+        const wantKind = posKey === expectedBestPos ? 'best' : 'card';
+        const kindOk = !!drawnBox && drawnBox.kind === wantKind;
+        boxDetail.push(`${posKey}:iou=${score.toFixed(2)},contains=${contains},kind=${drawnBox?.kind ?? 'none'}`);
+        if (score < 0.5 || !contains || !kindOk) boxesOk = false;
+      }
+    }
+    check(`boxes-${frameName}`, boxesOk, boxDetail.join(' '));
+
+    // pixels-<frame>: sample the actual overlay canvas pixels via capturePage(), independent of the
+    // __overlayDrawn bookkeeping above -- proves the box is really on screen, not just recorded.
+    if (overlay && vidSize && expectedBestPos && namesOk) {
+      const ok = await checkPixels(overlay, label, vidSize, expectedBestPos, frameName);
+      check(`pixels-${frameName}`, ok.pass, ok.detail);
+    } else {
+      check(`pixels-${frameName}`, false, 'no overlay/vidSize/expectedBestPos');
+    }
+
+    stopFakeWindow();
+  }
+
+  // Forced reroll-box pass: per PLAN.md, only needed if no frame's natural verdict was RE-ROLL (confirmed
+  // by scripts/win/compute-verdicts.ts: both frames' independent engine verdict is TAKE, not RE-ROLL).
+  if (!anyNaturalReroll && lastFrameName) {
+    const label = labels[lastFrameName];
+    const imgPath = path.join(FRAMES_DIR, `${lastFrameName}.png`);
+    const captureBaseline = getCaptureStartTotal();
+    if (overlay) await overlay.webContents.executeJavaScript('window.__overlayDrawn = []');
+    startFakeWindow(['-Image', imgPath]);
+    await waitFor(() => fakeWindowRect, 5_000);
+    await sleep(1500);
+    await waitForCaptureOn(control, getCaptureStartTotal, captureBaseline);
+    await control.webContents.executeJavaScript(`
+      (() => {
+        ${setSelectJs}
+        __setHero(${JSON.stringify(label.hero)});
+        __setSelect('select[aria-label="Round"]', ${label.round});
+        __setSelect('select[aria-label="Choice"]', ${label.choice});
+      })();
+    `);
+    let statusText = '';
+    await waitFor(async () => {
+      statusText = await control.webContents.executeJavaScript(
+        'document.querySelector(".brawl-status")?.textContent ?? ""',
+      );
+      return statusText.split(' / ').length === 3 ? statusText : null;
+    }, 15_000);
+
+    const forced = e2e.forceReroll ? e2e.forceReroll() : false;
+    const vidSize = await control.webContents.executeJavaScript(
+      '(() => { const v = document.querySelector("video"); return v ? { w: v.videoWidth, h: v.videoHeight } : null; })()',
+    );
+    // Same overlay-redraw lag as boxes-<frame> above: poll for the reroll box to actually appear instead
+    // of racing the IPC relay with a flat sleep.
+    let drawn = overlay ? await overlay.webContents.executeJavaScript('window.__overlayDrawn ?? []') : [];
+    if (overlay && forced) {
+      await waitFor(async () => {
+        drawn = await overlay.webContents.executeJavaScript('window.__overlayDrawn ?? []');
+        return drawn.some((r) => r.kind === 'reroll');
+      }, 5_000);
+      // window.__overlayDrawn is set synchronously inside the same draw() call that issues the canvas
+      // stroke/fill commands, but capturePage() can still race the compositor flushing that paint to the
+      // screen. Force and await two animation frames so the paint is actually on screen before sampling.
+      await overlay.webContents.executeJavaScript(
+        'new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))',
+      );
+    }
+    let boxOk = forced && !!vidSize;
+    let detail = `forced=${forced}`;
+    if (forced && vidSize) {
+      const scale = vidSize.w / 2000;
+      const labelBox = scaleBox(label.boxes.reroll, scale);
+      const drawnBox = drawn.find((r) => r.kind === 'reroll');
+      const score = drawnBox ? iou(labelBox, drawnBox) : 0;
+      detail += ` iou=${score.toFixed(2)} drawn=${JSON.stringify(drawnBox ?? null)}`;
+      boxOk = boxOk && score >= 0.5;
+      if (overlay) {
+        // Sample at the box the app actually drew (drawnBox), not the hand-measured label box: the
+        // reroll button position is a fixed formula (rerollButtonRect), not detected from the image, so
+        // it can be a few px off from the label even when its own iou passes -- sampling the label edge
+        // then misses the stroke entirely. boxes-check above already verifies drawnBox vs. label
+        // position; this only needs to prove the stroke is really painted where the app says it is.
+        const px = await checkOrangePixel(overlay, drawnBox ?? labelBox, vidSize);
+        detail += ` orangePixel=${JSON.stringify(px.sample)}`;
+        boxOk = boxOk && px.pass;
+      }
+    }
+    check('reroll-box', boxOk, detail);
+    stopFakeWindow();
+  } else if (lastFrameName) {
+    check('reroll-box', true, 'skipped: a frame naturally verdicted RE-ROLL');
+  }
+}
+
+async function checkPixels(overlay, label, vidSize, expectedBestPos, frameName) {
+  const canvasSize = await overlay.webContents.executeJavaScript(
+    '(() => { const c = document.querySelector("canvas"); return c ? { w: c.width, h: c.height } : null; })()',
+  );
+  if (!canvasSize) return { pass: false, detail: `${frameName}: no overlay canvas` };
+  const scaleFrameToCanvas = { x: canvasSize.w / vidSize.w, y: canvasSize.h / vidSize.h };
+  const scaleLabelToFrame = vidSize.w / 2000;
+  const bestBox = scaleBox(label.boxes[expectedBestPos], scaleLabelToFrame);
+  const edgeCanvasX = bestBox.x0 * scaleFrameToCanvas.x;
+  const edgeCanvasY = ((bestBox.y0 + bestBox.y1) / 2) * scaleFrameToCanvas.y;
+  const nonBestPos = ['left', 'top', 'right'].find((k) => k !== expectedBestPos);
+  const nonBestBox = scaleBox(label.boxes[nonBestPos], scaleLabelToFrame);
+  const nonBestCentreCanvasX = ((nonBestBox.x0 + nonBestBox.x1) / 2) * scaleFrameToCanvas.x;
+  const nonBestCentreCanvasY = ((nonBestBox.y0 + nonBestBox.y1) / 2) * scaleFrameToCanvas.y;
+
+  const img = await overlay.webContents.capturePage();
+  const imgSize = img.getSize();
+  const bitmap = img.toBitmap(); // BGRA on Windows
+  const toImgPx = (cx, cy) => ({
+    x: Math.round(cx * (imgSize.width / canvasSize.w)),
+    y: Math.round(cy * (imgSize.height / canvasSize.h)),
+  });
+  const sample = (px, py) => {
+    const x = Math.min(Math.max(px, 0), imgSize.width - 1);
+    const y = Math.min(Math.max(py, 0), imgSize.height - 1);
+    const idx = (y * imgSize.width + x) * 4;
+    return [bitmap[idx + 2], bitmap[idx + 1], bitmap[idx], bitmap[idx + 3]]; // -> R,G,B,A
+  };
+  const edge = toImgPx(edgeCanvasX, edgeCanvasY);
+  const nonBest = toImgPx(nonBestCentreCanvasX, nonBestCentreCanvasY);
+  const edgePx = sample(edge.x, edge.y);
+  const nonBestPx = sample(nonBest.x, nonBest.y);
+  const isGreen = Math.abs(edgePx[0] - 0x39) <= 60 && edgePx[1] >= 150 && Math.abs(edgePx[2] - 0x6a) <= 60;
+  const nonBestQuiet = !(
+    Math.abs(nonBestPx[0] - 0x39) <= 60 &&
+    nonBestPx[1] >= 150 &&
+    Math.abs(nonBestPx[2] - 0x6a) <= 60
+  );
+  return {
+    pass: isGreen && nonBestQuiet,
+    detail: `${frameName}: edge=${JSON.stringify(edgePx)} nonBestCentre=${JSON.stringify(nonBestPx)}`,
+  };
+}
+
+async function checkOrangePixel(overlay, labelBoxFramePx, vidSize) {
+  const canvasSize = await overlay.webContents.executeJavaScript(
+    '(() => { const c = document.querySelector("canvas"); return c ? { w: c.width, h: c.height } : null; })()',
+  );
+  const scaleFrameToCanvas = { x: canvasSize.w / vidSize.w, y: canvasSize.h / vidSize.h };
+  const edgeCanvasX = labelBoxFramePx.x0 * scaleFrameToCanvas.x;
+  const edgeCanvasY = ((labelBoxFramePx.y0 + labelBoxFramePx.y1) / 2) * scaleFrameToCanvas.y;
+  const img = await overlay.webContents.capturePage();
+  const imgSize = img.getSize();
+  const bitmap = img.toBitmap();
+  const x = Math.round(edgeCanvasX * (imgSize.width / canvasSize.w));
+  const y = Math.round(edgeCanvasY * (imgSize.height / canvasSize.h));
+  const cx = Math.min(Math.max(x, 0), imgSize.width - 1);
+  const cy = Math.min(Math.max(y, 0), imgSize.height - 1);
+  const idx = (cy * imgSize.width + cx) * 4;
+  const sample = [bitmap[idx + 2], bitmap[idx + 1], bitmap[idx], bitmap[idx + 3]];
+  const isOrange = Math.abs(sample[0] - 0xff) <= 60 && Math.abs(sample[1] - 0xb0) <= 70 && sample[2] <= 90;
+  return { pass: isOrange, sample };
 }
 
 function finish(code) {

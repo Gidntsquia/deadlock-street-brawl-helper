@@ -286,12 +286,16 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
     });
   }, []);
 
-  // After a denial, don't retry on every rect tick (that's the unthrottled retry loop): only retry once the
-  // game window actually appears again (rect null → non-null).
+  // Retry whenever the game window is present but capture isn't running -- covers both a denial (game
+  // window wasn't found yet, `denied` set) and the window's capture handle going stale while the window
+  // itself stays open (e.g. Windows Graphics Capture invalidates the session on certain window changes;
+  // the video track fires "ended" and stopCapture() runs, but never touches `denied`). Retrying only on
+  // rect ticks while capture === 'off' (not on every tick unconditionally) avoids a busy loop, since
+  // startCapture() flips capture away from 'off' immediately.
   useEffect(() => {
     if (!isElectron) return;
     return window.brawlAPI!.onGameRect((rect) => {
-      if (rect && capture === 'off' && denied) {
+      if (rect && capture === 'off') {
         setDenied(false);
         void startCapture();
       } else if (!rect && capture !== 'off') {
@@ -489,6 +493,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
           <label>
             Round{' '}
             <select
+              aria-label="Round"
               value={round}
               onChange={(e) => {
                 setRound(Number(e.target.value));
@@ -506,6 +511,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
           <label>
             Choice{' '}
             <select
+              aria-label="Choice"
               value={choice}
               onChange={(e) => {
                 setChoice(Number(e.target.value));
