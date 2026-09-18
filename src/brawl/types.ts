@@ -1,4 +1,4 @@
-import type { Ability, Hero, Item, ItemStat, PairStat } from '../types';
+import type { Ability, AbilityOrderStat, Hero, Item, ItemStat, PairStat } from '../types';
 
 /** Slim item-stats row from the enemy-filtered `item-stats?enemy_hero_ids=<id>` query. */
 export interface VsStat {
@@ -13,6 +13,8 @@ export interface BrawlAnalytics {
   game_mode: 'street_brawl';
   item_stats: ItemStat[];
   permutation_stats: PairStat[];
+  /** absent for files written before item 3 (item advice degrades gracefully; no ability-order panel) */
+  ability_order_stats?: AbilityOrderStat[];
   /** enemy hero id -> this hero's item stats in matches where that enemy was on the other team */
   vs: Record<string, VsStat[]>;
 }

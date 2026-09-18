@@ -15,6 +15,7 @@ import {
   type Offer,
   type RankedOffer,
   type RerollAdvice,
+  brawlAbilityOrder,
 } from '../brawl';
 import type { WorkerIn, WorkerOut } from '../brawl/worker';
 import { drawReads } from '../brawl/draw';
@@ -114,6 +115,9 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
   const reroll = advice?.reroll && rerolls > 0 ? advice.reroll : null;
   const tiers = input ? roundTiers(input, round) : [];
   const topItems = useMemo(() => (input ? topItemsByTier(input) : []), [input]);
+  const abilityOrder = useMemo(() => (input ? brawlAbilityOrder(input) : null), [input]);
+  // Street Brawl gives roughly one ability point per draft choice: round 1 choice 1 is step 1, etc.
+  const abilityStepNow = (round - 1) * 3 + choice - 1;
 
   const stopCapture = useCallback(() => {
     streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -478,6 +482,16 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
             <h2>
               {hero.name} · round {round}, choice {choice}
             </h2>
+            {abilityOrder && abilityOrder.steps.length > 0 && (
+              <div className="muted brawl-ability-line">
+                {abilityOrder.steps.map((s, k) => (
+                  <span key={k}>
+                    {k > 0 ? ' ' : ''}
+                    {k === abilityStepNow ? <b>{s.ability.name}</b> : s.ability.name}
+                  </span>
+                ))}
+              </div>
+            )}
             {capture === 'on' && (
               <canvas
                 ref={previewRef}
@@ -537,6 +551,26 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
           ))}
         </div>
       </div>
+
+      {abilityOrder && abilityOrder.steps.length > 0 && (
+        <div className="panel">
+          <h2>Ability order</h2>
+          {abilityOrder.support ? (
+            <div className="muted">
+              seen in {abilityOrder.support.matches} brawls, wins {(abilityOrder.support.winRate * 100).toFixed(0)}%
+            </div>
+          ) : (
+            <div className="muted">no Street Brawl ability data for {hero.name} yet; fallback order shown</div>
+          )}
+          <ol className="brawl-ability-order">
+            {abilityOrder.steps.map((s, k) => (
+              <li key={k} className={k === abilityStepNow ? 'now' : ''}>
+                {s.ability.name} <small>({s.kind === 'unlock' ? 'unlock' : s.kind})</small>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
 
       <div className="panel">
         <h2>{hero.name}'s top items</h2>

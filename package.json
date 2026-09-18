@@ -16,6 +16,7 @@
     "format": "prettier --check .",
     "check": "npm run lint && npm run typecheck && npm run format && npm run test",
     "fetch-data": "node scripts/fetch-data.mjs --brawl",
+    "fetch-data:abilities": "node scripts/fetch-data.mjs --brawl-abilities",
     "icon-index": "node scripts/build-icon-index.mjs",
     "brawl": "npx tsx scripts/brawl-cli.ts",
     "brawl:see": "npx tsx scripts/brawl-recognise.ts",

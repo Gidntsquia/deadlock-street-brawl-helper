@@ -47,6 +47,9 @@ const BRAWL_ONLY = process.argv.includes('--brawl');
 // `--brawl-tierlist` rebuilds analytics/brawl/tier-list.json alone: one hero-stats call plus a sum over
 // the per-hero files already on disk, instead of the ~1400 requests a full --brawl run costs.
 const BRAWL_TIERLIST_ONLY = process.argv.includes('--brawl-tierlist');
+// `--brawl-abilities` refreshes only ability_order_stats in every analytics/brawl/<id>.json (~1 request
+// per hero) and leaves the rest of each file untouched, instead of the full ~1400-request --brawl run.
+const BRAWL_ABILITIES_ONLY = process.argv.includes('--brawl-abilities');
 // A 429 on match metadata can ask for an hour-long retry-after; wait at most this long, then throw so the
 // caller skips that match and moves on to the next one (there are more candidates than the target).
 const MAX_WAIT_MS = 45 * 1000;
@@ -301,6 +304,12 @@ async function fetchAnalytics(heroes, manifest) {
 // One row per item, slimmed to what the counter term needs.
 const slimStat = (s) => ({ item_id: s.item_id, wins: s.wins, matches: s.matches });
 
+// Ability sequences can be large; keep the 200 most-played rows like the non-brawl population does at 400.
+async function fetchBrawlAbilityOrder(q) {
+  const rows = await getJson(`${API}/v1/analytics/ability-order-stats?${q}&min_matches=5`);
+  return [...rows].sort((a, b) => b.matches - a.matches).slice(0, 200);
+}
+
 async function fetchBrawl(heroes, manifest) {
   // Pin the window for a brawl run reached from the full pipeline too, and take both ends from the clock here:
   // the earlier steps can run for hours, so the module-load MIN_TS would make the span wider than WINDOW_DAYS.
@@ -317,6 +326,7 @@ async function fetchBrawl(heroes, manifest) {
     const item_stats = await getJson(`${API}/v1/analytics/item-stats?${q}`);
     const perm = await getJson(`${API}/v1/analytics/item-permutation-stats?${q}&comb_size=2`);
     const permutation_stats = [...perm].sort((a, b) => b.matches - a.matches).slice(0, 600);
+    const ability_order_stats = await fetchBrawlAbilityOrder(q);
     const vs = {};
     for (const e of heroes) {
       if (e.id === h.id) continue;
@@ -328,13 +338,14 @@ async function fetchBrawl(heroes, manifest) {
     }
     const maxM = Math.max(0, ...item_stats.map((s) => s.matches));
     console.log(
-      `   ${h.name}: max item matches ${maxM}, ${item_stats.length} items, ${Object.keys(vs).length} enemies`,
+      `   ${h.name}: max item matches ${maxM}, ${item_stats.length} items, ${Object.keys(vs).length} enemies, ${ability_order_stats.length} ability sequences`,
     );
     await save(`analytics/brawl/${h.id}.json`, {
       hero_id: h.id,
       game_mode: BRAWL_GAME_MODE,
       item_stats,
       permutation_stats,
+      ability_order_stats,
       vs,
     });
   }
@@ -396,6 +407,23 @@ async function buildTierList(heroes, manifest) {
 }
 
 async function main() {
+  if (BRAWL_ABILITIES_ONLY) {
+    const manifest = JSON.parse(await readFile(path.join(OUT, 'manifest.json'), 'utf8'));
+    const heroes = JSON.parse(await readFile(path.join(OUT, 'heroes.json'), 'utf8'));
+    MIN_TS = manifest.brawl?.min_unix_timestamp ?? manifest.min_unix_timestamp;
+    MAX_TS = manifest.brawl?.max_unix_timestamp ?? Math.floor(Date.now() / 1000);
+    console.log(`brawl abilities: ${heroes.length} heroes`);
+    for (const h of heroes) {
+      const q = `hero_id=${h.id}&game_mode=${BRAWL_GAME_MODE}&${windowQ()}`;
+      const ability_order_stats = await fetchBrawlAbilityOrder(q);
+      const file = JSON.parse(await readFile(path.join(OUT, `analytics/brawl/${h.id}.json`), 'utf8'));
+      console.log(`   ${h.name}: ${ability_order_stats.length} ability sequences`);
+      await save(`analytics/brawl/${h.id}.json`, { ...file, ability_order_stats });
+    }
+    if (manifest.brawl) manifest.brawl.abilities_fetched_at = new Date().toISOString();
+    await save('manifest.json', manifest);
+    return;
+  }
   if (BRAWL_TIERLIST_ONLY) {
     const manifest = JSON.parse(await readFile(path.join(OUT, 'manifest.json'), 'utf8'));
     const heroes = JSON.parse(await readFile(path.join(OUT, 'heroes.json'), 'utf8'));
