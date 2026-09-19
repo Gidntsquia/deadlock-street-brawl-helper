@@ -38,6 +38,8 @@ export interface OverlayState {
   advice: OverlayAdvice | null;
   draft: boolean;
   tip: OverlayTip | null;
+  /** The "Use Re-Roll" pill's outline found on the frame (frame px); absent: the nominal layout rect. */
+  rerollRect?: { x0: number; y0: number; x1: number; y1: number } | null;
 }
 
 /** The blank state: nothing to draw. */
@@ -153,6 +155,7 @@ export function drawReads(
   frameH: number,
   reroll = false,
   scores: Record<number, number> = {},
+  rerollRect: { x0: number; y0: number; x1: number; y1: number } | null = null,
 ): DrawnRect[] {
   const drawn: DrawnRect[] = [];
   for (const read of reads) {
@@ -185,7 +188,7 @@ export function drawReads(
     });
   }
   if (reroll) {
-    const rect = rerollButtonRect(frameW, frameH);
+    const rect = rerollRect ?? rerollButtonRect(frameW, frameH);
     const x0 = rect.x0 * scaleX,
       y0 = rect.y0 * scaleY,
       x1 = rect.x1 * scaleX,

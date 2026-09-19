@@ -49,6 +49,7 @@ export default function OverlayApp() {
           state.frameH,
           state.reroll,
           scoresFromAdvice(state.advice),
+          state.rerollRect ?? null,
         ),
       );
     if (state.tip) drawn.push(drawAbilityTip(ctx, state.tip, sx, sy, state.frameW, state.frameH));

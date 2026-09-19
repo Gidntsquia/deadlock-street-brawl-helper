@@ -22,6 +22,9 @@ import {
   stepTip,
   shopProbeRect,
   draftRegions,
+  BRAWL_LAYOUT,
+  REROLL_SEARCH,
+  findRerollButton,
   TIP_MS,
   type AbilityTarget,
   type TipState,
@@ -106,6 +109,8 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
   const draftRef = useRef(false);
   const tipRef = useRef<AbilityTarget | null>(null);
   const frameDimsRef = useRef({ w: 0, h: 0 });
+  const rerollRectRef = useRef<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  const rerollCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const lastOverlayJsonRef = useRef('');
   useEffect(() => {
     roundRef.current = round;
@@ -188,6 +193,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
         reads: draft ? readsRef.current : [],
         bestId: rerollNow ? null : (rankedRef.current[0]?.item.id ?? null),
         reroll: rerollNow && draft,
+        rerollRect: rerollNow && draft ? rerollRectRef.current : null,
         frameW: frameDimsRef.current.w,
         frameH: frameDimsRef.current.h,
         advice: draft ? overlayAdviceRef.current : null,
@@ -549,6 +555,26 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
         rctx.drawImage(src, r.x, r.y, r.width, r.height, 0, 0, r.width, r.height);
         const d = rctx.getImageData(0, 0, r.width, r.height);
         regions.push({ ...r, buffer: d.data.buffer });
+      }
+      if (rerollRef.current && draftRef.current) {
+        // Where the "Use Re-Roll" pill really sits on this frame (layouts differ by a few %), so the box hugs it.
+        const sx = srcW / BRAWL_LAYOUT.ref.width,
+          sy = srcH / BRAWL_LAYOUT.ref.height;
+        const x = Math.round(REROLL_SEARCH.x0 * sx),
+          y = Math.round(REROLL_SEARCH.y0 * sy),
+          w = Math.round((REROLL_SEARCH.x1 - REROLL_SEARCH.x0) * sx),
+          h = Math.round((REROLL_SEARCH.y1 - REROLL_SEARCH.y0) * sy);
+        const c = (rerollCanvasRef.current ??= document.createElement('canvas'));
+        if (c.width !== w) c.width = w;
+        if (c.height !== h) c.height = h;
+        const rctx = c.getContext('2d', { willReadFrequently: true })!;
+        rctx.drawImage(src, x, y, w, h, 0, 0, w, h);
+        const found = findRerollButton(rctx.getImageData(0, 0, w, h).data, w, h, x, y, srcW);
+        const old = rerollRectRef.current;
+        if (found && (!old || Math.abs(old.y0 - found.y0) + Math.abs(old.x0 - found.x0) > 1.5)) {
+          rerollRectRef.current = found;
+          pushOverlay();
+        }
       }
       const prefer = [...offeredRef.current, ...ownedRef.current];
       w.postMessage({ type: 'frame', width: srcW, height: srcH, regions, prefer } satisfies WorkerIn, [

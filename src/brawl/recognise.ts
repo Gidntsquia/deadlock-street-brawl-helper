@@ -1091,3 +1091,76 @@ export function readInventory(img: RGBImage, index: DecodedIndex, prefer: number
     }
   return out;
 }
+
+/** Search window (2560x1440 ref px) that surely holds the "Use Re-Roll" button, whichever way the game lays it out. */
+export const REROLL_SEARCH = { x0: 1080, y0: 870, x1: 1480, y1: 1030 } as const;
+
+/**
+ * Finds the "Use Re-Roll" pill's own outline in `rgba` (the REROLL_SEARCH window of the frame, `w`x`h` px, whose
+ * top-left is (ox, oy) in frame px). The pill's top and bottom edges are the two long, light horizontal runs;
+ * its left/right ends are the extreme light pixels of the middle rows (the label text never reaches them).
+ * Returns the outline's rect in frame px, or null when no pill is found.
+ */
+export function findRerollButton(
+  rgba: Uint8Array | Uint8ClampedArray,
+  w: number,
+  h: number,
+  ox: number,
+  oy: number,
+  frameW: number,
+): { x0: number; y0: number; x1: number; y1: number } | null {
+  const lum = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) lum[i] = 0.3 * rgba[i * 4]! + 0.59 * rgba[i * 4 + 1]! + 0.11 * rgba[i * 4 + 2]!;
+  // per-row background: the 25th percentile of the row, so the frame's brown gradient does not count as "light"
+  const light = new Uint8Array(w * h);
+  const buf = new Float32Array(w);
+  for (let y = 0; y < h; y++) {
+    buf.set(lum.subarray(y * w, (y + 1) * w));
+    const med = [...buf].sort((a, b) => a - b)[w >> 2]!;
+    for (let x = 0; x < w; x++) light[y * w + x] = lum[y * w + x]! > med + 20 ? 1 : 0;
+  }
+  const scale = frameW / BRAWL_LAYOUT.ref.width;
+  const minRun = 90 * scale;
+  const longest = (y: number) => {
+    let best = 0,
+      cur = 0;
+    for (let x = 0; x < w; x++) {
+      cur = light[y * w + x] ? cur + 1 : 0;
+      if (cur > best) best = cur;
+    }
+    return best;
+  };
+  const rows: number[] = [];
+  for (let y = 0; y < h; y++) if (longest(y) >= minRun) rows.push(y);
+  if (rows.length < 2) return null;
+  // group consecutive rows into bands (an edge is a few px thick); need a top band and a bottom band
+  const bands: [number, number][] = [];
+  for (const y of rows) {
+    const last = bands[bands.length - 1];
+    if (last && y - last[1] <= 2) last[1] = y;
+    else bands.push([y, y]);
+  }
+  // choose the pair of bands whose gap best matches a button height (~65-100 ref px)
+  let pair: [[number, number], [number, number]] | null = null;
+  for (let i = 0; i < bands.length; i++)
+    for (let j = i + 1; j < bands.length; j++) {
+      const gap = (bands[j]![0] - bands[i]![1]) / scale;
+      if (gap >= 55 && gap <= 105 && (!pair || bands[j]![0] - bands[i]![0] < pair[1][0] - pair[0][0]))
+        pair = [bands[i]!, bands[j]!];
+    }
+  if (!pair) return null;
+  const top = pair[0][0],
+    bottom = pair[1][1];
+  const mid0 = Math.round(top + (bottom - top) * 0.4),
+    mid1 = Math.round(top + (bottom - top) * 0.6);
+  let xMin = w,
+    xMax = -1;
+  for (let y = mid0; y <= mid1; y++)
+    for (let x = 0; x < w; x++)
+      if (light[y * w + x]) {
+        if (x < xMin) xMin = x;
+        if (x > xMax) xMax = x;
+      }
+  if (xMax < xMin) return null;
+  return { x0: ox + xMin, y0: oy + top, x1: ox + xMax + 1, y1: oy + bottom + 1 };
+}

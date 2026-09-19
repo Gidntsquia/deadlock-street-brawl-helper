@@ -1263,7 +1263,7 @@ footer {
   max-height: 38%;
   overflow: hidden;
   pointer-events: none;
-  background: rgba(10, 16, 16, 0.97);
+  background: rgb(10, 16, 16);
   border: 1px solid rgba(255, 255, 255, 0.25);
   border-radius: 10px;
   padding: 10px 12px;

@@ -5,6 +5,8 @@ import { readRerollsRemaining } from '../../src/brawl/ocr';
 import {
   decodeIconIndex,
   extractRerollLabelCrop,
+  findRerollButton,
+  REROLL_SEARCH,
   readDraftScreen,
   readRoundChoice,
   type RGBImage,
@@ -59,4 +61,28 @@ describe('Test-mode frames as the app captures them', () => {
     expect(readRoundChoice(img)).toEqual({ round: 2, choice: 1 });
     expect(await readRerollsRemaining(img)).toBe(1);
   }, 30_000);
+});
+
+describe('re-roll button outline', () => {
+  it('is found on the frame itself (r2c1 sits lower than the nominal rect)', async () => {
+    const want = { 'draft-r2c1': [930, 1021], 'draft-r1c2': [917, 1009] } as const;
+    for (const [name, [y0, y1]] of Object.entries(want)) {
+      const img = await load(name);
+      const s = 0.75;
+      const x = Math.round(REROLL_SEARCH.x0 * s),
+        y = Math.round(REROLL_SEARCH.y0 * s),
+        w = Math.round((REROLL_SEARCH.x1 - REROLL_SEARCH.x0) * s),
+        h = Math.round((REROLL_SEARCH.y1 - REROLL_SEARCH.y0) * s);
+      const rgba = new Uint8Array(w * h * 4);
+      for (let j = 0; j < h; j++)
+        for (let i = 0; i < w; i++)
+          for (let c = 0; c < 3; c++) rgba[(j * w + i) * 4 + c] = img.data[((y + j) * 1920 + x + i) * 3 + c]!;
+      const r = findRerollButton(rgba, w, h, x, y, 1920)!;
+      expect(r, name).not.toBeNull();
+      expect(Math.abs(r.y0 / s - y0), name).toBeLessThan(4);
+      expect(Math.abs(r.y1 / s - y1), name).toBeLessThan(4);
+      expect(Math.abs(r.x0 / s - 1139), name).toBeLessThan(4);
+      expect(Math.abs(r.x1 / s - 1424), name).toBeLessThan(4);
+    }
+  });
 });
