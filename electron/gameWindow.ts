@@ -53,6 +53,15 @@ function loadUser32(koffi: typeof import('koffi')) {
     EnumWindows: lib.func('__stdcall', 'EnumWindows', 'bool', [koffi.pointer(WndEnumProc), 'intptr_t']),
     GetWindowTextW: lib.func('__stdcall', 'GetWindowTextW', 'int', ['void *', 'void *', 'int']),
     IsWindowVisible: lib.func('__stdcall', 'IsWindowVisible', 'bool', ['void *']),
+    SetWindowPos: lib.func('__stdcall', 'SetWindowPos', 'bool', [
+      'void *',
+      'intptr_t',
+      'int',
+      'int',
+      'int',
+      'int',
+      'uint32',
+    ]),
   };
 }
 
@@ -95,5 +104,23 @@ export function findGameWindow(title: string, exclude?: Set<bigint>): Rect | nul
     return { x: r.left, y: r.top, width: r.right - r.left, height: r.bottom - r.top };
   } catch {
     return null; // koffi missing, DLL call failed, or window closed mid-call
+  }
+}
+
+/** Puts a native window (an `Electron.BrowserWindow#getNativeWindowHandle()` buffer) at the bottom of the
+ *  z-order without moving, resizing or activating it. Used by the e2e/demo harness so its dummy game window
+ *  never covers what the person is working on (window capture still reads its pixels). */
+export function sendWindowToBottom(handle: Buffer): boolean {
+  if (process.platform !== 'win32') return false;
+  try {
+    user32 ??= loadUser32(koffi);
+    const HWND_BOTTOM = 1;
+    const SWP_NOSIZE = 0x1,
+      SWP_NOMOVE = 0x2,
+      SWP_NOACTIVATE = 0x10;
+    const hwnd = koffi.decode(handle, 'void *');
+    return user32.SetWindowPos(hwnd, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE);
+  } catch {
+    return false;
   }
 }

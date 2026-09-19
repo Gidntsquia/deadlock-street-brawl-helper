@@ -18,7 +18,7 @@ import {
   brawlAbilityOrder,
 } from '../brawl';
 import type { WorkerIn, WorkerOut } from '../brawl/worker';
-import { drawReads, type OverlayAdvice } from '../brawl/draw';
+import { drawReads, scoresFromAdvice, type OverlayAdvice } from '../brawl/draw';
 import { ItemTile } from './ItemTile';
 import { log } from '../log';
 import { usePersisted, isNumber, isNumberArray } from '../hooks/usePersisted';
@@ -66,8 +66,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
   const deniedIpcRef = useRef(false);
   // Bumped by every startCapture()/stopCapture() call so a stale, still-in-flight attempt (e.g. the mount-time
   // real getDisplayMedia() call, which can take a while to be denied) can't clobber a newer one's state once it
-  // finally settles -- without this, demo mode's "clear then set demoImgRef, then startCapture()" sequence gets
-  // silently undone when the earlier real attempt's rejection handler runs stopCapture() after the fact.
+  // finally settles.
   const captureGenRef = useRef(0);
   const offeredRef = useRef<Set<number>>(new Set()); // every card offered this game: settles inventory reads
   const ownedRef = useRef<number[]>([]);
@@ -142,6 +141,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
           choice,
           reroll: reroll ? { expectedBest: reroll.expectedBest, currentBest: reroll.currentBest } : null,
           ranked: ranked.map((r) => ({
+            itemId: r.item.id,
             name: r.item.name,
             score: r.score,
             enhanced: r.enhanced,
@@ -159,16 +159,11 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
     captureGenRef.current += 1;
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
-    const hadDemo = !!demoImgRef.current;
-    demoImgRef.current = null;
     workerRef.current?.terminate();
     workerRef.current = null;
     setCapture('off');
     setStatus('');
-    // Diagnosing eval round 6's "0/3 cards found" overlay-demo flake needs to see, from logs alone, whether
-    // a stopCapture() call ever clears a demo image out from under an in-flight demo start — hadDemo/gen let
-    // a failing run be told apart from a passing one after the fact.
-    log('brawl-view', 'info', 'capture.stop', { hadDemo, gen: captureGenRef.current });
+    log('brawl-view', 'info', 'capture.stop', { gen: captureGenRef.current });
   }, []);
   const hasDpip = () => 'documentPictureInPicture' in window;
   /** Always-on-top overlay in Chrome/Edge (Document Picture-in-Picture); a plain popup window elsewhere (Firefox has no
@@ -207,22 +202,14 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
     setPip(w);
     return w;
   }, []);
-  // Demo mode (PLAN.md item 4): main.ts found no real game and named a shipped demo frame (e.g. "choice1")
-  // to run through the real recognise -> advise -> draw path instead of a fabricated OverlayState. Capture
-  // (desktopCapturer/getDisplayMedia) stays reserved for a window actually titled "Deadlock" -- per user
-  // instruction, the demo never captures any window, including its own backdrop. Instead the frame loop
-  // below draws this loaded <img> to the canvas in place of the <video>.
-  const demoImgRef = useRef<HTMLImageElement | null>(null);
-
   /** One click: start the screen capture (needs the click's user activation) and then open the always-on-top overlay.
-   *  In demo mode (demoImgRef set), feeds the shipped demo PNG to the same frame loop instead of asking
-   *  main.ts's getDisplayMedia handler for the real Deadlock window -- no capture API is invoked at all. */
+   */
   const startCapture = async () => {
     deniedIpcRef.current = false;
     const gen = ++captureGenRef.current;
     try {
       setCapture('starting');
-      setStatus(demoImgRef.current ? 'demo mode · Ctrl+Shift+D' : 'loading icon index…');
+      setStatus('loading icon index…');
       const index = await j<IconIndex>('brawl-icons.json');
       const w = new Worker(new URL('../brawl/worker.ts', import.meta.url), { type: 'module' });
       const tiers: Record<number, number> = {};
@@ -233,13 +220,10 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
       // trace — the e2e harness's retry-loop checks count this line, not capture.start, since a denial
       // never reaches capture.start at all.
       log('brawl-view', 'info', 'capture.attempt');
-      if (demoImgRef.current) {
-        // demoImgRef.current.src was already set (and awaited) by the caller before startCapture() runs;
-        // nothing to capture here.
-      } else {
+      {
         const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 10 }, audio: false });
         if (gen !== captureGenRef.current) {
-          // superseded (e.g. by demo mode) while this real getDisplayMedia() request was pending -- drop it
+          // superseded while this real getDisplayMedia() request was pending -- drop it
           // instead of adopting a stream nothing asked for, and don't touch state a newer attempt now owns.
           stream.getTracks().forEach((t) => t.stop());
           return;
@@ -252,7 +236,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
       }
       if (gen !== captureGenRef.current) return; // superseded during the await above
       setCapture('on');
-      setStatus(demoImgRef.current ? 'demo mode · Ctrl+Shift+D' : 'watching for the draft screen');
+      setStatus('watching for the draft screen');
       log('brawl-view', 'info', 'capture.start');
       // Electron already draws its own always-on-top overlay window (electron/main.ts); the in-page
       // Document-PiP overlay is only for the browser path.
@@ -320,9 +304,11 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
   // the video track fires "ended" and stopCapture() runs, but never touches `denied`). Retrying only on
   // rect ticks while capture === 'off' (not on every tick unconditionally) avoids a busy loop, since
   // startCapture() flips capture away from 'off' immediately.
+  const gameRectPresentRef = useRef(false);
   useEffect(() => {
     if (!isElectron) return;
     return window.brawlAPI!.onGameRect((rect) => {
+      gameRectPresentRef.current = !!rect;
       if (rect && capture === 'off') {
         setDenied(false);
         void startCapture();
@@ -331,6 +317,31 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
       }
     });
   }, [capture, denied]);
+  // A window that was found a moment ago is sometimes not yet offered by desktopCapturer, so the first attempt
+  // is denied and no further rect change follows. While a game window is known and capture is off, retry every
+  // 2 s (never with no window: that would be a busy loop against a denial that cannot succeed).
+  useEffect(() => {
+    if (!isElectron || capture !== 'off') return;
+    const t = setInterval(() => {
+      if (gameRectPresentRef.current) void startCapture();
+    }, 2000);
+    return () => clearInterval(t);
+  }, [capture]);
+
+  // Test mode (Electron): main.ts opens a dummy "Deadlock" window showing a draft screenshot and the normal
+  // capture path takes it from there; this just mirrors its state and sends the button/select changes.
+  const [testMode, setTestMode] = useState<{ on: boolean; frame: string; frames: string[]; message: string | null }>({
+    on: false,
+    frame: '',
+    frames: [],
+    message: null,
+  });
+  useEffect(() => {
+    if (!isElectron) return;
+    const api = window.brawlAPI!;
+    void api.getTestMode().then(setTestMode);
+    return api.onTestMode(setTestMode);
+  }, []);
 
   // Electron: main.ts denies getDisplayMedia (callback({})) instead of falling back to some other window
   // when Deadlock isn't found, so tell the user why capture never starts instead of leaving them guessing.
@@ -345,56 +356,6 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
     });
   }, []);
 
-  // Ctrl+Shift+D demo mode (PLAN.md item 4): main.ts named a shipped demo frame and wants it run through the
-  // real pipeline. Fetches and decodes the PNG directly (never a window capture) and feeds it to the same
-  // frame loop the video path uses; on stop, drop back to 'off' so the existing onGameRect retry effect
-  // above naturally resumes real capture if a game has since appeared.
-  useEffect(() => {
-    if (!isElectron) return;
-    const runDemoFrame = (frame: string) => {
-      const base = (import.meta as { env?: { BASE_URL?: string } }).env?.BASE_URL ?? '/';
-      const image = new Image();
-      image.src = `${base}demo/${frame}.png`;
-      log('brawl-view', 'info', 'demo.frame.start', { frame, gen: captureGenRef.current });
-      image
-        .decode()
-        .then(() => {
-          log('brawl-view', 'info', 'demo.frame.decoded', {
-            frame,
-            gen: captureGenRef.current,
-            w: image.naturalWidth,
-            h: image.naturalHeight,
-          });
-          // stopCapture() unconditionally clears demoImgRef.current (it's also the real-capture teardown
-          // path), so it must run BEFORE the ref is set here -- setting the ref first and then calling
-          // stopCapture() wipes it right back to null, and startCapture() falls through to the real
-          // getDisplayMedia() path (denied, since no real "Deadlock" window exists), which is why the demo
-          // silently produced a live-but-denied capture attempt instead of ever drawing the shipped frame.
-          stopCapture();
-          demoImgRef.current = image;
-          void startCapture();
-        })
-        .catch((e) => log('brawl-view', 'error', 'demo.image.fail', { frame, message: String(e) }));
-    };
-    const offStart = window.brawlAPI!.onOverlayDemoStart(runDemoFrame);
-    // main.ts may have already pushed overlayDemoStart before this effect (and its listener above) existed
-    // -- BrawlView only mounts once loadCore()'s hero/item fetch resolves, so a demo triggered right at app
-    // boot (exactly what `npm run win:demo` does) can easily race ahead of that and be missed forever, since
-    // a plain 'send' has no replay for a listener that subscribes late. Catch up once on mount instead.
-    void window.brawlAPI!.getPendingDemoFrame().then((frame) => {
-      if (frame) runDemoFrame(frame);
-    });
-    const offStop = window.brawlAPI!.onOverlayDemoStop(() => {
-      demoImgRef.current = null;
-      stopCapture();
-    });
-    return () => {
-      offStart();
-      offStop();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- startCapture/stopCapture read current refs/state via closures each call; re-subscribing on every render would tear down and restart the demo capture mid-stream
-  }, []);
-
   // frame loop: the worker asks for a frame ('tick'), the page draws the video to a canvas and sends the pixels,
   // the worker answers with what it read and asks again after CAPTURE_MS. Nothing here depends on page timers.
   useEffect(() => {
@@ -404,16 +365,10 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
     const canvas = document.createElement('canvas');
     let lastLoggedSource = '';
     const sendFrame = () => {
-      // Demo mode draws the shipped PNG (decoded once on load, see the onOverlayDemoStart handler above)
-      // instead of the <video> element; same source/width/height shape either way from here on.
-      const demo = demoImgRef.current;
-      const src: CanvasImageSource | null = demo ?? videoRef.current;
-      const srcW = demo ? demo.naturalWidth : (videoRef.current?.videoWidth ?? 0);
-      const srcH = demo ? demo.naturalHeight : (videoRef.current?.videoHeight ?? 0);
-      // Logged only on change (this runs every CAPTURE_MS) -- diagnosing eval round 6's overlay-demo flake
-      // needs to see, from logs alone, which source sendFrame actually drew and at what size, without
-      // flooding logs/app.jsonl on every tick.
-      const sourceSig = `${demo ? 'demo' : videoRef.current ? 'video' : 'none'}:${srcW}x${srcH}:gen=${captureGenRef.current}`;
+      const src: CanvasImageSource | null = videoRef.current;
+      const srcW = videoRef.current?.videoWidth ?? 0;
+      const srcH = videoRef.current?.videoHeight ?? 0;
+      const sourceSig = `${videoRef.current ? 'video' : 'none'}:${srcW}x${srcH}:gen=${captureGenRef.current}`;
       if (sourceSig !== lastLoggedSource) {
         lastLoggedSource = sourceSig;
         log('brawl-view', 'debug', 'frame.source', { source: sourceSig });
@@ -440,7 +395,17 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
         if (pctx) {
           const scale = pv.width / srcW;
           pctx.drawImage(src, 0, 0, pv.width, pv.height);
-          drawReads(pctx, readsRef.current, bestId, scale, scale, srcW, srcH, rerollNow);
+          drawReads(
+            pctx,
+            readsRef.current,
+            bestId,
+            scale,
+            scale,
+            srcW,
+            srcH,
+            rerollNow,
+            scoresFromAdvice(overlayAdviceRef.current),
+          );
         }
       }
       window.brawlAPI?.sendOverlayState({
@@ -588,7 +553,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
         {capture === 'off' && (
           <div className="muted brawl-howto">
             {isElectron ? (
-              'Start Deadlock in borderless windowed mode; the overlay starts on its own.'
+              'Start Deadlock in borderless windowed mode; the overlay starts on its own. No game? Use test mode below.'
             ) : (
               <>
                 1. Set Deadlock to <b>borderless windowed</b> mode. 2. Click <b>Capture game screen + overlay</b> below.
@@ -678,6 +643,38 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
             </button>
           )}
         </div>
+        {isElectron && (
+          <div className="row brawl-testmode">
+            <button
+              className={testMode.on ? 'btn' : 'btn primary'}
+              aria-pressed={testMode.on}
+              onClick={() => void window.brawlAPI!.setTestMode(!testMode.on).then(setTestMode)}
+            >
+              {testMode.on ? 'Turn test mode off' : 'Test mode (dummy Deadlock window)'}
+            </button>
+            {testMode.on && (
+              <label>
+                Screenshot{' '}
+                <select
+                  aria-label="Test screenshot"
+                  value={testMode.frame}
+                  onChange={(e) => void window.brawlAPI!.setTestFrame(e.target.value).then(setTestMode)}
+                >
+                  {testMode.frames.map((f) => (
+                    <option key={f} value={f}>
+                      {f}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {testMode.message && (
+              <span className="brawl-testmode-message" role="alert">
+                {testMode.message}
+              </span>
+            )}
+          </div>
+        )}
         <div className="muted brawl-status" role="status" aria-live="polite">
           {status}
         </div>
@@ -916,6 +913,7 @@ function AdvicePanel({
               {r.enhanced ? ' (enhanced)' : ''}
             </b>
             <small>
+              score {r.score.toFixed(2)} ·{' '}
               {k === 0 ? 'best' : `−${((1 - r.score / ranked[0].score) * 100).toFixed(0)}% vs best`} · used by{' '}
               {(r.usage * 100).toFixed(0)}% of {hero.name}s
               {r.winRate !== null ? `, wins ${(r.winRate * 100).toFixed(0)}%` : ''}

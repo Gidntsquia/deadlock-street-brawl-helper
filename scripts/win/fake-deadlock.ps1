@@ -1,4 +1,4 @@
-# Opens (or, with -Stop, closes) a 1280x720 window titled exactly "Deadlock" with a solid magenta
+# Opens (or, with -Stop, closes) a 1920x1080 window titled exactly "Deadlock" with a solid magenta
 # (#FF00FF) background - the game stand-in for the e2e harness (item 3's not-self / capture-found checks
 # sample this exact colour). Never touches any window it did not itself create: -Stop only ever acts on
 # the pid recorded in the pid file, and only after confirming that pid is still a powershell process with
@@ -67,7 +67,7 @@ if ($existing) {
 # shifting every anchor down and breaking icon matching on this frame only (found via item 3's frames case).
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'Deadlock'
-$form.ClientSize = New-Object System.Drawing.Size(1280, 720)
+$form.ClientSize = New-Object System.Drawing.Size(1920, 1080)
 $form.BackColor = [System.Drawing.Color]::FromArgb(255, 0, 255)
 $form.StartPosition = 'Manual'
 $form.Location = New-Object System.Drawing.Point(0, 0)
@@ -86,11 +86,11 @@ if ($Image) {
     exit 1
   }
   $src = [System.Drawing.Image]::FromFile((Resolve-Path $Image))
-  $scaled = New-Object System.Drawing.Bitmap 1280, 720
+  $scaled = New-Object System.Drawing.Bitmap 1920, 1080
   $g = [System.Drawing.Graphics]::FromImage($scaled)
   $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
   $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
-  $g.DrawImage($src, 0, 0, 1280, 720)
+  $g.DrawImage($src, 0, 0, 1920, 1080)
   $g.Dispose()
   $src.Dispose()
   $form.BackgroundImage = $scaled

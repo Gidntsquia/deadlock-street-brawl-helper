@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { drawReads } from '../draw';
+import { COLOR_BEST, COLOR_OTHER, drawReads, itemCircle } from '../draw';
 import type { CardRead } from '../recognise';
 import { REROLL_BUTTON } from '../recognise';
 
@@ -14,58 +14,71 @@ const read = (itemId: number, x: number): CardRead => ({
 });
 
 function stubCtx() {
-  return {
+  const ctx = {
     strokeRect: vi.fn(),
+    ellipse: vi.fn(),
+    beginPath: vi.fn(),
+    stroke: vi.fn(),
     fillText: vi.fn(),
     lineWidth: 0,
-    strokeStyle: '',
-    fillStyle: '',
+    strokeStyle: '' as string,
+    fillStyle: '' as string,
     font: '',
-  } as unknown as CanvasRenderingContext2D & {
-    strokeRect: ReturnType<typeof vi.fn>;
-    fillText: ReturnType<typeof vi.fn>;
+    textAlign: 'start',
+    textBaseline: 'alphabetic',
+    // colour in force at each stroke()/fillText() call
+    strokes: [] as string[],
+    fills: [] as string[],
   };
+  ctx.stroke.mockImplementation(() => ctx.strokes.push(ctx.strokeStyle));
+  ctx.fillText.mockImplementation(() => ctx.fills.push(ctx.fillStyle));
+  return ctx as typeof ctx & CanvasRenderingContext2D;
 }
 
+const SCORES = { 1: 3.14159, 2: 2.5 };
+
 describe('drawReads', () => {
-  it('boxes the best card and labels it TAKE when reroll is false', () => {
+  it('outlines each card around its large circle, not the icon square', () => {
     const ctx = stubCtx();
-    const reads = [read(1, 10), read(2, 200)];
-    drawReads(ctx, reads, 1, 1, 1, 2560, 1440, false);
-    expect(ctx.strokeRect).toHaveBeenCalledTimes(2);
-    const takeCalls = ctx.fillText.mock.calls.filter((c) => c[0] === 'TAKE');
-    expect(takeCalls.length).toBe(1);
-    const rerollCalls = ctx.fillText.mock.calls.filter((c) => c[0] === 'RE-ROLL');
-    expect(rerollCalls.length).toBe(0);
+    const drawn = drawReads(ctx, [read(1, 10), read(2, 200)], 1, 1, 1, 2560, 1440, false, SCORES);
+    expect(ctx.ellipse).toHaveBeenCalledTimes(2);
+    expect(ctx.strokeRect).not.toHaveBeenCalled();
+    const { cx, cy, r } = itemCircle({ x: 10, y: 100, edge: 50 });
+    expect(ctx.ellipse.mock.calls[0].slice(0, 4)).toEqual([cx, cy, r, r]);
+    expect(drawn[0]).toMatchObject({ x0: cx - r, y0: cy - r, x1: cx + r, y1: cy + r });
+    // the circle is much larger than the 50px icon
+    expect(drawn[0].x1 - drawn[0].x0).toBeGreaterThan(2 * 50);
   });
 
-  it('boxes the re-roll button and skips TAKE when reroll is true', () => {
+  it('draws each card score above its circle', () => {
     const ctx = stubCtx();
-    const reads = [read(1, 10), read(2, 200)];
-    drawReads(ctx, reads, 1, 1, 1, 2560, 1440, true);
-    const takeCalls = ctx.fillText.mock.calls.filter((c) => c[0] === 'TAKE');
-    expect(takeCalls.length).toBe(0);
-    const rerollCalls = ctx.fillText.mock.calls.filter((c) => c[0] === 'RE-ROLL');
-    expect(rerollCalls.length).toBe(1);
+    const drawn = drawReads(ctx, [read(1, 10), read(2, 200)], 1, 1, 1, 2560, 1440, false, SCORES);
+    const texts = ctx.fillText.mock.calls.map((c) => c[0]);
+    expect(texts).toEqual(['3.14', '2.50']);
+    const { cx, cy, r } = itemCircle({ x: 10, y: 100, edge: 50 });
+    const [, tx, ty] = ctx.fillText.mock.calls[0];
+    expect(tx).toBe(cx);
+    expect(ty).toBeLessThan(cy - r + 1);
+    expect(drawn.map((d) => d.score)).toEqual([3.14159, 2.5]);
+  });
+
+  it('draws the best card white and the others grey', () => {
+    const ctx = stubCtx();
+    const drawn = drawReads(ctx, [read(1, 10), read(2, 200)], 1, 1, 1, 2560, 1440, false, SCORES);
+    expect(ctx.strokes).toEqual([COLOR_BEST, COLOR_OTHER]);
+    expect(ctx.fills).toEqual([COLOR_BEST, COLOR_OTHER]);
+    expect(drawn.map((d) => d.kind)).toEqual(['best', 'card']);
+  });
+
+  it('draws no white card and boxes the re-roll button when reroll is true', () => {
+    const ctx = stubCtx();
+    const drawn = drawReads(ctx, [read(1, 10), read(2, 200)], 1, 1, 1, 2560, 1440, true, SCORES);
+    expect(ctx.strokes.filter((c) => c === COLOR_BEST)).toHaveLength(0);
+    expect(ctx.fills.filter((c) => c === COLOR_BEST)).toHaveLength(0);
+    expect(drawn.filter((d) => d.kind === 'best')).toHaveLength(0);
+    expect(ctx.fillText.mock.calls.filter((c) => c[0] === 'RE-ROLL')).toHaveLength(1);
     const rerollRect = ctx.strokeRect.mock.calls.find(([x0, y0]) => x0 === REROLL_BUTTON.x0 && y0 === REROLL_BUTTON.y0);
     expect(rerollRect).toBeDefined();
-  });
-
-  it('returns the drawn rects in frame px, tagged best/card/reroll', () => {
-    const ctx = stubCtx();
-    const reads = [read(1, 10), read(2, 200)];
-    const drawn = drawReads(ctx, reads, 1, 2, 2, 2560, 1440, false);
-    expect(drawn).toEqual([
-      { kind: 'best', card: 'x', x0: 10, y0: 100, x1: 60, y1: 150 },
-      { kind: 'card', card: 'x', x0: 200, y0: 100, x1: 250, y1: 150 },
-    ]);
-  });
-
-  it('includes a reroll rect at REROLL_BUTTON when reroll is true, no card marked best', () => {
-    const ctx = stubCtx();
-    const reads = [read(1, 10), read(2, 200)];
-    const drawn = drawReads(ctx, reads, 1, 1, 1, 2560, 1440, true);
-    expect(drawn.filter((d) => d.kind === 'best')).toHaveLength(0);
     expect(drawn.find((d) => d.kind === 'reroll')).toEqual({
       kind: 'reroll',
       card: null,
@@ -73,6 +86,14 @@ describe('drawReads', () => {
       y0: REROLL_BUTTON.y0,
       x1: REROLL_BUTTON.x1,
       y1: REROLL_BUTTON.y1,
+      score: null,
     });
+  });
+
+  it('scales the circle to the canvas', () => {
+    const ctx = stubCtx();
+    drawReads(ctx, [read(1, 10)], 1, 2, 3, 2560, 1440, false, SCORES);
+    const { cx, cy, r } = itemCircle({ x: 10, y: 100, edge: 50 });
+    expect(ctx.ellipse.mock.calls[0].slice(0, 4)).toEqual([cx * 2, cy * 3, r * 2, r * 3]);
   });
 });

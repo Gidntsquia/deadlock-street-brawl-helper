@@ -36,18 +36,26 @@ Repo constitution for planner / worker / evaluator agents. Overrides generic sta
   raised from 90s once `frames`/`overlay` were added — see the gotcha below). Don't touch a window it didn't
   create. `--only selftest-fail` is a deliberately failing case that proves the harness can fail — it never
   runs as part of the default full run.
-- `npm run win:demo -- choice1|choice2` — no real Deadlock window needed: opens an app-owned demo backdrop
-  showing a real draft-screen screenshot (`public/demo/choice1.png`/`choice2.png`), runs it through the real
-  recognise/advise/draw pipeline (same code path Ctrl+Shift+D uses when a live game triggers it), and saves
+- `npm run win:demo -- choice1|choice2` — no real Deadlock window needed: starts the app's own **test mode**
+  (below) with that screenshot, runs it through the real find/capture/recognise/advise/draw path, and saves
   the overlay's own composited output to `logs/win-demo.png`. Refuses to run if a real "Deadlock" window is
   already open (same guard as `win:e2e`). Verify with `npx tsx scripts/win/check-demo-png.ts logs/win-demo.png`
-  (`frame-visible: true`, `green-on-best: true`) or by opening the PNG. Nothing is actually visible on the
-  desktop while this runs: it sets `BRAWL_E2E=1` internally (to reach the `__brawlE2E` test hook), which puts
-  both the backdrop and overlay windows off-monitor at opacity 0 — the same isolation `win:e2e` relies on so a
-  harness run never disturbs the user's other windows. `logs/win-demo.png` (a real canvas rasterisation of the
-  overlay, not a screen grab) is the only way to see the result; there is nothing to look at on the monitor
-  itself. To actually see it on screen, use the real Ctrl+Shift+D demo path in a normal (non-`BRAWL_E2E`)
-  `npm run win:dev` session instead.
+  (`frame-visible: true`, `white-on-best: true`, `white-on-non-best: false`) or by opening the PNG. Nothing is
+  visible on the desktop while this runs: it sets `BRAWL_E2E=1` internally (to reach the `__brawlE2E` test
+  hook), which keeps the dummy at the bottom of the z-order and the overlay at opacity 0. `logs/win-demo.png`
+  (a real canvas rasterisation of the overlay, not a screen grab) is the only output. To see it live, use test
+  mode in a normal `npm run win:dev` session.
+
+## Test mode
+
+The control window's **Test mode (dummy Deadlock window)** button (`BrawlView.tsx`, state owned by
+`startTestMode`/`stopTestMode` in `electron/main.ts`) opens a frameless dummy window titled exactly `Deadlock`,
+sized 1920x1080 _physical_ px (the recogniser needs ~1080p to read the round/choice glyphs), showing one of
+`public/demo/*.png`. The normal path runs against it; the **Screenshot** select switches the image live. It
+refuses (message in the control window) when a real Deadlock window exists, auto-stops if one appears, and
+closes only the window it opened. While on, the display-media handler serves only the dummy's own
+`getMediaSourceId()` (desktopCapturer never lists the app's own windows, so it can't be found through the
+source list) — nothing else can be captured. The old keyboard-shortcut demo and its tray entry no longer exist.
 
 ## Manual checks (the harness can't cover these)
 
@@ -58,9 +66,9 @@ in `win:e2e`/`win:demo` drives the actual game:
   must actually appear on top of the game in borderless; in true fullscreen exclusive mode it may not
   (this is a Windows/game limitation, not something the app can fix — confirm the app at least doesn't
   crash or mis-detect the window in that mode).
-- Trigger Ctrl+Shift+D while the real game is running and _not_ in a draft: confirm it shows the 10s
-  sample-advice demo without disturbing an already-running real capture, and that it never captures the
-  real Deadlock window's live pixels for the demo (only ever the app's own backdrop PNG).
+- Test mode on real Windows with no game open: press the button, confirm the dummy and overlay are visible and
+  aligned at your display scaling, switch screenshots, turn it off. Close the overlay window and confirm no
+  tray/menu entry or the test-mode button raises an error dialog.
 - Play (or replay) a real Street Brawl draft end to end and confirm the advice box tracks the actual
   draft screen, re-roll banner appears when expected, and the box genuinely feels click-through (clicks
   through the overlay reach the game underneath, no accidental focus steal).
@@ -158,11 +166,11 @@ in `win:e2e`/`win:demo` drives the actual game:
 - The e2e-only forced-reroll hook lives on `__brawlE2E.forceReroll()` in `electron/main.ts`: it resends the
   last real, capture-derived `OverlayState` with `reroll:true`/`bestId:null` — never a fabricated state —
   for PLAN.md item 3's `reroll-box` check when no frame naturally verdicts RE-ROLL.
-- `scripts/win/e2e-main.cjs`'s hard timeout is 180s (`main()`'s `setTimeout`), not 90s — a full default run
-  (all cases) takes ~100-110s once `frames`/`overlay` are included, and the old 90s ceiling cut the run off
+- `scripts/win/e2e-main.cjs`'s hard timeout is 300s (`main()`'s `setTimeout`), not 90s — a full default run
+  (all cases) takes ~150-160s once `testmode`/`frames` are included, and the old 90s ceiling cut the run off
   mid-teardown, which cascaded into spurious failures on whichever case happened to be running last (not a
   real bug in that case). Raise it again if more cases are added and full runs start bumping the new ceiling.
-- `win:demo`'s and `win:e2e`'s `overlay` case both must wait for a real ranked-best signal
+- `win:demo`'s and `win:e2e`'s `testmode` case both must wait for a real ranked-best signal
   (`.brawl-card.best` in the control window / `.overlay-panel` text containing an actual card name), not
   just for _some_ status text to render — status text (hero/round/ability line) appears immediately, well
   before the worker's two-frame accept debounce (`worker.ts`) resolves cards into a ranked pick. Waiting on
@@ -171,4 +179,11 @@ in `win:e2e`/`win:demo` drives the actual game:
   confirmed with `sharp` (`hasAlpha: false` on the output despite the window being transparent). To composite
   a transparent overlay's real content over another layer, read the overlay's own `<canvas>` element's
   `toDataURL('image/png')` instead (via `executeJavaScript`) — that's a real per-pixel-alpha rasterisation,
-  not a window screenshot. See `captureDemoComposite()` in `electron/main.ts`.
+  not a window screenshot. See `captureTestComposite()` in `electron/main.ts`.
+- Harness gotchas from test mode: a window with opacity < 1 is not offered to window capture at all, so the
+  dummy stays opaque and is pushed to `HWND_BOTTOM` (`sendWindowToBottom` in `electron/gameWindow.ts`);
+  `e2e-main.cjs`/`demo-main.cjs` also disable `CalculateNativeWinOcclusion` so a covered window keeps rendering.
+  `desktopCapturer` can lag a newly found window by a moment, so `BrawlView` retries capture every 2 s while a
+  game rect is known and capture is off. The `frames` case clears `localStorage` and reloads first (enemies/owned
+  from earlier cases change scores), and reads drawn rects and overlay-panel scores in one call (two reads can
+  straddle a state update). The fake window is 1920x1080: the recogniser cannot read the choice glyph at 1280x720.

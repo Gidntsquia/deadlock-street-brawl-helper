@@ -4,24 +4,113 @@
     "hero": "Infernus",
     "round": 1,
     "choice": 1,
-    "cards": { "left": "Extended Magazine", "top": "Extra Regen", "right": "Extra Health" },
+    "cards": {
+      "left": "Extended Magazine",
+      "top": "Extra Regen",
+      "right": "Extra Health"
+    },
     "boxes": {
-      "left": { "x0": 488, "y0": 596, "x1": 624, "y1": 734 },
-      "top": { "x0": 930, "y0": 340, "x1": 1068, "y1": 478 },
-      "right": { "x0": 1374, "y0": 598, "x1": 1512, "y1": 734 },
-      "reroll": { "x0": 909, "y0": 715, "x1": 1091, "y1": 780 }
+      "left": {
+        "x0": 488,
+        "y0": 596,
+        "x1": 624,
+        "y1": 734
+      },
+      "top": {
+        "x0": 930,
+        "y0": 340,
+        "x1": 1068,
+        "y1": 478
+      },
+      "right": {
+        "x0": 1374,
+        "y0": 598,
+        "x1": 1512,
+        "y1": 734
+      },
+      "reroll": {
+        "x0": 909,
+        "y0": 715,
+        "x1": 1091,
+        "y1": 780
+      }
+    },
+    "circles": {
+      "left": {
+        "x0": 381,
+        "y0": 526,
+        "x1": 733,
+        "y1": 878
+      },
+      "top": {
+        "x0": 825,
+        "y0": 269,
+        "x1": 1177,
+        "y1": 621
+      },
+      "right": {
+        "x0": 1269,
+        "y0": 526,
+        "x1": 1621,
+        "y1": 878
+      }
     }
   },
   "choice2": {
     "hero": "Infernus",
     "round": 1,
     "choice": 2,
-    "cards": { "left": "Swift Striker", "top": "Spirit Shredder Bullets", "right": "Weakening Headshot" },
+    "cards": {
+      "left": "Swift Striker",
+      "top": "Spirit Shredder Bullets",
+      "right": "Weakening Headshot"
+    },
     "boxes": {
-      "left": { "x0": 488, "y0": 596, "x1": 624, "y1": 734 },
-      "top": { "x0": 930, "y0": 340, "x1": 1068, "y1": 478 },
-      "right": { "x0": 1374, "y0": 598, "x1": 1512, "y1": 734 },
-      "reroll": { "x0": 909, "y0": 715, "x1": 1091, "y1": 780 }
+      "left": {
+        "x0": 488,
+        "y0": 596,
+        "x1": 624,
+        "y1": 734
+      },
+      "top": {
+        "x0": 930,
+        "y0": 340,
+        "x1": 1068,
+        "y1": 478
+      },
+      "right": {
+        "x0": 1374,
+        "y0": 598,
+        "x1": 1512,
+        "y1": 734
+      },
+      "reroll": {
+        "x0": 909,
+        "y0": 715,
+        "x1": 1091,
+        "y1": 780
+      }
+    },
+    "circles": {
+      "left": {
+        "x0": 381,
+        "y0": 526,
+        "x1": 733,
+        "y1": 878
+      },
+      "top": {
+        "x0": 825,
+        "y0": 269,
+        "x1": 1177,
+        "y1": 621
+      },
+      "right": {
+        "x0": 1269,
+        "y0": 526,
+        "x1": 1621,
+        "y1": 878
+      }
     }
-  }
+  },
+  "_circles_note": "circles are the bounding boxes of each item's large ring in 2000x1125 frame px, measured by scanning the saturated ring pixels of choice1.png/choice2.png along the ring's horizontal and vertical axes (top ring's upper/lower extent read from the ring's outer edges, since its icon overlaps the vertical scan) -- not taken from recogniser output."
 }

@@ -1,7 +1,8 @@
 // Checks logs/win-demo.png (produced by `npm run win:demo`, PLAN.md item 4's endpoint):
 //   npx tsx scripts/win/check-demo-png.ts logs/win-demo.png [choice1|choice2]
 // Prints `frame-visible: true|false` (the screenshot shows the draft image, not a flat/blank window) and
-// `green-on-best: true|false` (a green highlight pixel lands on the labelled best card's box, scaled from
+// `white-on-best: true|false` (a white outline pixel lands on the labelled best item's circle and none on a
+// non-best circle, using the hand-measured `circles` labels, scaled from
 // scripts/win/frames/labels.json's 2000px-wide label space to this PNG's own resolution -- the same scaling
 // scripts/win/e2e-main.cjs's pixels-<frame> check uses for item 3). Exits 1 if either is false.
 import { readFileSync } from 'node:fs';
@@ -21,7 +22,7 @@ interface Label {
   hero: string;
   round: number;
   cards: { left: string; top: string; right: string };
-  boxes: Record<'left' | 'top' | 'right' | 'reroll', { x0: number; y0: number; x1: number; y1: number }>;
+  circles: Record<'left' | 'top' | 'right', { x0: number; y0: number; x1: number; y1: number }>;
 }
 const labels: Record<string, Label> = JSON.parse(readFileSync('scripts/win/frames/labels.json', 'utf8'));
 const label = labels[frameName];
@@ -70,7 +71,9 @@ if (!bestPos) {
   console.error(`best card "${bestName}" isn't among "${frameName}"'s labelled cards`);
   process.exit(1);
 }
-const box = label.boxes[bestPos];
+const box = label.circles[bestPos];
+const nonBestPos = (['left', 'top', 'right'] as const).find((p) => p !== bestPos)!;
+const nonBox = label.circles[nonBestPos];
 
 async function main() {
   const { data, info } = await sharp(file).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
@@ -89,26 +92,36 @@ async function main() {
       colours.add(px(Math.floor(((sx + 0.5) * w) / 5), Math.floor(((sy + 0.5) * h) / 5)).join(','));
   const frameVisible = colours.size > 1;
 
-  // green-on-best: labels.json boxes are frame px at the source PNG's own 2000-wide resolution; scale to
-  // this screenshot's own width before sampling its edge for the app's highlight green (#39ff6a, +-60/150+/-60
-  // same tolerance as scripts/win/e2e-main.cjs's checkPixels).
+  // white-on-best: label circles are frame px at the source PNG's own 2000-wide resolution; scale to this
+  // screenshot's width, then look for a white outline pixel within a few px of the circle's left/right/top/
+  // bottom extremes (the stroke is centred on the circle, so those points lie on it).
   const scale = w / 2000;
-  const x0 = Math.max(0, Math.round(box.x0 * scale));
-  const y0 = Math.max(0, Math.round(box.y0 * scale));
-  const x1 = Math.min(w - 1, Math.round(box.x1 * scale));
-  const y1 = Math.min(h - 1, Math.round(box.y1 * scale));
-  const isGreen = (r: number, g: number, b: number) => Math.abs(r - 0x39) <= 60 && g >= 150 && Math.abs(b - 0x6a) <= 60;
-  let greenOnBest = false;
-  for (let x = x0; x <= x1 && !greenOnBest; x++) {
-    if (isGreen(...px(x, y0)) || isGreen(...px(x, y1))) greenOnBest = true;
-  }
-  for (let y = y0; y <= y1 && !greenOnBest; y++) {
-    if (isGreen(...px(x0, y)) || isGreen(...px(x1, y))) greenOnBest = true;
-  }
+  const isWhite = (r: number, g: number, b: number) => r >= 235 && g >= 235 && b >= 235;
+  const hasWhiteOnCircle = (c: { x0: number; y0: number; x1: number; y1: number }) => {
+    const cx = ((c.x0 + c.x1) / 2) * scale;
+    const cy = ((c.y0 + c.y1) / 2) * scale;
+    const pts: [number, number, number, number][] = [
+      [c.x0 * scale, cy, 1, 0],
+      [c.x1 * scale, cy, 1, 0],
+      [cx, c.y0 * scale, 0, 1],
+      [cx, c.y1 * scale, 0, 1],
+    ];
+    for (const [px0, py0, dx, dy] of pts)
+      for (let d = -5; d <= 5; d++) {
+        const x = Math.round(px0 + d * dx);
+        const y = Math.round(py0 + d * dy);
+        if (x < 0 || y < 0 || x >= w || y >= h) continue;
+        if (isWhite(...px(x, y))) return true;
+      }
+    return false;
+  };
+  const whiteOnBest = hasWhiteOnCircle(box);
+  const whiteOnNonBest = hasWhiteOnCircle(nonBox);
 
   console.log(`frame-visible: ${frameVisible}`);
-  console.log(`green-on-best: ${greenOnBest}`);
-  if (!frameVisible || !greenOnBest) process.exit(1);
+  console.log(`white-on-best: ${whiteOnBest}`);
+  console.log(`white-on-non-best: ${whiteOnNonBest}`);
+  if (!frameVisible || !whiteOnBest || whiteOnNonBest) process.exit(1);
 }
 
 main();

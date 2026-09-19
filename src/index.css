@@ -1306,3 +1306,11 @@ footer {
   padding: 3px 8px;
   border-radius: 6px;
 }
+
+.brawl-testmode {
+  align-items: center;
+  gap: 0.75rem;
+}
+.brawl-testmode-message {
+  color: #ffb020;
+}

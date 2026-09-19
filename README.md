@@ -56,20 +56,22 @@ Developing from WSL? `npm run dev:electron` run inside WSL boots Linux Electron 
 never find or capture the Deadlock window. Use `npm run win:dev` instead — it syncs the repo to a native
 Windows path and launches real Windows `electron.exe` from there. (Running `dev:electron` from an actual
 Windows terminal, in that synced copy, also works.) `npm run win:e2e` runs the same way end to end and
-writes a pass/fail report to `logs/win-e2e.json`. `npm run win:demo -- choice1` (or `choice2`) launches the
-real app with no Deadlock window required: it opens an app-owned demo backdrop showing a real draft-screen
-screenshot, runs it through the real recognise/advise/draw pipeline (Ctrl+Shift+D does the same thing when
-you're already running the app), and saves what the overlay actually drew to `logs/win-demo.png` — a quick
-way to see the advice box for real without needing a live draft. Nothing appears on screen while it runs —
-it uses the same harness isolation as `win:e2e`, so the PNG is the only output; run Ctrl+Shift+D from a
-normal `npm run win:dev` session instead if you want to see it live on the desktop. It refuses to run if a
-real window titled "Deadlock" is already open, the same guard `win:e2e` uses.
+writes a pass/fail report to `logs/win-e2e.json`. `npm run win:demo -- choice1` (or `choice2`) runs test mode
+(below) invisibly and saves what the overlay actually drew to `logs/win-demo.png`; nothing appears on screen
+while it runs, and it refuses to run if a real window titled "Deadlock" is open.
+
+**Test mode (no game needed).** In the app's control window press **Test mode (dummy Deadlock window)**. A
+dummy window titled "Deadlock" opens on your monitor showing a real draft screenshot, and the app treats it as
+the game: it captures it, reads the cards, advises, and draws the overlay on top. Pick hero/round as in a real
+game; use the **Screenshot** menu next to the button to switch between the available screenshots
+(`public/demo/*.png`) and the cards, advice and overlay follow. **Turn test mode off** closes the dummy. If a
+real Deadlock window is open, test mode refuses and says so in the app.
 
 Start Deadlock in borderless windowed mode, then launch the exe: capture starts on its own once the
 Deadlock window is found, no picker dialog. The advice — ranked cards, RE-ROLL banner, ability order —
 is drawn straight onto the game in a small always-on-top panel, so you never have to alt-tab.
-Ctrl+Shift+O toggles the overlay; Ctrl+Shift+D shows it with sample advice for 10s so you can check
-placement without a live draft; the tray icon also has a Quit item. If Deadlock isn't running, the app
+Ctrl+Shift+O toggles the overlay; the tray icon also has a Quit item. Each item is outlined around its
+large circle with the app's score above it; the item to take is white and the others are greyed out. If Deadlock isn't running, the app
 says "Deadlock window not found" instead of capturing some other window (matched by the game's exact
 window title, so the app's own window is never mistaken for it). The browser path above still works
 cross-platform and needs no packaging.

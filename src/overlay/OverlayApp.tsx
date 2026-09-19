@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { drawReads, type DrawnRect, type OverlayState } from '../brawl/draw';
+import { drawReads, scoresFromAdvice, type DrawnRect, type OverlayState } from '../brawl/draw';
 import { log } from '../log';
 
 declare global {
@@ -36,6 +36,7 @@ export default function OverlayApp() {
       state.frameW,
       state.frameH,
       state.reroll,
+      scoresFromAdvice(state.advice),
     );
     // e2e-only: expose exactly what was stroked (frame px) so the harness can verify boxes without
     // re-deriving them from reads (PLAN.md item 3's boxes-<frame> check).
@@ -86,7 +87,7 @@ export default function OverlayApp() {
             advice.ranked.map((r, k) => (
               <div key={r.name} className="overlay-panel-card">
                 {k === 0 ? 'TAKE' : `#${k + 1}`} {r.name}
-                {r.enhanced ? ' (enh.)' : ''} · {(r.usage * 100).toFixed(0)}%
+                {r.enhanced ? ' (enh.)' : ''} · {r.score.toFixed(2)} · {(r.usage * 100).toFixed(0)}%
                 {r.winRate !== null ? ` · ${(r.winRate * 100).toFixed(0)}% wins` : ''}
               </div>
             ))

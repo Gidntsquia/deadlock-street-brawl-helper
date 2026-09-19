@@ -12,8 +12,8 @@ import {
 } from 'electron';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { writeFileSync, existsSync } from 'node:fs';
-import { findGameWindow, isGameWindowTitle, type Rect } from './gameWindow';
+import { writeFileSync, existsSync, readdirSync } from 'node:fs';
+import { findGameWindow, isGameWindowTitle, sendWindowToBottom, type Rect } from './gameWindow';
 import { CHANNELS } from './channels';
 import { log } from '../src/log';
 
@@ -37,35 +37,44 @@ let overlayIgnoresMouseEvents = false;
 // PLAN.md's item 3 forced reroll-box pass (both tracked frames' actual engine verdict is TAKE, so a natural
 // RE-ROLL never occurs in the frames harness case). Unused outside BRAWL_E2E.
 let lastOverlayState: import('../src/brawl/draw').OverlayState | null = null;
-// The Ctrl+Shift+D demo backdrop window and its auto-clear timer (PLAN.md item 4): an app-owned window
-// (never titled "Deadlock", so capture logic could never mistake it for the game even if it tried) showing
-// a real draft screenshot purely for a person or the demo harness to look at on screen. The control window
-// never captures it (see triggerOverlayDemo below); it loads the same PNG file directly and runs it through
-// the real recognise/advise/draw path, same as it would a live game -- so the demo's boxes are proof the
-// pipeline works, not a fabricated state.
-let demoBackdrop: BrowserWindow | null = null;
-let demoTimer: ReturnType<typeof setTimeout> | null = null;
-// Set right alongside the overlayDemoStart push (see CHANNELS.getPendingDemoFrame) so a BrawlView that
-// mounts after the push was sent can still catch up instead of the demo silently never starting.
-let pendingDemoFrame: string | null = null;
-const DEMO_MS = 10_000;
-// Keeping these windows fully invisible to the user was tried three other ways first, and each one broke
-// something: screen-saver-level always-on-top visibly covered the user's other work; showInactive() +
-// SetWindowPos-to-bottom-of-z-order still covered other work briefly on first show, and once something real
-// did cover it, Chromium's occlusion tracking suspended its rendering (capturePage() came back blank); and a
-// real position far outside every monitor's bounds never gets composited at all in this environment (also
-// blank). setOpacity(0) on a window at a normal, real, on-monitor position sidesteps all three: the window is
-// still actually composited (real content, so capturePage() sees real pixels; no occlusion-suspend since
-// nothing needs to "cover" it) but is 100% transparent, so it is never visible to the user no matter its
-// z-order.
+// Test mode: an app-owned dummy game window, titled exactly "Deadlock" so the normal find/capture/recognise/
+// advise/overlay path treats it as the game, showing one of the shipped draft screenshots. It only ever starts
+// when no real "Deadlock" window is open, and the display-media handler serves only this window's own source id
+// while it is on, so test mode can never capture anything else.
+let testWindow: BrowserWindow | null = null;
+let testFrame = 'choice1';
+let testMessage: string | null = null;
+// Under BRAWL_E2E the harness must stay invisible to the person: the control window and overlay run at opacity 0,
+// and the test-mode dummy stays fully opaque (a window with opacity < 1 is never offered to window capture) but
+// is sent to the bottom of the z-order and shown without activating it. A person using test mode sees the
+// dummy normally.
 
-/** Path to a shipped demo screenshot: `public/demo/<name>.png` in dev (served relative to this file, same
- *  convention as the tray icon below), `dist/demo/<name>.png` inside the asar once packaged (Vite copies
- *  `public/` into `dist/` on build). */
-function demoImagePath(name: string): string {
+const alive = (w: BrowserWindow | null): w is BrowserWindow => !!w && !w.isDestroyed();
+
+/** Send to the control window if it still exists (it can be gone during shutdown). */
+function sendControl(channel: string, ...args: unknown[]) {
+  if (alive(control) && !control.webContents.isDestroyed()) control.webContents.send(channel, ...args);
+}
+
+/** Directory of shipped draft screenshots: `public/demo/` in dev (relative to this file, same convention as
+ *  the tray icon below), `dist/demo/` inside the asar once packaged (Vite copies `public/` into `dist/`). */
+function demoDir(): string {
   return app.isPackaged
-    ? path.join(process.resourcesPath, 'app.asar', 'dist', 'demo', `${name}.png`)
-    : path.join(__dirname, '../public/demo', `${name}.png`);
+    ? path.join(process.resourcesPath, 'app.asar', 'dist', 'demo')
+    : path.join(__dirname, '../public/demo');
+}
+const demoImagePath = (name: string) => path.join(demoDir(), `${name}.png`);
+
+/** Every draft screenshot test mode can show, by name (file name without .png), sorted. */
+function testFrames(): string[] {
+  try {
+    return readdirSync(demoDir())
+      .filter((f) => f.endsWith('.png'))
+      .map((f) => f.slice(0, -4))
+      .sort();
+  } catch {
+    return [];
+  }
 }
 
 // Electron's own setDisplayMediaRequestHandler implementation throws "Video was requested, but no video
@@ -173,11 +182,12 @@ function rectsEqual(a: Rect | null, b: Rect | null) {
   return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
 }
 
-/** Native window handles for this app's own windows, so findGameWindow can never latch onto them even if
+/** Native window handles for this app's own windows (except the test-mode dummy, which stands in for the game), so findGameWindow can never latch onto them even if
  *  a title match somehow slipped through. */
-function ownWindowHandles(): Set<bigint> {
+function ownWindowHandles(includeTest = false): Set<bigint> {
   const handles = new Set<bigint>();
   for (const w of BrowserWindow.getAllWindows()) {
+    if (w === testWindow && !includeTest) continue; // the dummy game window must be findable as the game
     try {
       handles.add(w.getNativeWindowHandle().readBigUInt64LE());
     } catch {
@@ -190,11 +200,15 @@ function ownWindowHandles(): Set<bigint> {
 function startRectPolling() {
   if (pollTimer) return;
   pollTimer = setInterval(() => {
+    if (alive(testWindow) && findGameWindow(GAME_WINDOW_TITLE, ownWindowHandles(true))) {
+      // A real Deadlock window appeared while test mode was on: hand over to the real game.
+      stopTestMode('A real Deadlock window opened, so test mode was turned off.');
+    }
     const found = findGameWindow(GAME_WINDOW_TITLE, ownWindowHandles());
     if (!rectsEqual(found, lastRect)) {
       lastRect = found;
       log('electron-main', 'info', found ? 'window.found' : 'window.lost', found ?? undefined);
-      control?.webContents.send(CHANNELS.gameRect, found);
+      sendControl(CHANNELS.gameRect, found);
       if (found && overlay) {
         overlay.setBounds(toDipBounds(found));
         if (!overlay.isVisible()) overlay.showInactive();
@@ -212,149 +226,120 @@ function startRectPolling() {
   }, RECT_POLL_MS);
 }
 
-/** Opens an app-owned backdrop window showing a real draft screenshot (purely so a person, or the demo
- *  harness's screenshot, has something to look at on screen) and tells the control window which frame to
- *  run through the real recognise -> advise -> draw path for 10s. The control window never captures the
- *  backdrop window's pixels -- desktopCapturer/getDisplayMedia stays reserved for a window actually titled
- *  "Deadlock" (see GAME_WINDOW_TITLE / setupDisplayMediaHandler) -- it loads the same PNG file directly and
- *  draws it to a canvas, so the demo can never accidentally end up capturing an arbitrary window. Triggered
- *  by Ctrl+Shift+D or the tray menu. No-op while a real game is already found: the live overlay already
- *  shows the real thing then. */
-function triggerOverlayDemo(choice: 'choice1' | 'choice2' = 'choice1') {
-  if (!overlay || !control) return;
-  if (lastRect) {
-    log('electron-main', 'info', 'overlay.demo.skipped-game-open');
-    return;
+function testState() {
+  return { on: alive(testWindow), frame: testFrame, frames: testFrames(), message: testMessage };
+}
+function broadcastTestState() {
+  sendControl(CHANNELS.testModeState, testState());
+}
+
+/** (Re)creates the overlay window if it was closed, so test mode and the shortcut keep working after the
+ *  person closes it. */
+function ensureOverlay() {
+  if (!alive(overlay)) createOverlayWindow();
+}
+
+/** Points the dummy window at a draft screenshot and resolves once the image has decoded. */
+async function showTestFrame(win: BrowserWindow, frame: string): Promise<boolean> {
+  const url = pathToFileURL(demoImagePath(frame)).href;
+  try {
+    return await win.webContents.executeJavaScript(
+      `(async () => { const i = document.getElementById('shot'); i.src = ${JSON.stringify(url)};
+        try { await i.decode(); } catch { return false; } return i.naturalWidth > 0; })()`,
+    );
+  } catch (err) {
+    log('electron-main', 'warn', 'testmode.frame.fail', { frame, message: String(err) });
+    return false;
   }
-  if (demoTimer) {
-    clearTimeout(demoTimer);
-    demoTimer = null;
+}
+
+/** Turns test mode on: opens a visible dummy game window (titled exactly "Deadlock", borderless, 16:9, showing
+ *  a real draft screenshot) that the normal capture path then finds and reads like the real game. Refuses --
+ *  without touching anything -- when a real "Deadlock" window is already open. */
+async function startTestMode(frame?: string) {
+  if (alive(testWindow)) return testState();
+  if (findGameWindow(GAME_WINDOW_TITLE, ownWindowHandles(true))) {
+    testMessage = 'Test mode did not start: a real Deadlock window is open. Close Deadlock first.';
+    log('electron-main', 'info', 'testmode.refused-game-open');
+    broadcastTestState();
+    return testState();
   }
-  demoBackdrop?.close();
-  const imagePath = demoImagePath(choice);
-  demoBackdrop = new BrowserWindow({
-    x: 0,
-    y: 0,
-    width: 1280,
-    height: 720,
-    title: 'Brawl Helper Demo Backdrop', // never "Deadlock": must not be captured as the game
-    show: false,
+  testMessage = null;
+  const frames = testFrames();
+  if (frame && frames.includes(frame)) testFrame = frame;
+  else if (!frames.includes(testFrame)) testFrame = frames[0] ?? testFrame;
+  ensureOverlay();
+  // 1920x1080 *physical* px whatever the display scaling: the recogniser needs roughly 1080p to read the
+  // round/choice glyphs, like a real game window.
+  const sf = screen.getPrimaryDisplay().scaleFactor || 1;
+  const win = new BrowserWindow({
+    width: Math.round(1920 / sf),
+    height: Math.round(1080 / sf),
+    useContentSize: true,
+    frame: false, // borderless like the game: window capture includes any chrome, which would skew the layout
     resizable: false,
+    show: false,
+    title: GAME_WINDOW_TITLE,
+    backgroundColor: '#000000',
     webPreferences: { contextIsolation: true, nodeIntegration: false },
   });
-  // A small file:// HTML file, not a `data:text/html,...` loadURL: two things were tried and ruled out by
-  // watching the real window on screen (stayed solid black both times, not just in the screenshot):
-  //  1. `<img src="file://...">` inside a `data:` page -- a data: document has an opaque origin, and
-  //     Chromium refuses to load a file:// subresource from it regardless of whether the file:// URL is
-  //     well-formed.
-  //  2. The PNG inlined as a base64 `data:image/png` src, with that whole page still passed to loadURL as
-  //     one big `data:text/html,...` string -- these draft screenshots are 1.2-1.3MB, so base64 + percent
-  //     encoding pushes the single data: URL past ~2MB, which Chromium's data: URL loader silently drops
-  //     load of, at least intermittently, leaving only the plain black body background.
-  // A real file:// page loaded via loadFile has no URL-length ceiling and can reference a sibling file://
-  // image (same scheme) without the cross-origin restriction from (1).
-  const html = `<!doctype html><html><body style="margin:0;overflow:hidden;background:#000">
-    <img src="${pathToFileURL(imagePath).href}" style="width:100vw;height:100vh;object-fit:fill;display:block" />
-    </body></html>`;
-  const tmpHtmlPath = path.join(app.getPath('temp'), `brawl-demo-backdrop-${choice}.html`);
+  testWindow = win;
+  win.on('page-title-updated', (e) => e.preventDefault()); // keep the exact game title
+  win.on('closed', () => {
+    if (testWindow === win) testWindow = null;
+    broadcastTestState();
+  });
+  // A real file:// page (not a data: URL): the screenshots are >1MB, past what data: URLs load reliably.
+  const html = `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0;overflow:hidden;background:#000">
+    <img id="shot" style="width:100vw;height:100vh;object-fit:fill;display:block" /></body></html>`;
+  const tmpHtmlPath = path.join(app.getPath('temp'), 'brawl-test-mode.html');
   writeFileSync(tmpHtmlPath, html);
-  log('electron-main', 'info', 'overlay.demo.paths', {
-    imagePath,
-    imageExists: existsSync(imagePath),
-    tmpHtmlPath,
-    isPackaged: app.isPackaged,
-  });
-  demoBackdrop.loadFile(tmpHtmlPath);
-  demoBackdrop.webContents.on('did-fail-load', (_e, code, desc, url) => {
-    log('electron-main', 'error', 'overlay.demo.did-fail-load', { code, desc, url });
-  });
-  demoBackdrop.webContents.on('console-message', (_e, level, message) => {
-    log('electron-main', 'debug', 'overlay.demo.console', { level, message });
-  });
-  const backdrop = demoBackdrop;
-  // Wait for the <img> to actually finish decoding (poll `complete`/naturalWidth), not just 'ready-to-show'
-  // -- 'ready-to-show' fires on the page's first compositor frame, which can land before a 1.2MB local PNG
-  // has decoded, and showInactive() before that first real paint (over RDP/remote-session GPU compositing
-  // in particular) left the window showing only its plain black body background permanently, never
-  // repainting once the image did arrive.
-  const waitForImageDecoded = async (): Promise<boolean> => {
-    for (let i = 0; i < 50; i++) {
-      if (demoBackdrop !== backdrop) return false; // superseded
-      try {
-        const ok = await backdrop.webContents.executeJavaScript(
-          "(() => { const i = document.querySelector('img'); return !!i && i.complete && i.naturalWidth > 0; })()",
-        );
-        if (ok) return true;
-      } catch {
-        /* webContents may not be ready yet on the very first poll */
-      }
-      await new Promise((r) => setTimeout(r, 100));
-    }
-    return false;
-  };
-  backdrop.webContents.once('did-finish-load', () => {
-    void waitForImageDecoded().then((decoded) => {
-      if (demoBackdrop !== backdrop) return; // superseded by a newer trigger before this finished loading
-      if (!decoded) log('electron-main', 'warn', 'overlay.demo.image-not-decoded', { choice });
-      // Real showInactive() (not hidden, not offscreen-mode), but at DEMO_OFFSCREEN_X/Y -- a position no
-      // real monitor covers -- so it's fully composited (capturePage() below sees real pixels) without ever
-      // being visible to the user. The overlay is moved to sit exactly over the backdrop at that same
-      // off-monitor position, same as it would track a real game window.
-      // setOpacity(0), not a hidden/offscreen window: see the comment above DEMO_MS for why this is the
-      // only combination that both actually renders (capturePage() sees real pixels) and is guaranteed
-      // never visible to the user, regardless of z-order.
-      backdrop.setOpacity(0);
-      backdrop.showInactive();
-      const bounds = backdrop.getBounds(); // an Electron window's own bounds are already DIPs -- no scale conversion needed
-      overlay?.setBounds(bounds);
-      // Always-on-top like the real path (createOverlayWindow already sets this at startup) -- it never
-      // matters visually since both windows sit off-monitor at opacity 0, but the e2e harness checks
-      // isAlwaysOnTop() to prove the demo overlay behaves like the real one, not a stripped-down copy.
-      overlay?.setAlwaysOnTop(true, 'screen-saver');
-      overlay?.setOpacity(0);
-      overlay?.showInactive();
-      // Sends the frame name, not a captured source: the control window fetches the same PNG this backdrop
-      // window is displaying and draws it straight to a canvas -- no desktopCapturer/getUserMedia involved.
-      pendingDemoFrame = choice;
-      control?.webContents.send(CHANNELS.overlayDemoStart, choice);
-      log('electron-main', 'info', 'overlay.demo.start', { choice, bounds, decoded });
-    });
-  });
-  demoTimer = setTimeout(stopOverlayDemo, DEMO_MS);
+  await win.loadFile(tmpHtmlPath);
+  const decoded = await showTestFrame(win, testFrame);
+  if (!alive(win)) return testState();
+  win.setTitle(GAME_WINDOW_TITLE);
+  win.showInactive();
+  // Harness only: a transparent (opacity < 1) window is not offered by window capture at all, so the dummy is
+  // fully opaque but pushed to the bottom of the z-order so it never covers the person's other windows.
+  if (process.env.BRAWL_E2E) sendWindowToBottom(win.getNativeWindowHandle());
+  log('electron-main', 'info', 'testmode.start', { frame: testFrame, decoded, bounds: win.getBounds() });
+  broadcastTestState();
+  return testState();
 }
 
-/** Ends demo mode immediately: same cleanup DEMO_MS's auto-clear timer runs, factored out so it can also be
- *  called on demand (the e2e harness needs this -- without an explicit stop, the `frames` case's first
- *  iteration can start while a demo triggered by the earlier `overlay` case is still active, and the control
- *  window keeps drawing the demo PNG instead of switching to that iteration's real fake-window capture). */
-function stopOverlayDemo() {
-  if (demoTimer) {
-    clearTimeout(demoTimer);
-    demoTimer = null;
-  }
-  pendingDemoFrame = null;
-  control?.webContents.send(CHANNELS.overlayDemoStop);
-  demoBackdrop?.close();
-  demoBackdrop = null;
-  if (!lastRect) {
-    overlay?.hide();
-    // restore for the next real game session or manual toggle (the harness keeps it invisible throughout)
-    if (!process.env.BRAWL_E2E) overlay?.setOpacity(1);
-  }
+/** Turns test mode off: closes the dummy window (and only that) and hides the overlay it was driving. */
+function stopTestMode(message: string | null = null) {
+  const win = testWindow;
+  testWindow = null;
+  testMessage = message;
+  if (alive(win)) win.close();
+  if (alive(overlay) && !lastRect) overlay.hide();
+  log('electron-main', 'info', 'testmode.stop');
+  broadcastTestState();
+  return testState();
 }
 
-/** Composites the demo backdrop and overlay windows' own rendered pixels into one PNG, via
+async function setTestFrame(frame: string) {
+  if (!alive(testWindow) || !testFrames().includes(frame)) return testState();
+  testFrame = frame;
+  await showTestFrame(testWindow, frame);
+  log('electron-main', 'info', 'testmode.frame', { frame });
+  broadcastTestState();
+  return testState();
+}
+
+/** Composites the test-mode dummy window and overlay windows' own rendered pixels into one PNG, via
  *  webContents.capturePage() -- Electron's internal compositor output -- rather than an OS-level screen
- *  copy. Needed because the demo windows are deliberately opacity-0 (see the comment above DEMO_MS) so
+ *  copy. Needed because the demo windows are deliberately opacity-0 (see the comment above alive()) so
  *  they never visibly cover the user's other work; an OS-level screenshot of that screen region would just
  *  show whatever's really behind them, but capturePage() reads each window's own buffer directly regardless
  *  of opacity or z-order, so it still proves the real recognise -> advise -> draw pipeline drew boxes.
  *  Composited via a throwaway <canvas> in the control window's own renderer (drawImage layers backdrop then
  *  the transparent overlay on top, preserving overlay alpha) since there's no Node-side image compositor
- *  available here. Returns null if the demo isn't currently running. */
-async function captureDemoComposite(): Promise<Buffer | null> {
-  if (!demoBackdrop || !overlay || !control) return null;
-  const backdrop = demoBackdrop;
+ *  available here. Returns null if test mode isn't currently running. */
+async function captureTestComposite(): Promise<Buffer | null> {
+  if (!alive(testWindow) || !alive(overlay) || !alive(control)) return null;
+  const backdrop = testWindow;
   const ov = overlay;
   // Chromium suspends compositing an opacity-0 window (same as an occluded or offscreen one -- see the
   // comment above DEMO_MS), so capturePage() right after setOpacity(0) is set can return a stale/blank
@@ -413,13 +398,24 @@ function setupDisplayMediaHandler() {
   // the game isn't open.
   session.defaultSession.setDisplayMediaRequestHandler(
     async (_request, callback) => {
+      // In test mode only the dummy's own source qualifies, so nothing else can ever be captured. The app's own
+      // windows are never listed by desktopCapturer, so the dummy is served by its media-source id directly.
+      if (alive(testWindow)) {
+        const id = testWindow.getMediaSourceId();
+        log('electron-main', 'info', 'capture.chosen', { name: 'Deadlock (test dummy)' });
+        callback({ video: { id, name: GAME_WINDOW_TITLE } as Electron.DesktopCapturerSource });
+        return;
+      }
       const sources = await desktopCapturer.getSources({ types: ['window'] });
-      const ownIds = new Set([control?.getMediaSourceId(), overlay?.getMediaSourceId()].filter(Boolean));
-      log('electron-main', 'debug', 'capture.candidates', { names: sources.map((s) => s.name) });
+      const ownIds = new Set(
+        [alive(control) ? control.getMediaSourceId() : null, alive(overlay) ? overlay.getMediaSourceId() : null].filter(
+          Boolean,
+        ),
+      );
       const match = sources.find((s) => !ownIds.has(s.id) && isGameWindowTitle(s.name, GAME_WINDOW_TITLE));
       log('electron-main', match ? 'info' : 'warn', match ? 'capture.chosen' : 'capture.denied', { name: match?.name });
       if (!match) {
-        control?.webContents.send(CHANNELS.captureDenied);
+        sendControl(CHANNELS.captureDenied);
         callback({}); // denies the request instead of falling back to an arbitrary window
         return;
       }
@@ -443,11 +439,13 @@ function platformWarning(): string | null {
 function setupIpc() {
   ipcMain.handle(CHANNELS.getGameRect, () => lastRect);
   ipcMain.handle(CHANNELS.platformWarning, () => platformWarning());
-  ipcMain.handle(CHANNELS.getPendingDemoFrame, () => pendingDemoFrame);
+  ipcMain.handle(CHANNELS.testModeGet, () => testState());
+  ipcMain.handle(CHANNELS.testModeSet, (_e, on: boolean) => (on ? startTestMode() : stopTestMode()));
+  ipcMain.handle(CHANNELS.testModeFrame, (_e, frame: string) => setTestFrame(String(frame)));
   // Relay: the control window computes advice from its capture and forwards state for the overlay to draw.
   ipcMain.on(CHANNELS.overlayState, (_event, state) => {
     lastOverlayState = state;
-    overlay?.webContents.send(CHANNELS.overlayState, state);
+    if (alive(overlay) && !overlay.webContents.isDestroyed()) overlay.webContents.send(CHANNELS.overlayState, state);
   });
 }
 
@@ -461,14 +459,14 @@ function setupTray() {
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: 'Toggle overlay', click: toggleOverlay },
-      { label: 'Overlay demo', click: () => triggerOverlayDemo() },
+      { label: 'Toggle test mode', click: () => (alive(testWindow) ? stopTestMode() : void startTestMode()) },
       { label: 'Quit', click: () => app.quit() },
     ]),
   );
 }
 
 function toggleOverlay() {
-  if (!overlay) return;
+  if (!alive(overlay)) return;
   if (overlay.isVisible()) overlay.hide();
   else if (lastRect) overlay.showInactive();
 }
@@ -503,7 +501,6 @@ app.whenReady().then(() => {
   setupTray();
   startRectPolling();
   globalShortcut.register('CommandOrControl+Shift+O', toggleOverlay);
-  globalShortcut.register('CommandOrControl+Shift+D', triggerOverlayDemo);
   // Test-only hook: scripts/win/e2e-main.cjs requires this exact module (not a stub) so it needs a way to
   // reach the real windows/handlers it just created. Inert unless BRAWL_E2E is set.
   if (process.env.BRAWL_E2E) {
@@ -518,13 +515,12 @@ app.whenReady().then(() => {
       // send) if no real state has been relayed yet.
       forceReroll: () => {
         if (!lastOverlayState) return false;
-        overlay?.webContents.send(CHANNELS.overlayState, { ...lastOverlayState, reroll: true, bestId: null });
+        if (alive(overlay))
+          overlay.webContents.send(CHANNELS.overlayState, { ...lastOverlayState, reroll: true, bestId: null });
         return true;
       },
-      triggerOverlayDemo,
-      stopOverlayDemo,
-      getDemoBackdropBounds: () => demoBackdrop?.getBounds() ?? null,
-      captureDemoComposite,
+      getTestWindow: () => testWindow,
+      captureTestComposite,
     };
   }
 });

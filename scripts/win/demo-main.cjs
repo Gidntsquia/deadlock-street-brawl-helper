@@ -1,8 +1,8 @@
 // Windows-only Electron demo runner for `npm run win:demo` (PLAN.md item 4). Not the e2e harness: no JSON
 // report, no --only filtering. Opens the real app under BRAWL_E2E (to reach the __brawlE2E test hook that
-// triggerOverlayDemo() and getDemoBackdropBounds() live on), guards against a real game already running
+// getTestWindow() and captureTestComposite() live on), guards against a real game already running
 // (same check as scripts/win/e2e-main.cjs's checkNoRealGameOpen -- this script never writes a pid file of
-// its own, so every window titled "Deadlock" it finds is foreign), triggers the demo backdrop for the
+// its own, so every window titled "Deadlock" it finds is foreign), turns test mode on (the dummy "Deadlock" window) for the
 // requested frame, waits for the overlay to actually draw over it, and screenshots that region to
 // logs/win-demo.png.
 //
@@ -19,6 +19,8 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { spawnSync } = require('node:child_process');
 const { app } = require('electron');
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 
 // See electron/main.ts's matching comment: GPU-accelerated surfaces don't reach the physical screen in this
 // environment (RDP/virtual display), so the demo backdrop window renders correctly inside Electron but stays
@@ -96,12 +98,38 @@ async function main() {
     return exit(1);
   }
 
-  const bounds = await waitFor(() => {
-    e2e.triggerOverlayDemo(choiceArg);
-    return e2e.getDemoBackdropBounds();
-  }, 10_000);
-  if (!bounds) {
-    console.error('ERROR: demo backdrop never appeared');
+  // Same as pressing the control window's test-mode button, then picking the screenshot: hero/round/choice
+  // first (as a person would before a draft), then the dummy "Deadlock" window opens and the normal capture
+  // path takes over.
+  const control = e2e.getControl();
+  const labels = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts', 'win', 'frames', 'labels.json'), 'utf8'));
+  const label = labels[choiceArg];
+  await waitFor(
+    () => control.webContents.executeJavaScript('!!document.querySelector("select[aria-label=Round]")'),
+    15_000,
+  );
+  await control.webContents.executeJavaScript(`
+    (() => {
+      function set(sel, value) {
+        const el = document.querySelector(sel);
+        if (!el) return false;
+        Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set.call(el, String(value));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      }
+      const hero = document.querySelector('.hero-select');
+      const opt = hero && [...hero.options].find((o) => o.textContent.includes(${JSON.stringify(label.hero)}));
+      if (opt) set('.hero-select', opt.value);
+      set('select[aria-label="Round"]', ${label.round});
+      set('select[aria-label="Choice"]', ${label.choice});
+    })();
+  `);
+  await sleep(500);
+  await control.webContents.executeJavaScript(`window.brawlAPI.setTestMode(true)`);
+  await control.webContents.executeJavaScript(`window.brawlAPI.setTestFrame(${JSON.stringify(choiceArg)})`);
+  const testWin = await waitFor(() => e2e.getTestWindow(), 10_000);
+  if (!testWin) {
+    console.error('ERROR: test-mode window never appeared');
     return exit(1);
   }
 
@@ -109,7 +137,6 @@ async function main() {
   // ".brawl-status" to exist -- that status div renders as soon as capture starts, well before the worker's
   // two-frame accept debounce (worker.ts) resolves cards -> advice -> a ranked best pick. Screenshotting on
   // the earlier signal raced ahead of recognition and produced a real-but-blank (no green box) frame.
-  const control = e2e.getControl();
   const drew = await waitFor(
     () => control?.webContents.executeJavaScript('!!document.querySelector(".brawl-card.best")'),
     15_000,
@@ -123,9 +150,9 @@ async function main() {
   // person actually has open, which means an OS-level screenshot of that screen region would legitimately
   // see the person's own windows instead of ours.
   fs.mkdirSync(path.dirname(OUT_PATH), { recursive: true });
-  const buf = await e2e.captureDemoComposite();
+  const buf = await e2e.captureTestComposite();
   if (!buf) {
-    console.error('ERROR: captureDemoComposite returned null (demo not running?)');
+    console.error('ERROR: captureTestComposite returned null (test mode not running?)');
     return exit(1);
   }
   fs.writeFileSync(OUT_PATH, buf);

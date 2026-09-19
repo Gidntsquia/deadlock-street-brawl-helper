@@ -1,7 +1,7 @@
 // Windows-only Electron test harness. Run by real electron.exe (never Linux Electron): sets BRAWL_E2E=1,
 // requires the REAL electron-dist/main.js (not a stub), drives it via executeJavaScript, and writes one
-// JSON report. Filter cases with --only <name1,name2,...>. Hard timeout 180s (raised from 90s once the
-// `frames` and `overlay` cases were added -- a full default run takes ~100-110s end to end, and the old 90s
+// JSON report. Filter cases with --only <name1,name2,...>. Hard timeout 300s (raised from 90s once the
+// `frames` and `testmode` cases were added -- a full default run takes ~150-160s end to end, and the old 90s
 // ceiling cut it off mid-teardown, cascading into spurious failures on whichever case ran last).
 'use strict';
 process.env.BRAWL_E2E = '1';
@@ -10,6 +10,9 @@ const path = require('node:path');
 const { spawnSync, spawn } = require('node:child_process');
 const fs = require('node:fs');
 const { app, screen } = require('electron');
+// A dummy window sitting under other windows must keep rendering (and being capturable): no occlusion throttling.
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 
 const ROOT = path.join(__dirname, '..', '..');
 const FAKE_PS1 = path.join(__dirname, 'fake-deadlock.ps1');
@@ -115,6 +118,13 @@ console.error = (...args) => {
   dbg('main-process stderr: ' + args.map(String).join(' '));
   realConsoleError(...args);
 };
+for (const level of ['info', 'warn']) {
+  const real = console[level].bind(console);
+  console[level] = (...args) => {
+    dbg(`main-process ${level}: ` + args.map(String).join(' '));
+    real(...args);
+  };
+}
 const realConsoleLog = console.log.bind(console);
 console.log = (...args) => {
   dbg('main-process stdout: ' + args.map(String).join(' '));
@@ -122,6 +132,36 @@ console.log = (...args) => {
 };
 
 const PID_FILE = path.join(require('node:os').tmpdir(), 'brawl-fake-deadlock.pid');
+
+// Sets React-controlled selects the way a person would (native value setter + change event).
+const SET_SELECT_JS = `
+  function __setSelect(sel, value) {
+    const el = document.querySelector(sel);
+    if (!el) return false;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+    setter.call(el, String(value));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  }
+  function __setHero(name) {
+    const el = document.querySelector('.hero-select');
+    if (!el) return false;
+    const opt = [...el.options].find((o) => o.textContent.includes(name));
+    if (!opt) return false;
+    return __setSelect('.hero-select', opt.value);
+  }
+`;
+
+// Clicks the control window's test-mode button (the same one a person presses).
+const CLICK_TEST_MODE_JS = `(() => { const b = document.querySelector('.brawl-testmode button'); if (!b) return false; b.click(); return true; })()`;
+
+// Uncaught main-process exceptions (what surfaces as the "A JavaScript error occurred in the main process"
+// dialog for a person) are counted here instead of showing a dialog.
+let uncaughtCount = 0;
+process.on('uncaughtException', (err) => {
+  uncaughtCount++;
+  dbg('main-process uncaughtException: ' + (err && err.stack ? err.stack : String(err)));
+});
 
 // Must run before any stopFakeWindow()/finish() call: lists every window titled exactly "Deadlock" and
 // fails hard if one exists that this harness did not itself start (i.e. its pid isn't the one recorded by
@@ -157,9 +197,9 @@ function checkNoRealGameOpen() {
 
 async function main() {
   const timeout = setTimeout(() => {
-    console.log('HARNESS TIMEOUT after 180s');
+    console.log('HARNESS TIMEOUT after 300s');
     finish(1);
-  }, 180_000);
+  }, 300_000);
 
   if (!checkNoRealGameOpen()) {
     clearTimeout(timeout);
@@ -337,64 +377,96 @@ async function main() {
     stopFakeWindow();
   }
 
-  if (wantsCase('overlay')) {
-    // No fake Deadlock window here: PLAN.md item 4's demo mode only runs when no real game is found, so this
-    // checks that path -- main.ts opens its own demo backdrop window (never titled "Deadlock") showing a real
-    // draft screenshot, the control window captures it and runs the real recognise/advise path, and the
-    // overlay panel should show a name straight from labels.json, not a forced /RE-ROLL/.
-    const labels = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts', 'win', 'frames', 'labels.json'), 'utf8'));
-    const verdictsPath = path.join(ROOT, 'logs', 'win-e2e-verdicts.json');
-    const verdict = fs.existsSync(verdictsPath) ? JSON.parse(fs.readFileSync(verdictsPath, 'utf8')).choice1 : null;
-    // A previous case's fake window may still be closing out (main.ts's lastRect clears async, on its own
-    // ~250ms poll tick); triggerOverlayDemo is a no-op while lastRect is set, so retry the call itself, not
-    // just wait, until the demo backdrop actually appears.
-    // Let the previous case's capture teardown finish first: its stopCapture() clears the renderer's demo
-    // image ref, so if it lands after the demo has started, the frame loop falls back to the dead <video>
-    // (last magenta frame) and the panel sits at "0/3 cards found" until DEMO_MS expires.
-    await waitFor(async () => {
-      const status = await control.webContents.executeJavaScript(
-        'document.querySelector(".brawl-status")?.textContent ?? ""',
-      );
-      return status.includes('not found');
-    }, 5_000);
+  if (wantsCase('testmode-refuse')) {
+    // A decoy window titled exactly "Deadlock" that the app did not create: test mode must refuse, say why in
+    // the control window, open no dummy, and leave the decoy's process alone.
+    startFakeWindow();
+    const decoy = await waitFor(() => fakeWindowRect, 8_000);
+    await sleep(1_500);
+    await control.webContents.executeJavaScript(CLICK_TEST_MODE_JS);
+    const message = await waitFor(
+      () =>
+        control.webContents.executeJavaScript('document.querySelector(".brawl-testmode-message")?.textContent ?? ""'),
+      8_000,
+    );
+    check('testmode-refuse-message', !!message && /real Deadlock/i.test(message), `message="${message}"`);
+    await sleep(1_000);
+    check('testmode-refuse-no-dummy', !e2e.getTestWindow(), `testWindow=${e2e.getTestWindow() ? 'open' : 'none'}`);
+    const pidOut = decoy
+      ? spawnSync(
+          'powershell.exe',
+          ['-NoProfile', '-Command', `(Get-Process -Id ${decoy.pid} -ErrorAction SilentlyContinue).Id`],
+          {
+            encoding: 'utf8',
+          },
+        ).stdout.trim()
+      : '';
+    check(
+      'testmode-refuse-decoy-alive',
+      !!decoy && pidOut === String(decoy.pid),
+      `decoy pid=${decoy?.pid} Get-Process=${pidOut}`,
+    );
+    stopFakeWindow();
+    await waitFor(async () => !(await control.webContents.executeJavaScript('window.brawlAPI.getGameRect()')), 8_000);
+    await sleep(1_000);
+  }
+
+  const labelsForTest = () =>
+    JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts', 'win', 'frames', 'labels.json'), 'utf8'));
+  const panelText = () =>
+    overlay ? overlay.webContents.executeJavaScript('document.querySelector(".overlay-panel")?.textContent ?? ""') : '';
+  // The ranked advice lines only (not the status line, which updates a beat before the advice does).
+  const panelCardsText = () =>
+    overlay
+      ? overlay.webContents.executeJavaScript(
+          '[...document.querySelectorAll(".overlay-panel-card")].map((e) => e.textContent).join(" | ")',
+        )
+      : '';
+  const waitForPanelNames = async (names) => {
+    let last = '';
+    const t = await waitFor(async () => {
+      last = await panelCardsText();
+      return last && names.every((n) => last.includes(n)) ? last : null;
+    }, 25_000);
+    return { ok: !!t, text: (t ?? last).slice(0, 600) };
+  };
+
+  if (wantsCase('testmode')) {
+    // The in-app test mode, driven through the control window's own button: a dummy "Deadlock" window shows
+    // a real draft screenshot, the normal capture path recognises it, and the overlay follows it.
+    const labels = labelsForTest();
+    stopFakeWindow();
+    await waitFor(async () => !(await control.webContents.executeJavaScript('window.brawlAPI.getGameRect()')), 8_000);
     await sleep(500);
-    const bounds = await waitFor(() => {
-      e2e.triggerOverlayDemo('choice1');
-      return e2e.getDemoBackdropBounds();
-    }, 10_000);
-    const wantName = verdict && verdict.verdict !== 'RE-ROLL' ? verdict.verdict : null;
-    const namesInLabel = [labels.choice1.cards.left, labels.choice1.cards.top, labels.choice1.cards.right];
-    if (overlay && bounds) {
-      // Non-empty text lands almost immediately (hero/round/ability line), well before the worker's two-frame
-      // accept debounce (worker.ts) resolves cards -> advice -> ranked names -- wait for an actual card name,
-      // not just any text, or this races ahead of the real recognise/advise path finishing.
-      let lastPanelText = '';
-      const panelText = await waitFor(async () => {
-        const t = await overlay.webContents.executeJavaScript(
-          'document.querySelector(".overlay-panel")?.textContent ?? ""',
-        );
-        if (!t) return null;
-        lastPanelText = t;
-        const hasName = wantName ? t.includes(wantName) : namesInLabel.some((n) => t.includes(n));
-        return hasName ? t : null;
-      }, 20_000);
-      const nameOk =
-        !!panelText && (wantName ? panelText.includes(wantName) : namesInLabel.some((n) => panelText.includes(n)));
-      check('overlay-panel', nameOk, (panelText ?? lastPanelText).slice(0, 200));
-      const overlayBounds = overlay.getBounds();
-      // A borderless, non-resizable BrowserWindow can come back 1px wider/taller than what was passed to
-      // setBounds() (Windows DPI/frame-metrics rounding on frame:false windows) -- a few px of slack proves
-      // the overlay tracks the backdrop's own rect rather than requiring exact pixel equality.
-      const within = (a, b, tol) => Math.abs(a - b) <= tol;
-      const boundsMatch =
-        within(overlayBounds.x, bounds.x, 2) &&
-        within(overlayBounds.y, bounds.y, 2) &&
-        within(overlayBounds.width, bounds.width, 2) &&
-        within(overlayBounds.height, bounds.height, 2);
+    // hero/round/choice go first, as in a real game (changing them later wipes accepted cards)
+    await control.webContents.executeJavaScript(`
+      (() => {
+        ${SET_SELECT_JS}
+        __setHero(${JSON.stringify(labels.choice1.hero)});
+        __setSelect('select[aria-label="Round"]', ${labels.choice1.round});
+        __setSelect('select[aria-label="Choice"]', ${labels.choice1.choice});
+      })();
+    `);
+    await sleep(500);
+    const clicked = await control.webContents.executeJavaScript(CLICK_TEST_MODE_JS);
+    const win = await waitFor(() => e2e.getTestWindow(), 10_000);
+    check('testmode-on', clicked && !!win, `clicked=${clicked} dummy=${win ? 'open' : 'none'}`);
+    if (win) {
+      check('testmode-title', win.getTitle() === 'Deadlock', `title="${win.getTitle()}"`);
+      const c1 = Object.values(labels.choice1.cards);
+      const first = await waitForPanelNames(c1);
+      check('testmode-panel-choice1', first.ok, first.text);
+      const bounds = win.getBounds();
+      const ob = overlay.getBounds();
+      const within = (a, b2, tol) => Math.abs(a - b2) <= tol;
+      // The overlay is sized from the dummy's physical rect via toDipBounds (125 % scaling in real use).
       check(
-        'overlay-bounds-demo',
-        boundsMatch,
-        `overlay=${JSON.stringify(overlayBounds)} demo-backdrop=${JSON.stringify(bounds)}`,
+        'overlay-bounds-testmode',
+        within(ob.x, bounds.x, 3) &&
+          within(ob.y, bounds.y, 3) &&
+          within(ob.width, bounds.width, 3) &&
+          within(ob.height, bounds.height, 3),
+        `overlay=${JSON.stringify(ob)} dummy=${JSON.stringify(bounds)}`,
       );
       check('overlay-on-top', overlay.isAlwaysOnTop());
       check(
@@ -402,22 +474,56 @@ async function main() {
         !!e2e.overlayIgnoresMouseEvents,
         `overlayIgnoresMouseEvents=${e2e.overlayIgnoresMouseEvents} (electron/main.ts live getter, mirrors the value passed to the last setIgnoreMouseEvents() call)`,
       );
-    } else {
-      check('overlay-panel', false, 'no overlay window or demo backdrop never appeared');
+      // switch the screenshot through the UI select
+      await control.webContents.executeJavaScript(
+        `(() => { ${SET_SELECT_JS} return __setSelect('select[aria-label="Test screenshot"]', 'choice2'); })()`,
+      );
+      const c2 = Object.values(labels.choice2.cards);
+      const second = await waitForPanelNames(c2);
+      check('testmode-switch-frame', second.ok && !c1.every((n) => second.text.includes(n)), second.text);
+      // turn it off through the UI
+      await control.webContents.executeJavaScript(CLICK_TEST_MODE_JS);
+      const gone = await waitFor(() => !e2e.getTestWindow(), 8_000);
+      await sleep(1_000);
+      check(
+        'testmode-off',
+        !!gone && !overlay.isVisible() && !control.isDestroyed(),
+        `dummy=${e2e.getTestWindow() ? 'open' : 'closed'} overlayVisible=${overlay.isVisible()}`,
+      );
     }
-    // Without this, the `frames` case's first iteration can start while this case's demo is still active
-    // (only DEMO_MS=10s auto-clears it otherwise) -- the control window keeps drawing the demo PNG instead
-    // of switching to that iteration's real fake-window capture, so its first frame reads blank/stale state.
-    if (typeof e2e.stopOverlayDemo === 'function') e2e.stopOverlayDemo();
-    await waitFor(() => e2e.getDemoBackdropBounds() === null, 5_000);
-    // Extra settle: main.ts's rect poll (250ms) and the renderer's stopCapture()/state teardown both need a
-    // beat to actually finish, or the `frames` case's first fake window can spawn while a stale getDisplayMedia
-    // attempt from mid-teardown is still in flight and gets denied before the real rect is ever seen.
     await sleep(1_000);
   }
 
   if (wantsCase('frames')) {
+    // Start from a fresh app state: an earlier case's detected enemies / owned items would change the scores.
+    await control.webContents.executeJavaScript('localStorage.clear()');
+    control.webContents.reload();
+    await waitFor(
+      () => control.webContents.executeJavaScript('!!document.querySelector(".brawl-status")').catch(() => false),
+      15_000,
+    );
+    await sleep(1_000);
     await runFramesCase(e2e, control, overlay, () => captureStartTotal);
+  }
+
+  if (wantsCase('testmode-overlay-closed')) {
+    // Closing the overlay window must not leave anything that throws later: test mode on/off still works
+    // (it recreates the overlay) and no uncaught main-process exception (= error dialog) occurs.
+    uncaughtCount = 0;
+    overlay?.close();
+    await sleep(500);
+    await control.webContents.executeJavaScript(CLICK_TEST_MODE_JS);
+    const win = await waitFor(() => e2e.getTestWindow(), 10_000);
+    await sleep(1_500);
+    const ov2 = e2e.getOverlay();
+    await control.webContents.executeJavaScript(CLICK_TEST_MODE_JS);
+    await waitFor(() => !e2e.getTestWindow(), 8_000);
+    await sleep(500);
+    check(
+      'overlay-closed-no-error',
+      uncaughtCount === 0 && !!win && !!ov2,
+      `uncaught=${uncaughtCount} dummy=${win ? 'opened' : 'none'} overlayRecreated=${!!ov2}`,
+    );
   }
 
   clearTimeout(timeout);
@@ -479,23 +585,7 @@ async function runFramesCase(e2e, control, overlay, getCaptureStartTotal) {
   }
   const verdicts = JSON.parse(fs.readFileSync(verdictsPath, 'utf8'));
 
-  const setSelectJs = `
-    function __setSelect(sel, value) {
-      const el = document.querySelector(sel);
-      if (!el) return false;
-      const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
-      setter.call(el, String(value));
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-      return true;
-    }
-    function __setHero(name) {
-      const el = document.querySelector('.hero-select');
-      if (!el) return false;
-      const opt = [...el.options].find((o) => o.textContent.includes(name));
-      if (!opt) return false;
-      return __setSelect('.hero-select', opt.value);
-    }
-  `;
+  const setSelectJs = SET_SELECT_JS;
 
   let anyNaturalReroll = false;
   let lastFrameName = null;
@@ -597,10 +687,20 @@ async function runFramesCase(e2e, control, overlay, getCaptureStartTotal) {
     // The control window's advice text and the overlay window's redraw are two separate IPC-relayed
     // renders (OverlayState → overlay window) -- overlay can lag control by a render tick. Poll until the
     // overlay actually shows a 'best' box at the expected position instead of racing it.
-    let drawn = overlay ? await overlay.webContents.executeJavaScript('window.__overlayDrawn ?? []') : [];
+    // Drawn rects and the overlay panel's scores are read in ONE call: both come from the same OverlayState,
+    // whereas two reads can straddle a state update (e.g. enemies detected -> scores shift by 0.02).
+    const readOverlay = () =>
+      overlay.webContents.executeJavaScript(`({
+        drawn: window.__overlayDrawn ?? [],
+        scores: [...document.querySelectorAll('.overlay-panel-card')]
+          .map((e) => (e.textContent || '').match(/ · (-?[0-9.]+) ·/)?.[1]).filter(Boolean),
+      })`);
+    let drawn = [];
+    let panelScores = [];
+    if (overlay) ({ drawn, scores: panelScores } = await readOverlay());
     if (overlay && expectedBestPos) {
       await waitFor(async () => {
-        drawn = await overlay.webContents.executeJavaScript('window.__overlayDrawn ?? []');
+        ({ drawn, scores: panelScores } = await readOverlay());
         return drawn.some((r) => r.card === expectedBestPos && r.kind === 'best');
       }, 5_000);
     }
@@ -612,16 +712,22 @@ async function runFramesCase(e2e, control, overlay, getCaptureStartTotal) {
     if (vidSize) {
       const scale = vidSize.w / 2000; // labels.json boxes are frame px at the source PNG's own 2000x1125
       for (const posKey of ['left', 'top', 'right']) {
-        const labelBox = scaleBox(label.boxes[posKey], scale);
+        // hand-measured circle labels (not the icon squares, not recogniser output)
+        const labelBox = scaleBox(label.circles[posKey], scale);
         const drawnBox = drawn.find((r) => r.card === posKey);
         const score = drawnBox ? iou(labelBox, drawnBox) : 0;
-        const cx = (labelBox.x0 + labelBox.x1) / 2,
-          cy = (labelBox.y0 + labelBox.y1) / 2;
-        const contains = !!drawnBox && cx >= drawnBox.x0 && cx <= drawnBox.x1 && cy >= drawnBox.y0 && cy <= drawnBox.y1;
+        const dcx = drawnBox ? (drawnBox.x0 + drawnBox.x1) / 2 : -1,
+          dcy = drawnBox ? (drawnBox.y0 + drawnBox.y1) / 2 : -1;
+        const contains =
+          !!drawnBox && dcx >= labelBox.x0 && dcx <= labelBox.x1 && dcy >= labelBox.y0 && dcy <= labelBox.y1;
         const wantKind = posKey === expectedBestPos ? 'best' : 'card';
         const kindOk = !!drawnBox && drawnBox.kind === wantKind;
-        boxDetail.push(`${posKey}:iou=${score.toFixed(2)},contains=${contains},kind=${drawnBox?.kind ?? 'none'}`);
-        if (score < 0.5 || !contains || !kindOk) boxesOk = false;
+        const scoreOk =
+          !!drawnBox && typeof drawnBox.score === 'number' && panelScores.includes(drawnBox.score.toFixed(2));
+        boxDetail.push(
+          `${posKey}:iou=${score.toFixed(2)},contains=${contains},kind=${drawnBox?.kind ?? 'none'},score=${drawnBox?.score?.toFixed?.(2) ?? 'none'}(panel=${panelScores.join('|')})`,
+        );
+        if (score < 0.5 || !contains || !kindOk || !scoreOk) boxesOk = false;
       }
     }
     check(`boxes-${frameName}`, boxesOk, boxDetail.join(' '));
@@ -718,40 +824,34 @@ async function checkPixels(overlay, label, vidSize, expectedBestPos, frameName) 
   if (!canvasSize) return { pass: false, detail: `${frameName}: no overlay canvas` };
   const scaleFrameToCanvas = { x: canvasSize.w / vidSize.w, y: canvasSize.h / vidSize.h };
   const scaleLabelToFrame = vidSize.w / 2000;
-  const bestBox = scaleBox(label.boxes[expectedBestPos], scaleLabelToFrame);
-  const edgeCanvasX = bestBox.x0 * scaleFrameToCanvas.x;
-  const edgeCanvasY = ((bestBox.y0 + bestBox.y1) / 2) * scaleFrameToCanvas.y;
-  const nonBestPos = ['left', 'top', 'right'].find((k) => k !== expectedBestPos);
-  const nonBestBox = scaleBox(label.boxes[nonBestPos], scaleLabelToFrame);
-  const nonBestCentreCanvasX = ((nonBestBox.x0 + nonBestBox.x1) / 2) * scaleFrameToCanvas.x;
-  const nonBestCentreCanvasY = ((nonBestBox.y0 + nonBestBox.y1) / 2) * scaleFrameToCanvas.y;
-
+  // The best circle's outline must be white and the other circles' outlines grey (not white): look at the
+  // strongest pixel within a few px of the circle's leftmost point.
   const img = await overlay.webContents.capturePage();
   const imgSize = img.getSize();
   const bitmap = img.toBitmap(); // BGRA on Windows
-  const toImgPx = (cx, cy) => ({
-    x: Math.round(cx * (imgSize.width / canvasSize.w)),
-    y: Math.round(cy * (imgSize.height / canvasSize.h)),
-  });
-  const sample = (px, py) => {
-    const x = Math.min(Math.max(px, 0), imgSize.width - 1);
-    const y = Math.min(Math.max(py, 0), imgSize.height - 1);
-    const idx = (y * imgSize.width + x) * 4;
-    return [bitmap[idx + 2], bitmap[idx + 1], bitmap[idx], bitmap[idx + 3]]; // -> R,G,B,A
+  const sampleNear = (box) => {
+    const cx = box.x0 * scaleFrameToCanvas.x;
+    const cy = ((box.y0 + box.y1) / 2) * scaleFrameToCanvas.y;
+    const ix = Math.round(cx * (imgSize.width / canvasSize.w));
+    const iy = Math.round(cy * (imgSize.height / canvasSize.h));
+    let best = [0, 0, 0, 0];
+    for (let dx = -4; dx <= 4; dx++) {
+      const x = Math.min(Math.max(ix + dx, 0), imgSize.width - 1);
+      const y = Math.min(Math.max(iy, 0), imgSize.height - 1);
+      const idx = (y * imgSize.width + x) * 4;
+      const px = [bitmap[idx + 2], bitmap[idx + 1], bitmap[idx], bitmap[idx + 3]];
+      if (px[0] + px[1] + px[2] > best[0] + best[1] + best[2]) best = px;
+    }
+    return best;
   };
-  const edge = toImgPx(edgeCanvasX, edgeCanvasY);
-  const nonBest = toImgPx(nonBestCentreCanvasX, nonBestCentreCanvasY);
-  const edgePx = sample(edge.x, edge.y);
-  const nonBestPx = sample(nonBest.x, nonBest.y);
-  const isGreen = Math.abs(edgePx[0] - 0x39) <= 60 && edgePx[1] >= 150 && Math.abs(edgePx[2] - 0x6a) <= 60;
-  const nonBestQuiet = !(
-    Math.abs(nonBestPx[0] - 0x39) <= 60 &&
-    nonBestPx[1] >= 150 &&
-    Math.abs(nonBestPx[2] - 0x6a) <= 60
-  );
+  const bestPx = sampleNear(scaleBox(label.circles[expectedBestPos], scaleLabelToFrame));
+  const others = ['left', 'top', 'right'].filter((k) => k !== expectedBestPos);
+  const otherPx = others.map((k) => sampleNear(scaleBox(label.circles[k], scaleLabelToFrame)));
+  const isWhite = (p) => p[0] >= 225 && p[1] >= 225 && p[2] >= 225;
+  const isGrey = (p) => p[0] > 40 && Math.max(p[0], p[1], p[2]) - Math.min(p[0], p[1], p[2]) <= 30 && !isWhite(p);
   return {
-    pass: isGreen && nonBestQuiet,
-    detail: `${frameName}: edge=${JSON.stringify(edgePx)} nonBestCentre=${JSON.stringify(nonBestPx)}`,
+    pass: isWhite(bestPx) && otherPx.every(isGrey),
+    detail: `${frameName}: bestEdge=${JSON.stringify(bestPx)} otherEdges=${JSON.stringify(otherPx)}`,
   };
 }
 
