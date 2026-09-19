@@ -589,9 +589,15 @@ const GW = 8,
 const LABELS = {
   round: { x0: 1318, y0: 50, x1: 1352, y1: 82 },
   choice: { x0: 238, y0: 380, x1: 268, y1: 428 },
+  // "N Re-Roll Remaining", muted grey-brown caption under the "Use Re-Roll" button. Measured from
+  // screenshots/brawl/reroll-choice{1,2}.png (2000x1125, both showing "1"): the digit's own bbox there is
+  // x 918-921, y 804-815, scaled to the 2560x1440 ref by 2560/2000 with margin.
+  rerolls: { x0: 1150, y0: 1010, x1: 1210, y1: 1057 },
 } as const;
 const lightText = (r: number, g: number, b: number) => 0.299 * r + 0.587 * g + 0.114 * b > 165;
 const magentaText = (r: number, g: number, b: number) => r > 140 && b > 140 && g < 130;
+// The re-roll caption is dimmer than the round/choice labels (muted grey-brown, not bold white/magenta).
+const mutedText = (r: number, g: number, b: number) => 0.299 * r + 0.587 * g + 0.114 * b > 100;
 const tpl = (rows: string[]): Float32Array => Float32Array.from(rows.join(''), (c) => Number(c) / 9);
 /** Round digits: bold face with a footed "1" (rows are 8 cells of fill 0-9). The "5" is drawn by hand: no screenshot of round 5 yet. */
 const ROUND_DIGITS: Record<number, Float32Array> = {
@@ -713,15 +719,15 @@ const CHOICE_DIGITS: Record<number, Float32Array> = {
 };
 export const MAX_DIGIT_DISTANCE = 0.06;
 
-/** Fill grid of the first glyph in the window, or null when the window holds no text. */
-export function readGlyph(
+/** Bounding box (window-relative px) of the first glyph in the window, or null when the window holds no text. */
+function readGlyphBBox(
   img: RGBImage,
   x0: number,
   y0: number,
   x1: number,
   y1: number,
   test: (r: number, g: number, b: number) => boolean,
-): Float32Array | null {
+): { gx0: number; gx1: number; gy0: number; gy1: number } | null {
   const on = (x: number, y: number) => {
     const [r, g, b] = rgb(img, x, y);
     return test(r, g, b);
@@ -749,6 +755,27 @@ export function readGlyph(
   const bw = gx1 - gx0 + 1,
     bh = gy1 - gy0 + 1;
   if (bw < 4 || bh < 6) return null;
+  return { gx0, gx1, gy0, gy1 };
+}
+
+/** Fill grid of the first glyph in the window, or null when the window holds no text. */
+export function readGlyph(
+  img: RGBImage,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  test: (r: number, g: number, b: number) => boolean,
+): Float32Array | null {
+  const on = (x: number, y: number) => {
+    const [r, g, b] = rgb(img, x, y);
+    return test(r, g, b);
+  };
+  const box = readGlyphBBox(img, x0, y0, x1, y1, test);
+  if (!box) return null;
+  const { gx0, gx1, gy0, gy1 } = box;
+  const bw = gx1 - gx0 + 1,
+    bh = gy1 - gy0 + 1;
   const g = new Float32Array(GW * GH);
   for (let gy = 0; gy < GH; gy++)
     for (let gx = 0; gx < GW; gx++) {
@@ -795,11 +822,44 @@ const readDigit = (
   return bestD <= MAX_DIGIT_DISTANCE ? best : 0;
 };
 
+/** RGBA crop of the "N Re-Roll Remaining" caption's own label box (the whole "N Re-Roll..." run, not just
+ *  the digit -- real OCR (see ocr.ts) reads the digit out of it fine on its own via the whitelist, and a
+ *  plain crop reads far more reliably than a hand-isolated, binarized single-glyph crop did), or null when
+ *  the caption isn't showing any text at all (read as 0 re-rolls without needing OCR: no glyph to misread).
+ *  Pure pixel work, kept here rather than in ocr.ts so it stays covered by the same no-DOM/no-Node purity as
+ *  the rest of this file. */
+export function extractRerollLabelCrop(img: RGBImage): { data: Uint8Array; width: number; height: number } | null {
+  const box = LABELS.rerolls;
+  const sx = img.width / BRAWL_LAYOUT.ref.width,
+    sy = img.height / BRAWL_LAYOUT.ref.height;
+  const x0 = Math.round(box.x0 * sx),
+    y0 = Math.round(box.y0 * sy),
+    x1 = Math.round(box.x1 * sx),
+    y1 = Math.round(box.y1 * sy);
+  if (!readGlyphBBox(img, x0, y0, x1, y1, mutedText)) return null;
+  const w = x1 - x0,
+    h = y1 - y0;
+  const data = new Uint8Array(w * h * 4);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const [r, g, b] = rgb(img, x0 + x, y0 + y);
+      const i = (y * w + x) * 4;
+      data[i] = r;
+      data[i + 1] = g;
+      data[i + 2] = b;
+      data[i + 3] = 255;
+    }
+  return { data, width: w, height: h };
+}
+
 export interface DraftMeta {
   round: number;
   choice: number;
   bar: HeroBar;
   self: number; /* the player's hero id, 0 if unread */
+  // read off the "N Re-Roll Remaining" caption: 0 (confident -- no glyph at all) or -1 (a glyph is there,
+  // pending the real OCR read in ocr.ts -- see readRerollsRemaining there for the resolved value).
+  rerollsRemaining: number;
 }
 /** Round (1-5), choice (1-3) and the hero bar of a draft screen; 0 for a label that could not be read. */
 export function readDraftMeta(img: RGBImage, index: DecodedIndex): DraftMeta {
@@ -809,7 +869,17 @@ export function readDraftMeta(img: RGBImage, index: DecodedIndex): DraftMeta {
     choice: readDigit(img, LABELS.choice, magentaText, CHOICE_DIGITS),
     bar,
     self: selfHero(bar, readSelfSlot(img)),
+    rerollsRemaining: extractRerollLabelCrop(img) ? -1 : 0,
   };
+}
+
+/** Cheap "are we on the item-draft (shop) screen" check: the "CHOICE n OF 3" line (directly under the
+ *  "SELECT ITEMS" title) only renders there, so a successful read of its digit is a reliable, already-calibrated
+ *  stand-in for the title text itself -- one small glyph read instead of the three full card icon searches, so
+ *  callers can skip card/inventory recognition entirely on every other screen (menus, the round-end/going-shopping
+ *  transition, gameplay). */
+export function isShopScreen(img: RGBImage): boolean {
+  return readDigit(img, LABELS.choice, magentaText, CHOICE_DIGITS) > 0;
 }
 
 // ---- inventory grid ------------------------------------------------------------------------------------

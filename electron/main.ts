@@ -482,11 +482,18 @@ function toggleOverlay() {
 // environment (RDP/virtual-display sessions are a documented case where Chromium's GPU-accelerated surfaces
 // never get composited to the real screen by DWM). Forcing software rendering (no GPU process) makes Chromium
 // paint through the normal software/GDI path instead, which DWM does composite correctly.
+// Only scoped to BRAWL_E2E (demo/e2e harness) runs, never a real game session: disabling hardware
+// acceleration forces every window, including the real overlay, onto software/GDI rendering, which (a)
+// is CPU-heavy enough to visibly lag a running game and (b) composites through DWM differently than the
+// game's GPU flip-model surface, letting the game win the always-on-top fight and cover the overlay. The
+// demo backdrop is the only window that actually needs this (see the comment above), and only when DWM
+// isn't compositing GPU surfaces to the real screen (RDP/virtual-display sessions) -- real hardware runs
+// must keep GPU acceleration on.
 // scripts/win/demo-main.cjs and e2e-main.cjs both await app.whenReady() themselves before dynamically
 // importing this module (so they can guard/instrument first), so app is already ready by the time this
 // line runs under those harnesses -- disableHardwareAcceleration() throws in that case; it's a no-op we
 // can safely skip since the harness process is short-lived and re-launched per run anyway.
-if (!app.isReady()) app.disableHardwareAcceleration();
+if (process.env.BRAWL_E2E && !app.isReady()) app.disableHardwareAcceleration();
 
 app.whenReady().then(() => {
   setupDisplayMediaHandler();

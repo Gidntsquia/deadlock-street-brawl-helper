@@ -6,6 +6,7 @@ import OverlayApp from './overlay/OverlayApp';
 import { ErrorBoundary } from './components/ErrorBoundary';
 
 const isOverlay = location.hash === '#/overlay';
+if (isOverlay) document.body.classList.add('overlay-window');
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ErrorBoundary>{isOverlay ? <OverlayApp /> : <App />}</ErrorBoundary>

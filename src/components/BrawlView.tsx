@@ -23,7 +23,7 @@ import { ItemTile } from './ItemTile';
 import { log } from '../log';
 import { usePersisted, isNumber, isNumberArray } from '../hooks/usePersisted';
 
-const CAPTURE_MS = 250; // pause between frames; the worker paces the loop (see worker.ts) so it keeps running while the tab is hidden
+const CAPTURE_MS = 150; // pause between frames; the worker paces the loop (see worker.ts) so it keeps running while the tab is hidden
 const ENEMY_SLOTS = 4;
 const isElectron = typeof window !== 'undefined' && !!window.brawlAPI;
 
@@ -42,14 +42,14 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [round, setRound] = usePersisted('round', isNumber, 1);
   const [choice, setChoice] = useState(1);
-  const [rerollsLeft, setRerollsLeft] = useState<number | null>(null); // null: however many the round starts with
-  const [rerollsRound, setRerollsRound] = useState(1);
+  const [rerollsLeft, setRerollsLeft] = useState<number | null>(null); // null: however many the round starts with; set from the on-screen "N Re-Roll Remaining" caption once a frame is read
   const isEnemies = (v: unknown): v is number[] => isNumberArray(v) && v.length === ENEMY_SLOTS;
   const [enemies, setEnemies] = usePersisted('enemies', isEnemies, Array(ENEMY_SLOTS).fill(0));
   const [owned, setOwned] = useState<number[]>([]);
   const [cards, setCards] = useState<Offer[]>([]);
   const [capture, setCapture] = useState<'off' | 'starting' | 'on'>('off');
   const [status, setStatus] = useState('');
+  const [onShop, setOnShop] = useState(false); // worker's isShopScreen for the latest frame; ability upgrades happen once this goes false
   // Electron only: main.ts denied the last capture attempt (Deadlock isn't open). Blocks the auto-start
   // effect from retrying on every rect tick; cleared once the game window actually appears.
   const [denied, setDenied] = useState(false);
@@ -74,6 +74,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
   const cardsRef = useRef<Offer[]>([]);
   const prevCardsRef = useRef<Offer[]>([]); // the set on screen before the current one: the pick shows up in the grid after the screen has moved on
   const readsRef = useRef<CardRead[]>([]); // latest card positions on screen, for the preview highlight
+  const acceptedKeyRef = useRef(''); // last accepted card-set key, to discard a stale async 'rerolls' OCR result
   const rankedRef = useRef<RankedOffer[]>([]);
   const rerollRef = useRef<RerollAdvice | null>(null);
   const overlayAdviceRef = useRef<OverlayAdvice | null>(null);
@@ -97,11 +98,6 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
   }, [hero.id]);
   // tagged with the hero it was fetched for, so switching hero shows the loader again instead of the old hero's numbers
   const analytics = loaded?.heroId === hero.id ? loaded.analytics : null;
-  // a new round refills the re-rolls; until then the count is whatever the player has spent it down to
-  if (rerollsRound !== round) {
-    setRerollsRound(round);
-    setRerollsLeft(null);
-  }
   const rerolls = rerollsLeft ?? config?.item_draft_rerolls_per_round[round - 1] ?? 1;
 
   const input: BrawlInput | null = useMemo(
@@ -137,6 +133,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
   const abilityOrder = useMemo(() => (input ? brawlAbilityOrder(input) : null), [input]);
   // Street Brawl gives roughly one ability point per draft choice: round 1 choice 1 is step 1, etc.
   const abilityStepNow = (round - 1) * 3 + choice - 1;
+  const abilityNext = abilityOrder?.steps[abilityStepNow]?.ability.name ?? null;
   useEffect(() => {
     overlayAdviceRef.current = input
       ? {
@@ -151,15 +148,12 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
             usage: r.usage,
             winRate: r.winRate,
           })),
-          abilityLine: abilityOrder
-            ? abilityOrder.steps
-                .map((s, k) => (k === abilityStepNow ? `> ${s.ability.name}` : s.ability.name))
-                .join(' ')
-            : '',
+          abilityNext,
+          onShop,
           status,
         }
       : null;
-  }, [input, hero, round, choice, reroll, ranked, abilityOrder, abilityStepNow, status]);
+  }, [input, hero, round, choice, reroll, ranked, abilityNext, onShop, status]);
 
   const stopCapture = useCallback(() => {
     captureGenRef.current += 1;
@@ -243,7 +237,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
         // demoImgRef.current.src was already set (and awaited) by the caller before startCapture() runs;
         // nothing to capture here.
       } else {
-        const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 5 }, audio: false });
+        const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 10 }, audio: false });
         if (gen !== captureGenRef.current) {
           // superseded (e.g. by demo mode) while this real getDisplayMedia() request was pending -- drop it
           // instead of adopting a stream nothing asked for, and don't touch state a newer attempt now owns.
@@ -463,6 +457,13 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
         sendFrame();
         return;
       }
+      if (ev.data.type === 'rerolls') {
+        // OCR runs off the hot path (see worker.ts); only apply it if the card set it was read for is
+        // still the one on screen -- otherwise a slow OCR result from a since-superseded set would
+        // overwrite a newer, already-correct count (or the next set's still-pending "-1 unread").
+        if (ev.data.forKey === acceptedKeyRef.current) setRerollsLeft(ev.data.rerollsRemaining);
+        return;
+      }
       const r = ev.data;
       readsRef.current = r.reads;
       const seen = r.reads.filter((x) => x.present).length;
@@ -480,6 +481,13 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
         });
         if (meta.round) setRound(meta.round);
         if (meta.choice) setChoice(meta.choice);
+        acceptedKeyRef.current = r.key;
+        // read straight off the "N Re-Roll Remaining" caption instead of inferring a re-roll from a changed
+        // card set, so a stale reroll suggestion clears the moment the game's own counter does. 0 here means
+        // no glyph at all (confidently zero); -1 means a glyph is showing and the real OCR read (see
+        // ocr.ts's readRerollsRemaining) is still pending -- leave the current value alone until the
+        // worker's follow-up 'rerolls' message resolves it, rather than overwrite a real count with "unread".
+        if (meta.rerollsRemaining >= 0) setRerollsLeft(meta.rerollsRemaining);
         // the square-topped portrait is the player's: switch the app's hero to it (the enemies are then the other side)
         if (!meta.self) {
           log('brawl-view', 'debug', 'hero.detect.miss', { bar: meta.bar });
@@ -514,9 +522,11 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
         if (pick) setTook(byId.get(pick)?.name ?? '');
         if (after.length !== before.length || gained.length) setOwned(after);
       }
+      setOnShop(r.shop);
       const heroDetected = r.accepted && r.meta!.self && r.meta!.self === heroId;
-      const names =
-        seen === 3
+      const names = !r.shop
+        ? 'waiting for the shop'
+        : seen === 3
           ? r.reads.map((x) => byId.get(x.itemId)?.name ?? '?').join(' / ')
           : heroDetected
             ? `hero: ${hero.name} · ${seen}/3 cards found`
@@ -688,16 +698,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
                 </button>
               </div>
             )}
-            {abilityOrder && abilityOrder.steps.length > 0 && (
-              <div className="muted brawl-ability-line">
-                {abilityOrder.steps.map((s, k) => (
-                  <span key={k}>
-                    {k > 0 ? ' ' : ''}
-                    {k === abilityStepNow ? <b>{s.ability.name}</b> : s.ability.name}
-                  </span>
-                ))}
-              </div>
-            )}
+            {abilityNext && !onShop && <div className="brawl-ability-next">upgrade: {abilityNext}</div>}
             {capture === 'on' && (
               <canvas
                 ref={previewRef}

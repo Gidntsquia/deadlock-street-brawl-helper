@@ -17,7 +17,10 @@ export interface OverlayAdvice {
   choice: number;
   reroll: { expectedBest: number; currentBest: number } | null;
   ranked: OverlayAdviceCard[];
-  abilityLine: string;
+  // The single ability to upgrade next, highlighted (not the whole plan as text) once the shop screen is
+  // gone -- upgrading only happens back on the hero/inventory screen, never mid-shop.
+  abilityNext: string | null;
+  onShop: boolean;
   status: string;
 }
 

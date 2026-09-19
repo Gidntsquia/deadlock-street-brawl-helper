@@ -19,6 +19,31 @@ let dwmapi: ReturnType<typeof loadDwmapi> | null = null;
 // why findGameWindow used to return null even with a matching window on screen.
 const WndEnumProc = koffi.proto('bool __stdcall WndEnumProc(void *hwnd, intptr_t lParam)');
 
+// Registered once and reused across every findGameWindow() call (polled at 4 Hz for the app's whole
+// lifetime) instead of via koffi.register() per call: koffi.register() allocates a native callback
+// trampoline that is never garbage-collected and must be freed explicitly with koffi.unregister() --
+// registering fresh on every poll leaked one permanently-held native callback per tick, growing without
+// bound for as long as the app ran. Per-call state (title/exclude/result) is threaded through
+// `enumState` instead of being closed over.
+let enumState: {
+  title: string;
+  exclude: Set<bigint> | undefined;
+  user32: ReturnType<typeof loadUser32>;
+  buf: Buffer;
+  handle: unknown;
+} | null = null;
+const enumCallback = koffi.register((hwnd: unknown) => {
+  const s = enumState!;
+  if (s.exclude?.has(BigInt(koffi.address(hwnd)))) return true;
+  if (!s.user32.IsWindowVisible(hwnd)) return true;
+  const len = s.user32.GetWindowTextW(hwnd, s.buf, 256);
+  if (len > 0 && isGameWindowTitle(s.buf.toString('utf16le', 0, len * 2), s.title)) {
+    s.handle = hwnd;
+    return false;
+  }
+  return true;
+}, koffi.pointer(WndEnumProc));
+
 function loadUser32(koffi: typeof import('koffi')) {
   const lib = koffi.load('user32.dll');
   return {
@@ -58,21 +83,10 @@ export function findGameWindow(title: string, exclude?: Set<bigint>): Rect | nul
   try {
     user32 ??= loadUser32(koffi);
     dwmapi ??= loadDwmapi(koffi);
-    let handle: unknown = null;
-    const buf = Buffer.alloc(512);
-    user32.EnumWindows(
-      koffi.register((hwnd: unknown) => {
-        if (exclude?.has(BigInt(koffi.address(hwnd)))) return true;
-        if (!user32!.IsWindowVisible(hwnd)) return true;
-        const len = user32!.GetWindowTextW(hwnd, buf, 256);
-        if (len > 0 && isGameWindowTitle(buf.toString('utf16le', 0, len * 2), title)) {
-          handle = hwnd;
-          return false;
-        }
-        return true;
-      }, koffi.pointer(WndEnumProc)),
-      0,
-    );
+    enumState = { title, exclude, user32, buf: Buffer.alloc(512), handle: null };
+    user32.EnumWindows(enumCallback, 0);
+    const { handle } = enumState;
+    enumState = null;
     if (!handle || user32.IsIconic(handle)) return null;
     const rect = {};
     const hr = dwmapi.DwmGetWindowAttribute(handle, DWMWA_EXTENDED_FRAME_BOUNDS, rect, 16);

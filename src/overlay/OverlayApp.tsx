@@ -91,7 +91,9 @@ export default function OverlayApp() {
               </div>
             ))
           )}
-          {advice.abilityLine && <div className="overlay-panel-ability">{advice.abilityLine}</div>}
+          {advice.abilityNext && !advice.onShop && (
+            <div className="overlay-panel-ability-next">upgrade: {advice.abilityNext}</div>
+          )}
           {advice.status && <div className="overlay-panel-status">{advice.status}</div>}
         </div>
       )}
