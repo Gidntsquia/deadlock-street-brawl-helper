@@ -13,7 +13,7 @@
     "lint": "oxlint",
     "typecheck": "tsc -b",
     "test": "vitest run",
-    "format": "prettier --check .",
+    "format": "prettier --check --cache --cache-location node_modules/.cache/prettier .",
     "check": "bash scripts/check.sh",
     "fetch-data": "node scripts/fetch-data.mjs --brawl",
     "fetch-data:abilities": "node scripts/fetch-data.mjs --brawl-abilities",
