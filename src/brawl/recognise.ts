@@ -599,7 +599,7 @@ const LABELS = {
   // "N Re-Roll Remaining", muted grey-brown caption under the "Use Re-Roll" button. Measured from
   // screenshots/brawl/reroll-choice{1,2}.png (2000x1125, both showing "1"): the digit's own bbox there is
   // x 918-921, y 804-815, scaled to the 2560x1440 ref by 2560/2000 with margin.
-  rerolls: { x0: 1150, y0: 1010, x1: 1210, y1: 1057 },
+  rerolls: { x0: 1150, y0: 1018, x1: 1215, y1: 1090 },
 } as const;
 const lightText = (r: number, g: number, b: number) => 0.299 * r + 0.587 * g + 0.114 * b > 165;
 const magentaText = (r: number, g: number, b: number) => r > 140 && b > 140 && g < 130;
@@ -725,6 +725,7 @@ const CHOICE_DIGITS: Record<number, Float32Array> = {
   ]),
 };
 export const MAX_DIGIT_DISTANCE = 0.06;
+const LOOSE_DIGIT_DISTANCE = 0.13;
 
 /** Bounding box (window-relative px) of the first glyph in the window, or null when the window holds no text. */
 function readGlyphBBox(
@@ -816,17 +817,21 @@ const readDigit = (
   );
   if (!g) return 0;
   let best = 0,
-    bestD = Infinity;
+    bestD = Infinity,
+    second = Infinity;
   for (const [d, t] of Object.entries(digits)) {
     let s = 0;
-    for (let i = 0; i < g.length; i++) s += (g[i] - t[i]) ** 2;
+    for (let i = 0; i < g.length; i++) s += (g[i]! - t[i]!) ** 2;
     s /= g.length;
     if (s < bestD) {
+      second = bestD;
       bestD = s;
       best = Number(d);
-    }
+    } else if (s < second) second = s;
   }
-  return bestD <= MAX_DIGIT_DISTANCE ? best : 0;
+  // A blurred or vertically stretched screenshot (Test mode's dummy) drifts from the templates; still accept a
+  // clearly-best match when it is far closer than the runner-up.
+  return bestD <= MAX_DIGIT_DISTANCE || (bestD <= LOOSE_DIGIT_DISTANCE && second >= bestD * 2) ? best : 0;
 };
 
 /** RGBA crop of the "N Re-Roll Remaining" caption's own label box (the whole "N Re-Roll..." run, not just

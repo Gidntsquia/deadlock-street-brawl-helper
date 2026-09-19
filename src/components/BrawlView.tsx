@@ -33,10 +33,10 @@ import { ItemTile } from './ItemTile';
 import { log } from '../log';
 import { usePersisted, isNumber, isNumberArray } from '../hooks/usePersisted';
 
-const CAPTURE_MS = 200; // pause between draft frames; the worker paces the loop (see worker.ts) so it keeps running while the tab is hidden
+const CAPTURE_MS = 120; // pause between draft frames; the worker paces the loop (see worker.ts) so it keeps running while the tab is hidden
 // Capture frame rate: the draft screen needs a look a few times a second, everything else barely at all.
 // Switched on the fly with track.applyConstraints so a game window nobody is drafting in costs almost nothing.
-const DRAFT_FPS = 5;
+const DRAFT_FPS = 8;
 // Dev only (a production build records nothing): timing summaries every 10 s, see src/perf.ts.
 const perf = createPerf(import.meta.env.DEV, 'brawl-view');
 const WAITING_STATUS = 'waiting for the draft screen';
@@ -610,12 +610,12 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
           items: offers.map((o) => o.itemId),
         });
         // Round / choice come from the labels on this very frame. If the round label can't be read (small or
-        // scaled windows), the round advances when the choice goes back down (e.g. 3 -> 1, or 2 -> 1 after a skipped frame); anything else keeps the old value.
+        // scaled windows), the round advances only when the choice wraps back to 1 (3 -> 1, or 2 -> 1 after a skipped frame); anything else keeps the old value.
         // Either way the cards and labels are set together, so the panel never mixes a new set with an old label.
         if (meta.round) {
           setRound(meta.round);
           roundRef.current = meta.round;
-        } else if (meta.choice > 0 && meta.choice < choiceRef.current) {
+        } else if (meta.choice === 1 && choiceRef.current > 1) {
           roundRef.current = Math.min(5, roundRef.current + 1);
           setRound(roundRef.current);
         }

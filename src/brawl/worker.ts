@@ -87,6 +87,9 @@ const SIG_CHANGED_SAMPLES = 12; // sampled channel values that moved by more tha
 let settledSig: Uint8Array | null = null;
 let knownHero: { bar: DraftMeta['bar']; self: number } | null = null;
 let settledReads: CardRead[] = [];
+let pendingSig: Uint8Array | null = null,
+  pendingReads: CardRead[] = [],
+  pendingChoice = 0;
 // Samples a coarse grid inside each region (not the whole frame: the rest was never copied).
 const frameSig = (regions: FrameRegion[]): Uint8Array => {
   const out: number[] = [];
@@ -124,7 +127,7 @@ let acceptedRound = 0,
 const forgetDraft = () => {
   lastKey = acceptedKey = lastInv = sentInv = '';
   wasShop = false;
-  settledSig = null;
+  settledSig = pendingSig = null;
   knownHero = null;
   acceptedRound = acceptedChoice = 0;
 };
@@ -228,7 +231,10 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
     tick(SETTLED_INTERVAL_MS, true);
     return;
   }
-  const reads = stage('cards', () => readDraftScreen(img, idx, (id) => tiers[id] ?? 0));
+  // A frame that looks the same as the one that just produced a full set of cards (and carries the same choice
+  // label) confirms that read without repeating the expensive icon search: a new screen is accepted a frame sooner.
+  const confirmed = lastKey !== '' && pendingChoice === labels.choice && sameSig(pendingSig, sig);
+  const reads = confirmed ? pendingReads : stage('cards', () => readDraftScreen(img, idx, (id) => tiers[id] ?? 0));
   const seen = reads.filter((r) => r.present).length;
   const key = seen === 3 ? reads.map((r) => `${r.itemId}${r.enhanced ? '+' : ''}`).join(',') : '';
   let accepted = false,
@@ -271,6 +277,9 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
     lastInv = ik;
   } else if (!key) lastInv = '';
   lastKey = key;
+  pendingSig = key ? sig : null;
+  pendingReads = reads;
+  pendingChoice = labels.choice;
   settledSig = key !== '' && key === acceptedKey ? sig : null;
   settledReads = reads;
   post({
@@ -292,7 +301,7 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
 
 const nonShopResult = (t0: number): FrameResult => {
   lastKey = acceptedKey = lastInv = sentInv = '';
-  settledSig = null;
+  settledSig = pendingSig = null;
   knownHero = null;
   acceptedRound = acceptedChoice = 0;
   return {
