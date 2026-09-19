@@ -212,3 +212,18 @@ in `win:e2e`/`win:demo` drives the actual game:
   game rect is known and capture is off. The `frames` case clears `localStorage` and reloads first (enemies/owned
   from earlier cases change scores), and reads drawn rects and overlay-panel scores in one call (two reads can
   straddle a state update). The fake window is 1920x1080: the recogniser cannot read the choice glyph at 1280x720.
+
+## Performance design (keep the game fast)
+
+- Capture is not on all session. `electron/main.ts` owns a capture state (`captureWanted`, `probeMode()`); the
+  control window follows it via `getCaptureState`/`onCaptureState`. While the game is foreground and capture is
+  off, main probes a tiny screen region (`electron/shopProbe.ts`, GDI `grabScreenRegion`) for the CHOICE glyph;
+  a hit turns capture on. The renderer calls `captureIdle` after 4 s with no draft/tip. Probe mode is off under
+  `BRAWL_E2E` and in test mode, so the harness never probes.
+- Frames are region-only: `draftRegions` (`src/brawl/recognise.ts`) lists the rects the recogniser reads; the
+  page copies just those and the worker pastes them into a reused buffer. `regions.test.ts` proves reads are
+  identical to full frames. Do not reassign `canvas.width/height` per frame (reallocates); it cost ~100 ms.
+- The worker persists across capture sessions (`reset`/`stop` messages); OCR is warmed on `init`/`reset`.
+- Timing (`src/perf.ts`, `process.metrics`) runs only in dev (`DEV_SERVER_URL` / `import.meta.env.DEV`).
+- Main lowers its own and child priority below normal (skipped under `BRAWL_E2E`).
+- Not verified on real Windows: GDI probe with a real Deadlock (borderless and fullscreen). Check by hand.

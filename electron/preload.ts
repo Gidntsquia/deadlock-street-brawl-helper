@@ -10,6 +10,11 @@ export interface TestModeState {
   message: string | null;
 }
 
+export interface CaptureState {
+  wanted: boolean; // capture the game window now
+  probe: boolean; // main.ts is probing for the draft screen (a real game); false: capture simply follows the window
+}
+
 const api = {
   isElectron: true as const,
   isE2E: process.env.BRAWL_E2E === '1',
@@ -38,6 +43,16 @@ const api = {
       ipcRenderer.removeListener(CHANNELS.captureDenied, listener);
     };
   },
+  getCaptureState: (): Promise<CaptureState> => ipcRenderer.invoke(CHANNELS.captureStateGet),
+  onCaptureState: (cb: (state: CaptureState) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, state: CaptureState) => cb(state);
+    ipcRenderer.on(CHANNELS.captureState, listener);
+    return () => {
+      ipcRenderer.removeListener(CHANNELS.captureState, listener);
+    };
+  },
+  /** The draft (and its ability tip) is over: capture stopped, go back to probing. */
+  captureIdle: () => ipcRenderer.send(CHANNELS.captureIdle),
   getPlatformWarning: (): Promise<string | null> => ipcRenderer.invoke(CHANNELS.platformWarning),
   getTestMode: (): Promise<TestModeState> => ipcRenderer.invoke(CHANNELS.testModeGet),
   setTestMode: (on: boolean): Promise<TestModeState> => ipcRenderer.invoke(CHANNELS.testModeSet, on),

@@ -21,11 +21,13 @@ import {
   initialTip,
   stepTip,
   shopProbeRect,
+  draftRegions,
   TIP_MS,
   type AbilityTarget,
   type TipState,
 } from '../brawl';
-import type { WorkerIn, WorkerOut } from '../brawl/worker';
+import { createPerf } from '../perf';
+import type { FrameRegion, WorkerIn, WorkerOut } from '../brawl/worker';
 import { BLANK_OVERLAY, drawReads, scoresFromAdvice, type OverlayAdvice, type OverlayState } from '../brawl/draw';
 import { ItemTile } from './ItemTile';
 import { log } from '../log';
@@ -35,6 +37,10 @@ const CAPTURE_MS = 200; // pause between draft frames; the worker paces the loop
 // Capture frame rate: the draft screen needs a look a few times a second, everything else barely at all.
 // Switched on the fly with track.applyConstraints so a game window nobody is drafting in costs almost nothing.
 const DRAFT_FPS = 5;
+// Dev only (a production build records nothing): timing summaries every 10 s, see src/perf.ts.
+const perf = createPerf(import.meta.env.DEV, 'brawl-view');
+const WAITING_STATUS = 'waiting for the draft screen';
+const CAPTURE_IDLE_MS = 4000; // no draft screen or tip for this long: stop capturing (real game only)
 const IDLE_FPS = 2;
 const ENEMY_SLOTS = 4;
 const isElectron = typeof window !== 'undefined' && !!window.brawlAPI;
@@ -226,8 +232,9 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
     captureGenRef.current += 1;
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
-    workerRef.current?.terminate();
-    workerRef.current = null;
+    // The worker stays alive but silent (it only ever ticks in reply to a message) so the next draft does not pay for
+    // a new worker and icon index; 'stop' frees its OCR engine.
+    workerRef.current?.postMessage({ type: 'stop' } satisfies WorkerIn);
     tipStateRef.current = initialTip();
     setDraftOpen(false);
     setTip(null);
@@ -280,12 +287,16 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
     try {
       setCapture('starting');
       setStatus('loading icon index…');
-      const index = await j<IconIndex>('brawl-icons.json');
-      const w = new Worker(new URL('../brawl/worker.ts', import.meta.url), { type: 'module' });
-      const tiers: Record<number, number> = {};
-      for (const i of items) tiers[i.id] = i.item_tier;
-      w.postMessage({ type: 'init', index, tiers, intervalMs: CAPTURE_MS } satisfies WorkerIn);
-      workerRef.current = w;
+      if (workerRef.current) workerRef.current.postMessage({ type: 'reset' } satisfies WorkerIn);
+      else {
+        const index = await j<IconIndex>('brawl-icons.json');
+        if (gen !== captureGenRef.current) return;
+        const w = new Worker(new URL('../brawl/worker.ts', import.meta.url), { type: 'module' });
+        const tiers: Record<number, number> = {};
+        for (const i of items) tiers[i.id] = i.item_tier;
+        w.postMessage({ type: 'init', index, tiers, intervalMs: CAPTURE_MS } satisfies WorkerIn);
+        workerRef.current = w;
+      }
       // Logged before the call, unlike capture.start below, so a denied/failed attempt still leaves a
       // trace — the e2e harness's retry-loop checks count this line, not capture.start, since a denial
       // never reaches capture.start at all.
@@ -335,7 +346,14 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
       }
     }
   };
-  useEffect(() => () => stopCapture(), [stopCapture]);
+  useEffect(
+    () => () => {
+      stopCapture();
+      workerRef.current?.terminate();
+      workerRef.current = null;
+    },
+    [stopCapture],
+  );
 
   // Belt-and-braces: if the <video> element instance ever changes (React remounting it for any reason)
   // while a capture stream is live, re-attach it instead of leaving the new element with no srcObject.
@@ -355,7 +373,12 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
   // game window to be found first; main.ts's own handler is what decides allow vs. deny.
   useEffect(() => {
     if (!isElectron) return;
-    void startCapture();
+    void window.brawlAPI!.getCaptureState().then((st) => {
+      captureWantedRef.current = st.wanted;
+      probeModeRef.current = st.probe;
+      if (!st.probe || st.wanted) void startCapture();
+      else setStatus(WAITING_STATUS);
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally mount-only: never re-attempt here
   }, []);
 
@@ -374,29 +397,48 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
   // the video track fires "ended" and stopCapture() runs, but never touches `denied`). Retrying only on
   // rect ticks while capture === 'off' (not on every tick unconditionally) avoids a busy loop, since
   // startCapture() flips capture away from 'off' immediately.
-  const gameRectPresentRef = useRef(false);
+  //
+  // Whether capture should run at all is main.ts's call (`capture-state`): with a real game it stays off until a
+  // cheap screen-region probe sees the draft screen (electron/main.ts), so the game window is not being captured the
+  // whole session; under test mode / the harness (`probe: false`) it simply follows the game window.
+  const captureWantedRef = useRef(false);
+  const probeModeRef = useRef(false);
   useEffect(() => {
     if (!isElectron) return;
-    return window.brawlAPI!.onGameRect((rect) => {
-      gameRectPresentRef.current = !!rect;
-      if (rect && capture === 'off') {
+    return window.brawlAPI!.onCaptureState((st) => {
+      captureWantedRef.current = st.wanted;
+      probeModeRef.current = st.probe;
+      if (st.wanted && capture === 'off') {
         setDenied(false);
         void startCapture();
-      } else if (!rect && capture !== 'off') {
+      } else if (!st.wanted && capture !== 'off') {
         stopCapture();
+        if (st.probe) setStatus(WAITING_STATUS);
       }
     });
   }, [capture, denied]);
   // A window that was found a moment ago is sometimes not yet offered by desktopCapturer, so the first attempt
-  // is denied and no further rect change follows. While a game window is known and capture is off, retry every
-  // 2 s (never with no window: that would be a busy loop against a denial that cannot succeed).
+  // is denied and no further state change follows. While capture is wanted and off, retry every 2 s (never
+  // otherwise: that would be a busy loop against a denial that cannot succeed).
   useEffect(() => {
     if (!isElectron || capture !== 'off') return;
     const t = setInterval(() => {
-      if (gameRectPresentRef.current) void startCapture();
+      if (captureWantedRef.current) void startCapture();
     }, 2000);
     return () => clearInterval(t);
   }, [capture]);
+  // With a real game the stream is only for the draft: once neither the draft screen nor the ability tip is up for a
+  // few seconds, stop capturing and tell main.ts to go back to probing.
+  useEffect(() => {
+    if (!isElectron || capture !== 'on' || draftOpen || tip || !probeModeRef.current) return;
+    const t = setTimeout(() => {
+      captureWantedRef.current = false;
+      stopCapture();
+      setStatus(WAITING_STATUS);
+      window.brawlAPI!.captureIdle();
+    }, CAPTURE_IDLE_MS);
+    return () => clearTimeout(t);
+  }, [capture, draftOpen, tip, stopCapture]);
 
   // Test mode (Electron): main.ts opens a dummy "Deadlock" window showing a draft screenshot and the normal
   // capture path takes it from there; this just mirrors its state and sends the button/select changes.
@@ -432,7 +474,8 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
     if (capture !== 'on') return;
     const w = workerRef.current;
     if (!w) return;
-    const canvas = document.createElement('canvas');
+    const canvas = document.createElement('canvas'); // the probe crop
+    const regionCanvases: HTMLCanvasElement[] = [];
     let lastLoggedSource = '';
     let fpsForShop: boolean | null = null;
     const setFps = (shop: boolean) => {
@@ -457,7 +500,8 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
       if (next.tip) tipTimer = setTimeout(() => stepTracker(false), Math.max(0, next.tip.endsAt - Date.now()) + 5);
       pushOverlay();
     };
-    const sendFrame = (full: boolean) => {
+    const sendFrame = (full: boolean) => perf.time(full ? 'copy.draft' : 'copy.probe', () => copyFrame(full));
+    const copyFrame = (full: boolean) => {
       const src: CanvasImageSource | null = videoRef.current;
       const srcW = videoRef.current?.videoWidth ?? 0;
       const srcH = videoRef.current?.videoHeight ?? 0;
@@ -494,18 +538,25 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
         );
         return;
       }
-      canvas.width = srcW;
-      canvas.height = srcH;
-      const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
-      ctx.drawImage(src, 0, 0);
-      const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      // Only the rectangles the recogniser reads (draftRegions) leave the video, one small canvas each.
+      const regions: FrameRegion[] = [];
+      const rects = draftRegions(srcW, srcH);
+      for (const [i, r] of rects.entries()) {
+        const c = (regionCanvases[i] ??= document.createElement('canvas'));
+        if (c.width !== r.width) c.width = r.width; // assigning the size (even the same one) reallocates and clears
+        if (c.height !== r.height) c.height = r.height;
+        const rctx = c.getContext('2d', { willReadFrequently: true })!;
+        rctx.drawImage(src, r.x, r.y, r.width, r.height, 0, 0, r.width, r.height);
+        const d = rctx.getImageData(0, 0, r.width, r.height);
+        regions.push({ ...r, buffer: d.data.buffer });
+      }
       const prefer = [...offeredRef.current, ...ownedRef.current];
-      w.postMessage(
-        { type: 'frame', width: data.width, height: data.height, buffer: data.data.buffer, prefer } satisfies WorkerIn,
-        [data.data.buffer],
-      );
+      w.postMessage({ type: 'frame', width: srcW, height: srcH, regions, prefer } satisfies WorkerIn, [
+        ...regions.map((r) => r.buffer),
+      ]);
       const pv = previewRef.current;
-      if (pv) {
+      // the preview only matters while the control window can be seen: skip its full-frame scale-draw otherwise
+      if (pv && !document.hidden) {
         const rerollNow = !!rerollRef.current;
         const bestId = rerollNow ? null : (rankedRef.current[0]?.item.id ?? null);
         const pctx = pv.getContext('2d');
@@ -540,6 +591,10 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
         return;
       }
       const r = ev.data;
+      if (perf.enabled) {
+        perf.record(r.shop ? 'worker.draft' : 'worker.probe', r.ms);
+        for (const [k, v] of Object.entries(r.stages ?? {})) perf.record(`worker.${k}`, v);
+      }
       readsRef.current = r.reads;
       const seen = r.reads.filter((x) => x.present).length;
       if (r.accepted) {

@@ -13,12 +13,22 @@ import {
   type DraftMeta,
   type InventoryRead,
 } from './recognise';
-import { readRerollsRemaining, warmOCR } from './ocr';
+import { readRerollsRemaining, terminateOCR, warmOCR } from './ocr';
 import type { IconIndex } from './types';
+
+export interface FrameRegion {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  buffer: ArrayBuffer;
+}
 
 export type WorkerIn =
   | { type: 'init'; index: IconIndex; tiers: Record<number, number>; intervalMs: number }
-  | { type: 'frame'; width: number; height: number; buffer: ArrayBuffer; prefer: number[] }
+  // A draft frame is only the rectangles the recogniser reads (draftRegions), each with its own pixels: the worker
+  // pastes them into a reused frame-sized buffer, so nothing outside them is ever copied out of the video.
+  | { type: 'frame'; width: number; height: number; regions: FrameRegion[]; prefer: number[] }
   // Off the draft screen the page copies just the "CHOICE n OF 3" crop (see shopProbeRect) instead of a whole frame.
   | {
       type: 'probe';
@@ -30,7 +40,9 @@ export type WorkerIn =
       height: number;
       buffer: ArrayBuffer;
     }
-  | { type: 'idle' }; // the page had no frame ready for the last tick
+  | { type: 'idle' } // the page had no frame ready for the last tick
+  | { type: 'reset' } // capture (re)started: forget the last draft and start ticking again
+  | { type: 'stop' }; // capture stopped: forget the last draft and free the OCR engine; the worker then stays silent
 
 /** The worker paces the capture: it asks the page for a frame, reads it, waits, asks again. Page timers are
  *  throttled to once a second (Chrome: once a minute after five minutes) while the game has the foreground and the
@@ -51,6 +63,7 @@ export interface FrameResult {
   meta: DraftMeta | null; // round / choice / hero bar, on the accepted frame only
   inventory: number[] | null; // owned items from the inventory grid, once two consecutive reads agree; null otherwise
   ms: number;
+  stages?: Record<string, number>; // dev builds only: milliseconds per recogniser stage
 }
 
 let index: DecodedIndex | null = null;
@@ -74,14 +87,29 @@ const SIG_CHANGED_SAMPLES = 12; // sampled channel values that moved by more tha
 let settledSig: Uint8Array | null = null;
 let knownHero: { bar: DraftMeta['bar']; self: number } | null = null;
 let settledReads: CardRead[] = [];
-const frameSig = (img: { width: number; height: number; data: Uint8ClampedArray }): Uint8Array => {
+// Samples a coarse grid inside each region (not the whole frame: the rest was never copied).
+const frameSig = (regions: FrameRegion[]): Uint8Array => {
   const out: number[] = [];
-  for (let y = 0; y < img.height; y += SIG_STEP)
-    for (let x = 0; x < img.width; x += SIG_STEP) {
-      const i = (y * img.width + x) * 4;
-      out.push(img.data[i]!, img.data[i + 1]!, img.data[i + 2]!);
-    }
+  for (const r of regions) {
+    const d = new Uint8ClampedArray(r.buffer);
+    for (let y = 0; y < r.height; y += SIG_STEP)
+      for (let x = 0; x < r.width; x += SIG_STEP) {
+        const i = (y * r.width + x) * 4;
+        out.push(d[i]!, d[i + 1]!, d[i + 2]!);
+      }
+  }
   return Uint8Array.from(out);
+};
+// Reused across frames (same regions every time, so nothing stale survives); reallocated when the frame size changes.
+let frameBuf = new Uint8ClampedArray(0);
+const pasteRegions = (width: number, height: number, regions: FrameRegion[]) => {
+  if (frameBuf.length !== width * height * 4) frameBuf = new Uint8ClampedArray(width * height * 4);
+  for (const r of regions) {
+    const src = new Uint8ClampedArray(r.buffer);
+    for (let y = 0; y < r.height; y++)
+      frameBuf.set(src.subarray(y * r.width * 4, (y + 1) * r.width * 4), ((r.y + y) * width + r.x) * 4);
+  }
+  return { width, height, data: frameBuf, channels: 4 as const };
 };
 const sameSig = (a: Uint8Array | null, b: Uint8Array): boolean => {
   if (!a || a.length !== b.length) return false;
@@ -93,6 +121,26 @@ let wasShop = false; // the previous result was a draft frame: the next non-draf
 let acceptedRound = 0,
   acceptedChoice = 0;
 
+const forgetDraft = () => {
+  lastKey = acceptedKey = lastInv = sentInv = '';
+  wasShop = false;
+  settledSig = null;
+  knownHero = null;
+  acceptedRound = acceptedChoice = 0;
+};
+// Dev builds only (`import.meta.env.DEV` is false in a production build, so this all folds away): milliseconds per
+// recogniser stage, sent back on each result for the page's perf summary.
+const DEV = import.meta.env.DEV;
+let stages: Record<string, number> | undefined;
+const stage = <T>(name: string, fn: () => T): T => {
+  if (!stages) return fn();
+  const t = performance.now();
+  try {
+    return fn();
+  } finally {
+    stages[name] = performance.now() - t;
+  }
+};
 const post = (m: WorkerOut) => (self as unknown as { postMessage(m: unknown): void }).postMessage(m);
 let timer: ReturnType<typeof setTimeout> | undefined;
 const tick = (after: number, full: boolean) => {
@@ -102,16 +150,20 @@ const tick = (after: number, full: boolean) => {
 
 self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
   const msg = ev.data;
-  if (msg.type === 'init') {
-    index = decodeIconIndex(msg.index);
-    tiers = msg.tiers;
-    intervalMs = msg.intervalMs;
-    warmOCR();
-    lastKey = acceptedKey = lastInv = sentInv = '';
-    wasShop = false;
-    settledSig = null;
-    knownHero = null;
-    acceptedRound = acceptedChoice = 0;
+  if (msg.type === 'stop') {
+    clearTimeout(timer);
+    forgetDraft();
+    void terminateOCR();
+    return;
+  }
+  if (msg.type === 'init' || msg.type === 'reset') {
+    if (msg.type === 'init') {
+      index = decodeIconIndex(msg.index);
+      tiers = msg.tiers;
+      intervalMs = msg.intervalMs;
+    }
+    forgetDraft();
+    warmOCR(); // capture only runs around the draft now: load the OCR engine with it (freed again on 'stop')
     tick(0, false);
     return;
   }
@@ -120,6 +172,7 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
     return;
   }
   if (!index) return;
+  const idx = index; // narrowed for the stage closures below
   const t0 = performance.now();
   if (msg.type === 'probe') {
     const crop = {
@@ -139,7 +192,8 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
     wasShop = false;
     return;
   }
-  const img = { width: msg.width, height: msg.height, data: new Uint8ClampedArray(msg.buffer), channels: 4 as const };
+  stages = DEV ? {} : undefined;
+  const img = stage('paste', () => pasteRegions(msg.width, msg.height, msg.regions));
   // Skip card/inventory recognition entirely off the shop screen (menus, gameplay, the round-end transition
   // into the next shop) -- isShopScreen is one small glyph read instead of three full icon searches.
   const labels = readRoundChoice(img);
@@ -150,7 +204,7 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
     return;
   }
   wasShop = true;
-  const sig = frameSig(img);
+  const sig = frameSig(msg.regions);
   if (
     acceptedKey &&
     acceptedKey === lastKey &&
@@ -169,11 +223,12 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
       meta: null,
       inventory: null,
       ms: performance.now() - t0,
+      stages,
     });
     tick(SETTLED_INTERVAL_MS, true);
     return;
   }
-  const reads = readDraftScreen(img, index, (id) => tiers[id] ?? 0);
+  const reads = stage('cards', () => readDraftScreen(img, idx, (id) => tiers[id] ?? 0));
   const seen = reads.filter((r) => r.present).length;
   const key = seen === 3 ? reads.map((r) => `${r.itemId}${r.enhanced ? '+' : ''}`).join(',') : '';
   let accepted = false,
@@ -189,7 +244,7 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
       acceptedChoice = labels.choice;
       if (labels.round > 0) acceptedRound = labels.round;
       accepted = true;
-      meta = readDraftMeta(img, index, knownHero ?? undefined);
+      meta = stage('meta', () => readDraftMeta(img, idx, knownHero ?? undefined));
       // the hero bar is constant while the draft screen stays up; keep it until the screen closes (nonShopResult)
       knownHero = meta.self ? { bar: meta.bar, self: meta.self } : null;
       // rerollsRemaining above is only the fast "is there a glyph at all" read (0 or -1 pending); resolve
@@ -197,11 +252,13 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
       // was read for so a stale, slow OCR result from a since-superseded card set is never applied.
       if (meta.rerollsRemaining < 0) {
         const forKey = key;
-        readRerollsRemaining(img).then((rerollsRemaining) => post({ type: 'rerolls', forKey, rerollsRemaining }));
+        readRerollsRemaining(img)
+          .then((rerollsRemaining) => post({ type: 'rerolls', forKey, rerollsRemaining }))
+          .catch(() => {}); // the OCR engine was freed (capture stopped) while this was running
       }
     }
     // the inventory grid is only on the draft screen; accept a read once two frames agree
-    const inv: InventoryRead[] = readInventory(img, index, msg.prefer);
+    const inv: InventoryRead[] = stage('inventory', () => readInventory(img, idx, msg.prefer));
     const ids = inv
       .map((r) => r.itemId)
       .filter(Boolean)
@@ -227,6 +284,7 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
     meta,
     inventory,
     ms: performance.now() - t0,
+    stages,
   });
   const settled = key !== '' && key === acceptedKey && labels.choice === acceptedChoice && !accepted;
   tick(settled ? SETTLED_INTERVAL_MS : intervalMs, true);

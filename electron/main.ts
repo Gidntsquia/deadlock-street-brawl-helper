@@ -10,18 +10,41 @@ import {
   Menu,
   nativeImage,
 } from 'electron';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { writeFileSync, existsSync, readdirSync } from 'node:fs';
-import { findGameWindow, isGameWindowTitle, resizeWindowPhysical, sendWindowToBottom, type Rect } from './gameWindow';
+import {
+  findGameWindow,
+  grabScreenRegion,
+  isGameForeground,
+  isGameWindowTitle,
+  resizeWindowPhysical,
+  sendWindowToBottom,
+  type Rect,
+} from './gameWindow';
+import { probeShopScreen } from './shopProbe';
 import { CHANNELS } from './channels';
 import { overlayHasContent } from '../src/brawl/overlayContent';
 import { log } from '../src/log';
+import { createPerf } from '../src/perf';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL;
 const GAME_WINDOW_TITLE = 'Deadlock'; // exact match only (electron/gameWindow.ts#isGameWindowTitle):
 // the app's own control window is titled "Deadlock Street Brawl Helper" and must never match.
+// Dev only (the Vite dev server is running): timing/CPU summaries every 10 s. A packaged or built app has no dev
+// server, records nothing and starts no timer.
+const perf = createPerf(!!DEV_SERVER_URL, 'electron-main');
+// The helper must never compete with the game for CPU: run below normal priority. Child processes (renderers, GPU)
+// inherit this class on Windows, so it is set before any of them start; applied to the existing ones again once up.
+if (!process.env.BRAWL_E2E) {
+  try {
+    os.setPriority(os.constants.priority.PRIORITY_BELOW_NORMAL);
+  } catch (err) {
+    log('electron-main', 'warn', 'priority.fail', { message: String(err) });
+  }
+}
 const RECT_POLL_MS = 250; // base tick; see the poll's own cadence below
 // Game window lookup cadence (in ticks): once a second while no game is open, twice a second while it is.
 const POLL_TICKS_NO_GAME = 4;
@@ -31,6 +54,23 @@ let control: BrowserWindow | null = null;
 let overlay: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let lastRect: Rect | null = null;
+// Whether the control window should be capturing the game (see CHANNELS.captureState). With a real game this stays
+// false until `probeShopScreen` sees the draft screen, and goes back to false when the control window says the draft
+// and its tip are over. Test mode and the e2e harness (`probe` false) capture whenever the game window exists.
+let captureWanted = false;
+let lastCaptureStateJson = '';
+const probeMode = () => process.platform === 'win32' && !process.env.BRAWL_E2E && !alive(testWindow);
+function captureState() {
+  return { wanted: captureWanted, probe: probeMode() };
+}
+function emitCaptureState() {
+  const st = captureState();
+  const json = JSON.stringify(st);
+  if (json === lastCaptureStateJson) return;
+  lastCaptureStateJson = json;
+  log('electron-main', 'info', 'capture.state', st);
+  sendControl(CHANNELS.captureState, st);
+}
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 // Mirrors the value passed to the last setIgnoreMouseEvents() call, so the e2e harness can assert the
 // *actual* live click-through state instead of the literal `true` createOverlayWindow() happens to pass
@@ -221,32 +261,88 @@ function syncOverlay() {
   }
 }
 
+// How often the overlay is pushed back on top of the game while it is showing. It is also re-asserted at once when it
+// is shown, when the game window moves, and when the game becomes the foreground window again.
+const OVERLAY_REASSERT_MS = 2000;
+
 function startRectPolling() {
   if (pollTimer) return;
   let tickNo = 0;
+  let lastReassert = 0;
+  let gameWasForeground = false;
   pollTimer = setInterval(() => {
     tickNo += 1;
     if (tickNo % (lastRect ? POLL_TICKS_GAME : POLL_TICKS_NO_GAME) !== 0) return;
+    const t0 = performance.now();
     if (alive(testWindow) && findGameWindow(GAME_WINDOW_TITLE, ownWindowHandles(true))) {
       // A real Deadlock window appeared while test mode was on: hand over to the real game.
       stopTestMode('A real Deadlock window opened, so test mode was turned off.');
     }
     const found = findGameWindow(GAME_WINDOW_TITLE, ownWindowHandles());
+    let reassert = false;
     if (!rectsEqual(found, lastRect)) {
       lastRect = found;
       log('electron-main', 'info', found ? 'window.found' : 'window.lost', found ?? undefined);
       sendControl(CHANNELS.gameRect, found);
       if (found && alive(overlay)) overlay.setBounds(toDipBounds(found));
       syncOverlay();
+      reassert = true;
     }
-    // The game re-focusing (e.g. after an alt-tab elsewhere, or a fullscreen toast) can cover the overlay
-    // even though it's marked always-on-top; re-assert every tick while it is on screen so it never
-    // silently drops behind, without waiting for the next rect change.
+    // Real game: capture stays off until the draft screen shows up. Only sample the screen while the game is the
+    // foreground window (so pixels of some other window covering it are never read), and only a few hundred pixels.
+    if (!found) captureWanted = false;
+    else if (!probeMode()) captureWanted = true;
+    else if (!captureWanted && isGameForeground()) {
+      const hit = perf.time('probe', () => probeShopScreen(found, grabScreenRegion));
+      if (hit) {
+        captureWanted = true;
+        log('electron-main', 'info', 'draft.probe.hit');
+      }
+    }
+    emitCaptureState();
+    // The game re-focusing (e.g. after an alt-tab elsewhere, or a fullscreen toast) can cover the overlay even though
+    // it's marked always-on-top, so push it back on top -- when the game regains the foreground and otherwise every
+    // couple of seconds, not on every tick.
     if (found && alive(overlay) && overlay.isVisible()) {
-      overlay.setAlwaysOnTop(true, 'screen-saver');
-      overlay.moveTop();
-    }
+      const fg = isGameForeground();
+      const now = Date.now();
+      if (reassert || (fg && !gameWasForeground) || now - lastReassert >= OVERLAY_REASSERT_MS) {
+        overlay.setAlwaysOnTop(true, 'screen-saver');
+        overlay.moveTop();
+        lastReassert = now;
+      }
+      gameWasForeground = fg;
+    } else gameWasForeground = false;
+    perf.record('poll.tick', performance.now() - t0);
   }, RECT_POLL_MS);
+}
+
+/** Dev only: CPU and memory of every Electron process, summarised with the other timings. */
+function startProcessMetrics() {
+  if (!perf.enabled) return;
+  const t = setInterval(() => {
+    const procs = app.getAppMetrics().map((m) => ({
+      type: m.type,
+      pid: m.pid,
+      cpuPercent: Math.round(m.cpu.percentCPUUsage * 10) / 10,
+      memoryMB: Math.round(m.memory.workingSetSize / 1024),
+    }));
+    const total = Math.round(procs.reduce((a, p) => a + p.cpuPercent, 0) * 10) / 10;
+    log('electron-main', 'info', 'process.metrics', { totalCpuPercent: total, processes: procs });
+  }, 10_000);
+  t.unref();
+}
+
+/** Below-normal priority for every process this app has running (see the top of the file). */
+function lowerAllPriorities() {
+  if (process.env.BRAWL_E2E) return;
+  for (const m of app.getAppMetrics()) {
+    try {
+      os.setPriority(m.pid, os.constants.priority.PRIORITY_BELOW_NORMAL);
+    } catch {
+      /* already gone */
+    }
+  }
 }
 
 function testState() {
@@ -463,6 +559,12 @@ function platformWarning(): string | null {
 
 function setupIpc() {
   ipcMain.handle(CHANNELS.getGameRect, () => lastRect);
+  ipcMain.handle(CHANNELS.captureStateGet, () => captureState());
+  ipcMain.on(CHANNELS.captureIdle, () => {
+    if (!probeMode()) return; // test mode / harness: capture just follows the window
+    captureWanted = false;
+    emitCaptureState();
+  });
   ipcMain.handle(CHANNELS.platformWarning, () => platformWarning());
   ipcMain.handle(CHANNELS.testModeGet, () => testState());
   ipcMain.handle(CHANNELS.testModeSet, (_e, on: boolean) => (on ? startTestMode() : stopTestMode()));
@@ -532,6 +634,13 @@ app.whenReady().then(() => {
   createOverlayWindow();
   setupTray();
   startRectPolling();
+  startProcessMetrics();
+  setTimeout(lowerAllPriorities, 3000).unref();
+  // Dev only: surface the control window's own perf summaries (a production build never emits them).
+  if (perf.enabled && alive(control))
+    control.webContents.on('console-message', (_e, _level, message) => {
+      if (message.includes('"msg":"perf"')) console.info(message);
+    });
   globalShortcut.register('CommandOrControl+Shift+O', toggleOverlay);
   // Test-only hook: scripts/win/e2e-main.cjs requires this exact module (not a stub) so it needs a way to
   // reach the real windows/handlers it just created. Inert unless BRAWL_E2E is set.

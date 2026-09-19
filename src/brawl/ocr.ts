@@ -90,7 +90,11 @@ export async function readRerollsRemaining(img: RGBImage): Promise<number> {
  *  readRerollsRemaining after this spins up a fresh worker on demand. */
 export async function terminateOCR(): Promise<void> {
   if (!workerPromise) return;
-  const worker = await workerPromise;
+  const pending = workerPromise;
   workerPromise = null;
-  await worker.terminate();
+  try {
+    await (await pending).terminate();
+  } catch {
+    /* it never finished loading, or is already gone */
+  }
 }

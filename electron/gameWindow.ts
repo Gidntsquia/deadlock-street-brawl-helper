@@ -54,6 +54,9 @@ function loadUser32(koffi: typeof import('koffi')) {
     EnumWindows: lib.func('__stdcall', 'EnumWindows', 'bool', [koffi.pointer(WndEnumProc), 'intptr_t']),
     GetWindowTextW: lib.func('__stdcall', 'GetWindowTextW', 'int', ['void *', 'void *', 'int']),
     IsWindowVisible: lib.func('__stdcall', 'IsWindowVisible', 'bool', ['void *']),
+    GetForegroundWindow: lib.func('__stdcall', 'GetForegroundWindow', 'void *', []),
+    GetDC: lib.func('__stdcall', 'GetDC', 'void *', ['void *']),
+    ReleaseDC: lib.func('__stdcall', 'ReleaseDC', 'int', ['void *', 'void *']),
     SetWindowPos: lib.func('__stdcall', 'SetWindowPos', 'bool', [
       'void *',
       'intptr_t',
@@ -158,5 +161,94 @@ export function sendWindowToBottom(handle: Buffer): boolean {
     return user32.SetWindowPos(hwnd, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE);
   } catch {
     return false;
+  }
+}
+
+function loadGdi32() {
+  const lib = koffi.load('gdi32.dll');
+  return {
+    CreateCompatibleDC: lib.func('__stdcall', 'CreateCompatibleDC', 'void *', ['void *']),
+    CreateCompatibleBitmap: lib.func('__stdcall', 'CreateCompatibleBitmap', 'void *', ['void *', 'int', 'int']),
+    SelectObject: lib.func('__stdcall', 'SelectObject', 'void *', ['void *', 'void *']),
+    BitBlt: lib.func('__stdcall', 'BitBlt', 'bool', [
+      'void *',
+      'int',
+      'int',
+      'int',
+      'int',
+      'void *',
+      'int',
+      'int',
+      'uint32',
+    ]),
+    GetDIBits: lib.func('__stdcall', 'GetDIBits', 'int', [
+      'void *',
+      'void *',
+      'uint32',
+      'uint32',
+      'void *',
+      'void *',
+      'uint32',
+    ]),
+    DeleteObject: lib.func('__stdcall', 'DeleteObject', 'bool', ['void *']),
+    DeleteDC: lib.func('__stdcall', 'DeleteDC', 'bool', ['void *']),
+  };
+}
+let gdi32: ReturnType<typeof loadGdi32> | null = null;
+
+/** True while the game window found by `findGameWindow` is the foreground window. The draft probe only reads the
+ *  screen then, so it never samples pixels belonging to some other window that happens to cover the game. */
+export function isGameForeground(): boolean {
+  if (process.platform !== 'win32' || !cached) return false;
+  try {
+    user32 ??= loadUser32(koffi);
+    const fg = user32.GetForegroundWindow();
+    return !!fg && koffi.address(fg) === koffi.address(cached.handle);
+  } catch {
+    return false;
+  }
+}
+
+/** Copies a small screen rectangle (physical px) as top-down BGRA bytes with one BitBlt from the screen DC: a few
+ *  hundred pixels, no window capture. Null when the read fails or it is off-screen. */
+export function grabScreenRegion(x: number, y: number, width: number, height: number): Uint8Array | null {
+  if (process.platform !== 'win32' || width <= 0 || height <= 0) return null;
+  let screenDc: unknown = null,
+    memDc: unknown = null,
+    bmp: unknown = null,
+    old: unknown = null;
+  try {
+    user32 ??= loadUser32(koffi);
+    gdi32 ??= loadGdi32();
+    screenDc = user32.GetDC(null);
+    if (!screenDc) return null;
+    memDc = gdi32.CreateCompatibleDC(screenDc);
+    bmp = gdi32.CreateCompatibleBitmap(screenDc, width, height);
+    if (!memDc || !bmp) return null;
+    old = gdi32.SelectObject(memDc, bmp);
+    const SRCCOPY = 0x00cc0020;
+    if (!gdi32.BitBlt(memDc, 0, 0, width, height, screenDc, x, y, SRCCOPY)) return null;
+    // BITMAPINFOHEADER: 40 bytes, 32 bpp, negative height = top-down rows.
+    const bmi = Buffer.alloc(40);
+    bmi.writeUInt32LE(40, 0);
+    bmi.writeInt32LE(width, 4);
+    bmi.writeInt32LE(-height, 8);
+    bmi.writeUInt16LE(1, 12);
+    bmi.writeUInt16LE(32, 14);
+    const out = Buffer.alloc(width * height * 4);
+    const DIB_RGB_COLORS = 0;
+    const lines = gdi32.GetDIBits(memDc, bmp, 0, height, out, bmi, DIB_RGB_COLORS);
+    return lines === height ? out : null;
+  } catch {
+    return null;
+  } finally {
+    try {
+      if (old && memDc) gdi32?.SelectObject(memDc, old);
+      if (bmp) gdi32?.DeleteObject(bmp);
+      if (memDc) gdi32?.DeleteDC(memDc);
+      if (screenDc) user32?.ReleaseDC(null, screenDc);
+    } catch {
+      /* nothing left to free */
+    }
   }
 }

@@ -16,17 +16,22 @@ vi.mock('../../data/load', () => ({
 }));
 
 let onCaptureDeniedCb: (() => void) | undefined;
-let onGameRectCb: ((rect: { x: number; y: number; width: number; height: number } | null) => void) | undefined;
+type CaptureState = { wanted: boolean; probe: boolean };
+let onCaptureStateCb: ((st: CaptureState) => void) | undefined;
+let captureState: CaptureState = { wanted: false, probe: false };
+const captureIdle = vi.fn();
 
 (window as unknown as { brawlAPI: unknown }).brawlAPI = {
   isElectron: true,
   getGameRect: () => Promise.resolve(null),
-  onGameRect: (cb: typeof onGameRectCb) => {
-    onGameRectCb = cb;
+  getCaptureState: () => Promise.resolve(captureState),
+  onCaptureState: (cb: typeof onCaptureStateCb) => {
+    onCaptureStateCb = cb;
     return () => {
-      onGameRectCb = undefined;
+      onCaptureStateCb = undefined;
     };
   },
+  captureIdle,
   sendOverlayState: () => {},
   onOverlayState: () => () => {},
   onCaptureDenied: (cb: () => void) => {
@@ -55,7 +60,8 @@ afterEach(cleanup);
 describe('BrawlView (Electron capture-denied)', () => {
   beforeEach(() => {
     onCaptureDeniedCb = undefined;
-    onGameRectCb = undefined;
+    onCaptureStateCb = undefined;
+    captureState = { wanted: false, probe: false };
     let calls = 0;
     (navigator as unknown as { mediaDevices: unknown }).mediaDevices = {
       getDisplayMedia: vi.fn(() => {
@@ -69,7 +75,7 @@ describe('BrawlView (Electron capture-denied)', () => {
     (window as unknown as { __getDisplayMediaCalls: () => number }).__getDisplayMediaCalls = () => calls;
   });
 
-  it('shows "Deadlock window not found" and does not clear it, and does not retry without a rect change', async () => {
+  it('shows "Deadlock window not found" and does not clear it, and does not retry while capture is not wanted', async () => {
     const heroes = readJson('heroes.json') as Hero[];
     const items = readJson('items.json') as Item[];
     const abilities = readJson('abilities.json') as Ability[];
@@ -81,9 +87,9 @@ describe('BrawlView (Electron capture-denied)', () => {
 
     const calls = () => (window as unknown as { __getDisplayMediaCalls: () => number }).__getDisplayMediaCalls();
     const after1 = calls();
-    // simulate rect ticks that never actually find the game (null -> null): must not retry
-    onGameRectCb?.(null);
-    onGameRectCb?.(null);
+    // simulate state ticks that never want capture (no game): must not retry
+    onCaptureStateCb?.({ wanted: false, probe: false });
+    onCaptureStateCb?.({ wanted: false, probe: false });
     await new Promise((r) => setTimeout(r, 0));
     expect(calls()).toBe(after1);
     expect(screen.getByRole('status').textContent).toContain('Deadlock window not found');
@@ -100,7 +106,7 @@ describe('BrawlView (Electron capture-denied)', () => {
 
     const calls = () => (window as unknown as { __getDisplayMediaCalls: () => number }).__getDisplayMediaCalls();
     const before = calls();
-    onGameRectCb?.({ x: 0, y: 0, width: 1280, height: 720 });
+    onCaptureStateCb?.({ wanted: true, probe: false });
     await waitFor(() => expect(calls()).toBe(before + 1));
   });
 
@@ -119,5 +125,38 @@ describe('BrawlView (Electron capture-denied)', () => {
 
     await waitFor(() => expect(screen.getByRole('status').textContent).toContain('capture failed:'));
     expect(screen.getByRole('status').textContent).not.toContain('Deadlock window not found');
+  });
+});
+
+describe('BrawlView (Electron, real game: capture only around the draft)', () => {
+  const props = () => {
+    const heroes = readJson('heroes.json') as Hero[];
+    const items = readJson('items.json') as Item[];
+    const abilities = readJson('abilities.json') as Ability[];
+    return { hero: heroes.find((h) => h.id === 1)!, heroes, items, abilities, onHero: () => {} };
+  };
+  const calls = () => (window as unknown as { __getDisplayMediaCalls: () => number }).__getDisplayMediaCalls();
+
+  beforeEach(() => {
+    onCaptureStateCb = undefined;
+    captureIdle.mockClear();
+    captureState = { wanted: false, probe: true };
+    let n = 0;
+    (navigator as unknown as { mediaDevices: unknown }).mediaDevices = {
+      getDisplayMedia: vi.fn(() => {
+        n++;
+        return Promise.reject(new DOMException('nope', 'AbortError'));
+      }),
+    };
+    (window as unknown as { __getDisplayMediaCalls: () => number }).__getDisplayMediaCalls = () => n;
+  });
+
+  it('does not start capturing until main.ts says the draft probe hit', async () => {
+    render(<BrawlView {...props()} />);
+    await waitFor(() => expect(screen.getByRole('status').textContent).toContain('waiting for the draft screen'));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(calls()).toBe(0);
+    onCaptureStateCb?.({ wanted: true, probe: true });
+    await waitFor(() => expect(calls()).toBe(1));
   });
 });

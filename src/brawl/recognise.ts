@@ -911,6 +911,49 @@ export function shopProbeRect(width: number, height: number) {
   };
 }
 
+/** Every part of a `width`x`height` draft frame the recogniser ever reads, in frame px: the three card icons (with
+ *  the position/scale search slack and the tier numeral), the hero bar with the ROUND label, the CHOICE label, the
+ *  re-roll caption and the inventory grid. Everything else on screen is never looked at, so the page copies only
+ *  these rectangles out of the video instead of the whole frame (~11 % of its pixels). Padded past what the reads
+ *  touch; `regions.test.ts` checks that masking a real frame to these changes no read. */
+export interface Region {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+export function draftRegions(width: number, height: number): Region[] {
+  const sx = width / BRAWL_LAYOUT.ref.width,
+    sy = height / BRAWL_LAYOUT.ref.height;
+  const boxes: [number, number, number, number][] = [];
+  const cardHalf = (BRAWL_LAYOUT.icon * 1.1) / 2 + BRAWL_LAYOUT.search + 20;
+  for (const c of BRAWL_LAYOUT.cards) boxes.push([c.cx - cardHalf, c.cy - cardHalf, c.cx + cardHalf, c.cy + cardHalf]);
+  const pad = 12;
+  const hb = HERO_BAR;
+  boxes.push([hb.left[0] - hb.diameter, 0, hb.right[3] + hb.diameter, hb.cy + hb.diameter + hb.search + pad]);
+  const box = (b: { x0: number; y0: number; x1: number; y1: number }) =>
+    boxes.push([b.x0 - pad, b.y0 - pad, b.x1 + pad, b.y1 + pad]);
+  box(LABELS.choice);
+  box(LABELS.rerolls);
+  const inv = INVENTORY;
+  boxes.push([
+    inv.x0 - inv.search - pad,
+    inv.y0 - inv.search - pad,
+    inv.x0 + (inv.cols - 1) * inv.pitch + inv.icon + inv.search + pad,
+    inv.y0 + (inv.rows - 1) * inv.pitch + inv.icon + inv.search + pad,
+  ]);
+  return boxes.map(([x0, y0, x1, y1]) => {
+    const x = Math.max(0, Math.floor(x0 * sx)),
+      y = Math.max(0, Math.floor(y0 * sy));
+    return {
+      x,
+      y,
+      width: Math.min(width, Math.ceil(x1 * sx)) - x,
+      height: Math.min(height, Math.ceil(y1 * sy)) - y,
+    };
+  });
+}
+
 /** Round (0 when unread) and choice (0 when unread) labels of the draft screen: two glyph reads, cheap enough
  *  to run on every draft frame so a stale label is noticed as soon as it changes. */
 export function readRoundChoice(img: RGBImage): { round: number; choice: number } {

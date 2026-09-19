@@ -10,5 +10,10 @@ export const CHANNELS = {
   testModeSet: 'test-mode-set',
   testModeFrame: 'test-mode-frame',
   testModeState: 'test-mode-state',
+  // Whether the control window should be capturing the game right now: main.ts probes for the draft screen with a
+  // tiny screen-region read and only turns capture on while it is up. The control window reports back when it is done.
+  captureStateGet: 'capture-state-get',
+  captureState: 'capture-state',
+  captureIdle: 'capture-idle',
   platformWarning: 'platform-warning',
 } as const;
