@@ -63,7 +63,7 @@ let lastInv = '',
 let intervalMs = 250;
 // Off the shop screen there's nothing to react to quickly -- poll much slower, and only read the small
 // "CHOICE n OF 3" crop, until the shop reappears.
-const IDLE_INTERVAL_MS = 1000;
+const IDLE_INTERVAL_MS = 500;
 // Once the draft screen's cards, round and choice are all settled, only a change matters: look less often.
 const SETTLED_INTERVAL_MS = 500;
 let wasShop = false; // the previous result was a draft frame: the next non-draft frame is re-checked quickly

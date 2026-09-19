@@ -435,6 +435,14 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
     const canvas = document.createElement('canvas');
     let lastLoggedSource = '';
     let fpsForShop: boolean | null = null;
+    const setFps = (shop: boolean) => {
+      if (fpsForShop === shop) return;
+      fpsForShop = shop;
+      void streamRef.current
+        ?.getVideoTracks()[0]
+        ?.applyConstraints({ frameRate: shop ? DRAFT_FPS : IDLE_FPS })
+        .catch(() => {});
+    };
     let tipTimer: ReturnType<typeof setTimeout> | undefined;
     const tipMs = window.brawlAPI?.isE2E && window.brawlAPI.tipMs ? window.brawlAPI.tipMs : TIP_MS;
     // Feeds the debounced draft/tip tracker one frame result, and (re)arms the timer that ends the tip on its own.
@@ -520,6 +528,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
     };
     const onMessage = (ev: MessageEvent<WorkerOut>) => {
       if (ev.data.type === 'tick') {
+        if (ev.data.full) setFps(true); // the probe saw a draft screen: raise the frame rate before the first full read
         sendFrame(ev.data.full);
         return;
       }
@@ -605,13 +614,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
         const pv = previewRef.current;
         pv?.getContext('2d')?.clearRect(0, 0, pv.width, pv.height);
       }
-      if (fpsForShop !== r.shop) {
-        fpsForShop = r.shop;
-        void streamRef.current
-          ?.getVideoTracks()[0]
-          ?.applyConstraints({ frameRate: r.shop ? DRAFT_FPS : IDLE_FPS })
-          .catch(() => {});
-      }
+      setFps(r.shop);
       stepTracker(r.shop);
       const heroDetected = r.accepted && r.meta!.self && r.meta!.self === heroId;
       const names = !r.shop
