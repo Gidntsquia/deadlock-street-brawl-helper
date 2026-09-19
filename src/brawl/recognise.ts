@@ -1155,12 +1155,17 @@ export function findRerollButton(
     mid1 = Math.round(top + (bottom - top) * 0.6);
   let xMin = w,
     xMax = -1;
+  // The ends are thin bright ridges (the outline is 2-3 px thick, brighter than both sides), so look for local
+  // peaks: the frame's own glow beside the pill is light too, but never a ridge.
+  const off = Math.max(3, Math.round(4 * scale));
   for (let y = mid0; y <= mid1; y++)
-    for (let x = 0; x < w; x++)
-      if (light[y * w + x]) {
+    for (let x = off; x < w - off; x++) {
+      const v = lum[y * w + x]!;
+      if (v - Math.max(lum[y * w + x - off]!, lum[y * w + x + off]!) > 18) {
         if (x < xMin) xMin = x;
         if (x > xMax) xMax = x;
       }
+    }
   if (xMax < xMin) return null;
   return { x0: ox + xMin, y0: oy + top, x1: ox + xMax + 1, y1: oy + bottom + 1 };
 }
