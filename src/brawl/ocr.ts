@@ -65,6 +65,13 @@ async function upscaledPng(data: Uint8Array, width: number, height: number): Pro
  *  actual text recognition pass over the on-screen label. Returns 0 when the caption shows no glyph at all
  *  (no re-rolls left, or the caption is hidden), the parsed digit when OCR reads exactly one, or -1 when
  *  OCR can't confidently produce a single digit (so a bad read never gets silently reported as 0). */
+/** Starts loading the OCR engine now, so the first real read does not stall the frames that follow it. */
+export function warmOCR(): void {
+  void getWorker().catch(() => {
+    workerPromise = null;
+  });
+}
+
 export async function readRerollsRemaining(img: RGBImage): Promise<number> {
   const crop = extractRerollLabelCrop(img);
   if (!crop) return 0;

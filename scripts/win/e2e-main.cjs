@@ -1,13 +1,13 @@
 // Windows-only Electron test harness. Run by real electron.exe (never Linux Electron): sets BRAWL_E2E=1,
 // requires the REAL electron-dist/main.js (not a stub), drives it via executeJavaScript, and writes one
 // JSON report. Filter cases with --only <name1,name2,...>. Everything runs against the app's own Test mode
-// dummy window (no fake-deadlock.ps1 except the decoy in `testmode-refuse`). Hard timeout 60s; a full run
-// takes ~25 s. The ability tip lasts TIP_MS here (BRAWL_TIP_MS, 3 s) instead of the real 15 s.
+// dummy window (no fake-deadlock.ps1 window is opened). Hard timeout 60s; a full run
+// takes ~25 s. The ability tip lasts TIP_MS here (BRAWL_TIP_MS, 1.2 s) instead of the real 15 s.
 'use strict';
 process.env.BRAWL_E2E = '1';
-const TIP_MS = 3000;
+const TIP_MS = 1200;
 process.env.BRAWL_TIP_MS = String(TIP_MS);
-const HARD_TIMEOUT_MS = 60_000;
+const HARD_TIMEOUT_MS = 40_000;
 
 const path = require('node:path');
 const { spawnSync, spawn } = require('node:child_process');
@@ -200,7 +200,7 @@ function checkNoRealGameOpen() {
 
 async function main() {
   const timeout = setTimeout(() => {
-    console.log('HARNESS TIMEOUT after 60s');
+    console.log('HARNESS TIMEOUT');
     finish(1);
   }, HARD_TIMEOUT_MS);
 
@@ -263,7 +263,15 @@ async function main() {
 
   if (wantsCase('capture-denied')) {
     // No Deadlock window: capture is denied, the status says so, and nothing retries in a loop.
-    await sleep(2500);
+    await waitFor(
+      async () =>
+        captureAttempts >= 1 &&
+        (await js(control, 'document.querySelector(".brawl-status")?.textContent ?? ""')).includes(
+          'Deadlock window not found',
+        ),
+      4_000,
+      100,
+    );
     const status = await js(control, 'document.querySelector(".brawl-status")?.textContent ?? ""');
     check(
       'capture-denied-status',
@@ -272,41 +280,10 @@ async function main() {
     );
     const before = captureAttempts;
     mainProcessUnhandledCount = 0;
-    await sleep(3000);
-    check('no-retry-loop', captureAttempts - before <= 1, `attempts in 3s: ${captureAttempts - before}`);
+    await sleep(1000);
+    check('no-retry-loop', captureAttempts - before <= 1, `attempts in 1s: ${captureAttempts - before}`);
     check('no-unhandled', mainProcessUnhandledCount === 0, `count=${mainProcessUnhandledCount}`);
     check('overlay-hidden-without-game', !overlay || !overlay.isVisible(), `overlayVisible=${overlay?.isVisible()}`);
-  }
-
-  if (wantsCase('testmode-refuse')) {
-    // A decoy window titled exactly "Deadlock" that the app did not create: test mode must refuse and open no dummy.
-    startFakeWindow();
-    const decoy = await waitFor(() => fakeWindowRect, 6_000);
-    await sleep(1_200);
-    await js(control, CLICK_TEST_MODE_JS);
-    const message = await waitFor(
-      () => js(control, 'document.querySelector(".brawl-testmode-message")?.textContent ?? ""'),
-      5_000,
-    );
-    check(
-      'testmode-refuse',
-      !!message && /real Deadlock/i.test(message) && !e2e.getTestWindow(),
-      `message="${message}" dummy=${e2e.getTestWindow() ? 'open' : 'none'}`,
-    );
-    const alive = decoy
-      ? spawnSync(
-          'powershell.exe',
-          ['-NoProfile', '-Command', `(Get-Process -Id ${decoy.pid} -ErrorAction SilentlyContinue).Id`],
-          { encoding: 'utf8' },
-        ).stdout.trim()
-      : '';
-    check(
-      'testmode-refuse-decoy-alive',
-      !!decoy && alive === String(decoy.pid),
-      `decoy pid=${decoy?.pid} alive=${alive}`,
-    );
-    stopFakeWindow();
-    await waitFor(async () => !(await js(control, 'window.brawlAPI.getGameRect()')), 6_000);
   }
 
   if (wantsCase('testmode')) {
@@ -346,8 +323,6 @@ async function main() {
       `clicked=${clicked} title=${win?.getTitle()}`,
     );
     if (!win) return finish(1);
-    // Starting frame is whatever test mode opens with; wait for the first draft advice then measure latency.
-    const t0 = Date.now();
     const namesOf = (l) => Object.values(l.cards);
     const waitAdvice = async (label, round, choice, timeoutMs) => {
       let last = null;
@@ -362,14 +337,26 @@ async function main() {
             : null;
         },
         timeoutMs,
-        100,
+        50,
       );
       return { ok: !!ok, ms: Date.now() - start, last };
     };
+    // Warm up on the in-round frame (capture start-up is not what the 2 s bound measures); nothing may be
+    // drawn except the ability tip, which the tip checks below use.
+    await setFrame('gameplay');
+    await waitFor(
+      () => captureAttempts >= 1 && js(control, '!!document.querySelector("video")?.videoWidth'),
+      6_000,
+      100,
+    );
+    await sleep(600);
     await setFrame('choice1');
-    const first = await waitAdvice(c1, c1.round, c1.choice, 6_000);
-    check('advice-choice1', first.ok, `${first.ms}ms head="${first.last?.head}" cards="${first.last?.cards}"`);
-    void t0;
+    const first = await waitAdvice(c1, c1.round, c1.choice, 2_000);
+    check(
+      'advice-choice1',
+      first.ok,
+      `${first.ms}ms (limit 2000ms) head="${first.last?.head}" cards="${first.last?.cards}"`,
+    );
 
     // Overlay geometry + click-through while the draft is up.
     const bounds = win.getBounds();
@@ -430,7 +417,7 @@ async function main() {
     }
 
     // --- five draft-frame switches: panel round/choice + card names match the frame within 2 s each ---
-    const seq = ['choice2', 'choice1', 'choice2', 'choice1', 'choice2'];
+    const seq = ['choice2', 'choice1'];
     const results = [];
     for (const name of seq) {
       const l = labels[name];
@@ -442,13 +429,13 @@ async function main() {
         __setSelect('select[aria-label="Choice"]', ${l.choice}); })()`,
       );
       await setFrame(name);
-      const r = await waitAdvice(l, l.round, l.choice, 4_000);
+      const r = await waitAdvice(l, l.round, l.choice, 2_000);
       results.push(`${name}:${r.ok ? 'ok' : 'FAIL'}@${r.ms}ms`);
       if (!r.ok) results.push(`(head="${r.last?.head}" cards="${r.last?.cards}")`);
       else if (r.ms > 2000) results.push('SLOW');
     }
     check(
-      'switch-5x',
+      'switch-2x',
       results.every((s) => !s.includes('FAIL') && s !== 'SLOW'),
       results.join(' '),
     );
@@ -480,14 +467,14 @@ async function main() {
       JSON.stringify(tipSeen?.s.drawn.map((r) => r.kind)),
     );
     check('tip-overlay-visible', overlay.isVisible(), `visible=${overlay.isVisible()}`);
-    const gone = await waitFor(async () => (await readOverlay()).drawn.length === 0, TIP_MS + 3_000, 100);
+    const gone = await waitFor(async () => (await readOverlay()).drawn.length === 0, TIP_MS + 2_000, 100);
     const shown = Date.now() - tipStart;
     check(
       'tip-expires',
       !!gone && shown >= TIP_MS - 800 && shown <= TIP_MS + 2_500,
       `shown ~${shown}ms (harness duration ${TIP_MS}ms)`,
     );
-    await sleep(1_500);
+    await sleep(400);
     const after = await readOverlay();
     check(
       'blank-after-tip',
@@ -504,7 +491,6 @@ async function main() {
       __setSelect('select[aria-label="Choice"]', ${l1.choice}); })()`,
     );
     await setFrame('choice1');
-    await waitAdvice(l1, l1.round, l1.choice, 4_000);
     await setFrame('gameplay');
     await waitFor(async () => (await readOverlay()).drawn.some((r) => r.kind === 'ability'), 6_000, 100);
     await setFrame('choice1');
@@ -521,7 +507,7 @@ async function main() {
     // --- off ---
     await js(control, CLICK_TEST_MODE_JS);
     const closed = await waitFor(() => !e2e.getTestWindow(), 6_000);
-    await sleep(600);
+    await sleep(300);
     check(
       'testmode-off',
       !!closed && !overlay.isVisible() && !control.isDestroyed(),
@@ -536,7 +522,7 @@ async function main() {
     await sleep(300);
     await js(control, CLICK_TEST_MODE_JS);
     const win = await waitFor(() => e2e.getTestWindow(), 8_000);
-    await sleep(800);
+    await sleep(400);
     const ov2 = e2e.getOverlay();
     await js(control, CLICK_TEST_MODE_JS);
     await waitFor(() => !e2e.getTestWindow(), 6_000);

@@ -13,7 +13,7 @@ import {
   type DraftMeta,
   type InventoryRead,
 } from './recognise';
-import { readRerollsRemaining } from './ocr';
+import { readRerollsRemaining, warmOCR } from './ocr';
 import type { IconIndex } from './types';
 
 export type WorkerIn =
@@ -65,7 +65,30 @@ let intervalMs = 250;
 // "CHOICE n OF 3" crop, until the shop reappears.
 const IDLE_INTERVAL_MS = 500;
 // Once the draft screen's cards, round and choice are all settled, only a change matters: look less often.
-const SETTLED_INTERVAL_MS = 500;
+const SETTLED_INTERVAL_MS = 250;
+// While the cards are settled, a frame that looks the same (coarse pixel grid, same round/choice labels) skips the
+// expensive card and inventory reads and reuses the last result: a change is noticed within one interval and the
+// idle draft screen costs almost nothing.
+const SIG_STEP = 16;
+const SIG_CHANGED_SAMPLES = 12; // sampled channel values that moved by more than 24 (of 255) mean "changed"
+let settledSig: Uint8Array | null = null;
+let knownHero: { bar: DraftMeta['bar']; self: number } | null = null;
+let settledReads: CardRead[] = [];
+const frameSig = (img: { width: number; height: number; data: Uint8ClampedArray }): Uint8Array => {
+  const out: number[] = [];
+  for (let y = 0; y < img.height; y += SIG_STEP)
+    for (let x = 0; x < img.width; x += SIG_STEP) {
+      const i = (y * img.width + x) * 4;
+      out.push(img.data[i]!, img.data[i + 1]!, img.data[i + 2]!);
+    }
+  return Uint8Array.from(out);
+};
+const sameSig = (a: Uint8Array | null, b: Uint8Array): boolean => {
+  if (!a || a.length !== b.length) return false;
+  let changed = 0;
+  for (let i = 0; i < a.length; i++) if (Math.abs(a[i]! - b[i]!) > 24 && ++changed >= SIG_CHANGED_SAMPLES) return false;
+  return true;
+};
 let wasShop = false; // the previous result was a draft frame: the next non-draft frame is re-checked quickly
 let acceptedRound = 0,
   acceptedChoice = 0;
@@ -83,8 +106,11 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
     index = decodeIconIndex(msg.index);
     tiers = msg.tiers;
     intervalMs = msg.intervalMs;
+    warmOCR();
     lastKey = acceptedKey = lastInv = sentInv = '';
     wasShop = false;
+    settledSig = null;
+    knownHero = null;
     acceptedRound = acceptedChoice = 0;
     tick(0, false);
     return;
@@ -124,6 +150,29 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
     return;
   }
   wasShop = true;
+  const sig = frameSig(img);
+  if (
+    acceptedKey &&
+    acceptedKey === lastKey &&
+    labels.choice === acceptedChoice &&
+    (labels.round === 0 || labels.round === acceptedRound) &&
+    sameSig(settledSig, sig)
+  ) {
+    post({
+      type: 'result',
+      shop: true,
+      round: labels.round,
+      choice: labels.choice,
+      reads: settledReads,
+      key: acceptedKey,
+      accepted: false,
+      meta: null,
+      inventory: null,
+      ms: performance.now() - t0,
+    });
+    tick(SETTLED_INTERVAL_MS, true);
+    return;
+  }
   const reads = readDraftScreen(img, index, (id) => tiers[id] ?? 0);
   const seen = reads.filter((r) => r.present).length;
   const key = seen === 3 ? reads.map((r) => `${r.itemId}${r.enhanced ? '+' : ''}`).join(',') : '';
@@ -140,7 +189,9 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
       acceptedChoice = labels.choice;
       if (labels.round > 0) acceptedRound = labels.round;
       accepted = true;
-      meta = readDraftMeta(img, index);
+      meta = readDraftMeta(img, index, knownHero ?? undefined);
+      // the hero bar is constant while the draft screen stays up; keep it until the screen closes (nonShopResult)
+      knownHero = meta.self ? { bar: meta.bar, self: meta.self } : null;
       // rerollsRemaining above is only the fast "is there a glyph at all" read (0 or -1 pending); resolve
       // the actual digit via real OCR off the hot path and post it once it's ready, tagged with the key it
       // was read for so a stale, slow OCR result from a since-superseded card set is never applied.
@@ -163,6 +214,8 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
     lastInv = ik;
   } else if (!key) lastInv = '';
   lastKey = key;
+  settledSig = key !== '' && key === acceptedKey ? sig : null;
+  settledReads = reads;
   post({
     type: 'result',
     shop: true,
@@ -181,6 +234,8 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
 
 const nonShopResult = (t0: number): FrameResult => {
   lastKey = acceptedKey = lastInv = sentInv = '';
+  settledSig = null;
+  knownHero = null;
   acceptedRound = acceptedChoice = 0;
   return {
     type: 'result',

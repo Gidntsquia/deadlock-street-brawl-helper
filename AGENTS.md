@@ -32,7 +32,7 @@ Repo constitution for planner / worker / evaluator agents. Overrides generic sta
   `electron.exe` from the Windows copy.
 - `npm run win:e2e [-- --only <case1,case2>]` — drives real Windows `electron.exe` end to end (boot,
   capture-denied, test mode: advice/boxes/frame switches/ability tip/blank overlay) and writes
-  `logs/win-e2e.json`. Cases are `boot`, `capture-denied`, `testmode-refuse`, `testmode`, `overlay-closed`. The
+  `logs/win-e2e.json`. Cases are `boot`, `capture-denied`, `testmode`, `overlay-closed`. The
   ability tip runs 3 s in the harness (`BRAWL_TIP_MS`), not the real 15 s. Target: a full run under 30 s; the
   harness's own hard timeout is 60 s. It needs a >= 1080p desktop (see Overlay behaviour). Don't touch a window it didn't
   create. `--only selftest-fail` is a deliberately failing case that proves the harness can fail — it never

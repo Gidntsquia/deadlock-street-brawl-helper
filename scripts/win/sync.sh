@@ -17,8 +17,16 @@ mkdir -p "$WIN_COPY"
 rsync -a --delete \
   --exclude node_modules --exclude .git --exclude dist --exclude electron-dist \
   --exclude release --exclude plans --exclude screenshots --exclude logs \
-  --exclude .package-lock.hash \
+  --exclude .package-lock.hash --exclude .public.hash --exclude /public \
   "$REPO_ROOT"/ "$WIN_COPY"/
+
+# public/ is ~50 MB of data and images that rarely change; scanning it over /mnt/c costs seconds, so only sync it
+# when a fingerprint of the WSL-side tree (path, size, mtime) changed.
+PUB_HASH=$(cd "$REPO_ROOT" && find public -type f -printf '%p %s %T@\n' | sort | sha256sum | awk '{print $1}')
+if [ "$PUB_HASH" != "$(cat "$WIN_COPY/.public.hash" 2>/dev/null || echo)" ] || [ ! -d "$WIN_COPY/public" ]; then
+  rsync -a --delete "$REPO_ROOT"/public/ "$WIN_COPY"/public/
+  echo "$PUB_HASH" > "$WIN_COPY/.public.hash"
+fi
 
 WIN_COPY_WIN=$(wslpath -w "$WIN_COPY")
 LOCK_HASH_FILE="$WIN_COPY/.package-lock.hash"
@@ -38,6 +46,6 @@ else
 fi
 
 echo "building electron bundle on Windows…"
-powershell.exe -NoProfile -Command "$PREFIX & 'C:\Program Files\nodejs\npm.cmd' run build:electron"
+powershell.exe -NoProfile -Command "$PREFIX & 'C:\Program Files\nodejs\npm.cmd' exec -- vite build --mode electron"
 
 echo "synced and built at $WIN_COPY ($WIN_COPY_WIN)"

@@ -869,13 +869,19 @@ export interface DraftMeta {
   rerollsRemaining: number;
 }
 /** Round (1-5), choice (1-3) and the hero bar of a draft screen; 0 for a label that could not be read. */
-export function readDraftMeta(img: RGBImage, index: DecodedIndex): DraftMeta {
-  const bar = readHeroBar(img, index);
+export function readDraftMeta(
+  img: RGBImage,
+  index: DecodedIndex,
+  /** The hero bar and own hero from an earlier read of the same draft visit: they do not change between choices
+   *  and are the slowest part of this read, so a caller may pass them back instead of re-reading. */
+  known?: { bar: HeroBar; self: number },
+): DraftMeta {
+  const bar = known?.bar ?? readHeroBar(img, index);
   return {
     round: readDigit(img, LABELS.round, lightText, ROUND_DIGITS),
     choice: readDigit(img, LABELS.choice, magentaText, CHOICE_DIGITS),
     bar,
-    self: selfHero(bar, readSelfSlot(img)),
+    self: known?.self ?? selfHero(bar, readSelfSlot(img)),
     rerollsRemaining: extractRerollLabelCrop(img) ? -1 : 0,
   };
 }
