@@ -13,6 +13,8 @@ export interface TestModeState {
 const api = {
   isElectron: true as const,
   isE2E: process.env.BRAWL_E2E === '1',
+  // e2e only: shortens the ability tip so a full harness run fits its time budget (the real default is 15 s).
+  tipMs: process.env.BRAWL_E2E === '1' ? Number(process.env.BRAWL_TIP_MS) || 0 : 0,
   getGameRect: (): Promise<Rect | null> => ipcRenderer.invoke(CHANNELS.getGameRect),
   onGameRect: (cb: (rect: Rect | null) => void) => {
     const listener = (_e: Electron.IpcRendererEvent, rect: Rect | null) => cb(rect);

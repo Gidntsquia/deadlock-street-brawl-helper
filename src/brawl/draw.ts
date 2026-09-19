@@ -18,13 +18,17 @@ export interface OverlayAdvice {
   choice: number;
   reroll: { expectedBest: number; currentBest: number } | null;
   ranked: OverlayAdviceCard[];
-  // The single ability to upgrade next, highlighted (not the whole plan as text) once the shop screen is
-  // gone -- upgrading only happens back on the hero/inventory screen, never mid-shop.
-  abilityNext: string | null;
-  onShop: boolean;
   status: string;
 }
 
+/** The ability to upgrade, outlined on the game's ability bar for a few seconds after the draft closes. */
+export interface OverlayTip {
+  name: string;
+  slot: number; // 0-3, left to right on the ability bar
+}
+
+/** Everything the overlay may draw. It draws nothing at all unless `draft` (the item draft screen is on the
+ *  frame) or `tip` (the ability tip window is running); see `overlayHasContent`. */
 export interface OverlayState {
   reads: CardRead[];
   bestId: number | null;
@@ -32,6 +36,61 @@ export interface OverlayState {
   frameW: number;
   frameH: number;
   advice: OverlayAdvice | null;
+  draft: boolean;
+  tip: OverlayTip | null;
+}
+
+/** The blank state: nothing to draw. */
+export const BLANK_OVERLAY: OverlayState = {
+  reads: [],
+  bestId: null,
+  reroll: false,
+  frameW: 0,
+  frameH: 0,
+  advice: null,
+  draft: false,
+  tip: null,
+};
+
+export { overlayHasContent } from './overlayContent';
+
+// The four ability icons at the bottom centre of the HUD, as fractions of the frame (16:9). Measured on the real
+// 2000x1125 draft frame (scripts/win/frames/choice1.png: icon centres x 859/953/1047/1141, y 1064/1047/1047/1064,
+// icon radius ~36) and cross-checked against a 1280x720 in-round screenshot, where the bar sits at the same spot
+// (centres 550/610/670/730 x 679/671/670/677). The middle two icons sit a little higher than the outer two.
+const ABILITY_BAR_X = [0.4297, 0.4765, 0.5235, 0.5705] as const;
+const ABILITY_BAR_Y = [0.9445, 0.931, 0.931, 0.9445] as const;
+const ABILITY_RADIUS_PER_WIDTH = 0.0205; // a little larger than the icon (0.018) so the outline wraps it
+
+/** The circle around ability `slot` (0-3) for a frame of this size, in frame px. */
+export function abilityCircle(slot: number, frameW: number, frameH: number): Circle {
+  const s = Math.min(3, Math.max(0, slot));
+  return { cx: ABILITY_BAR_X[s] * frameW, cy: ABILITY_BAR_Y[s] * frameH, r: ABILITY_RADIUS_PER_WIDTH * frameW };
+}
+
+/** Green outline (plus a small "Upgrade: <name>" label) on the ability the tip names. Returns what it stroked. */
+export function drawAbilityTip(
+  ctx: CanvasRenderingContext2D,
+  tip: OverlayTip,
+  scaleX: number,
+  scaleY: number,
+  frameW: number,
+  frameH: number,
+): DrawnRect {
+  const { cx, cy, r } = abilityCircle(tip.slot, frameW, frameH);
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = COLOR_BEST_CIRCLE;
+  ctx.beginPath();
+  ctx.ellipse(cx * scaleX, cy * scaleY, r * scaleX, r * scaleY, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = COLOR_BEST_TEXT;
+  ctx.font = `bold ${Math.max(12, Math.round(r * 0.55 * scaleY))}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'bottom';
+  ctx.fillText(`Upgrade: ${tip.name}`, cx * scaleX, Math.max(14, (cy - r) * scaleY - 8));
+  ctx.textAlign = 'start';
+  ctx.textBaseline = 'alphabetic';
+  return { kind: 'ability', card: tip.name, x0: cx - r, y0: cy - r, x1: cx + r, y1: cy + r, score: null };
 }
 
 /** One shape `drawReads` actually stroked, in capture-frame px (unscaled by scaleX/scaleY) — so a caller that
@@ -40,8 +99,8 @@ export interface OverlayState {
  *  compare directly without redoing the scale math. For cards the rect is the bounding box of the large
  *  circle the item sits in; `score` is the number drawn above it (null for the re-roll box). */
 export interface DrawnRect {
-  kind: 'card' | 'best' | 'reroll';
-  card: string | null; // read.card ("left"/"top"/"right") for card/best, null for reroll
+  kind: 'card' | 'best' | 'reroll' | 'ability';
+  card: string | null; // read.card ("left"/"top"/"right") for card/best, the ability's name for ability, null for reroll
   x0: number;
   y0: number;
   x1: number;

@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { drawReads, scoresFromAdvice, type DrawnRect, type OverlayState } from '../brawl/draw';
+import {
+  drawAbilityTip,
+  drawReads,
+  overlayHasContent,
+  scoresFromAdvice,
+  type DrawnRect,
+  type OverlayState,
+} from '../brawl/draw';
 import { log } from '../log';
 
 declare global {
@@ -8,9 +15,10 @@ declare global {
   }
 }
 
-/** Renders in the transparent, click-through overlay window: the highlight boxes/"TAKE" label on the
- *  canvas, plus a fixed HTML panel (bottom-left, out of the inventory grid and ability bar) mirroring the
- *  pop-out's ranked cards, RE-ROLL banner and ability line, so the player never has to alt-tab. */
+/** Renders in the transparent, click-through overlay window: the highlight circles/scores on the canvas, plus a
+ *  fixed HTML panel (bottom-left, out of the inventory grid and ability bar) mirroring the pop-out's ranked cards
+ *  and RE-ROLL banner, so the player never has to alt-tab. It draws nothing unless the item draft screen is on
+ *  the frame or the ability tip (a green outline on the ability bar, ~15 s after the draft closes) is running. */
 export default function OverlayApp() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const stateRef = useRef<OverlayState | null>(null);
@@ -22,22 +30,28 @@ export default function OverlayApp() {
     const ctx = c.getContext('2d');
     if (!ctx) return;
     ctx.clearRect(0, 0, c.width, c.height);
-    const showing = state.reads.some((r) => r.present);
-    if (!showing || !state.frameW || !state.frameH) {
+    if (!overlayHasContent(state) || !state.frameW || !state.frameH) {
       if (window.brawlAPI?.isE2E) window.__overlayDrawn = [];
       return;
     }
-    const drawn = drawReads(
-      ctx,
-      state.reads,
-      state.bestId,
-      c.width / state.frameW,
-      c.height / state.frameH,
-      state.frameW,
-      state.frameH,
-      state.reroll,
-      scoresFromAdvice(state.advice),
-    );
+    const sx = c.width / state.frameW,
+      sy = c.height / state.frameH;
+    const drawn: DrawnRect[] = [];
+    if (state.draft)
+      drawn.push(
+        ...drawReads(
+          ctx,
+          state.reads,
+          state.bestId,
+          sx,
+          sy,
+          state.frameW,
+          state.frameH,
+          state.reroll,
+          scoresFromAdvice(state.advice),
+        ),
+      );
+    if (state.tip) drawn.push(drawAbilityTip(ctx, state.tip, sx, sy, state.frameW, state.frameH));
     // e2e-only: expose exactly what was stroked (frame px) so the harness can verify boxes without
     // re-deriving them from reads (PLAN.md item 3's boxes-<frame> check).
     if (window.brawlAPI?.isE2E) window.__overlayDrawn = drawn;
@@ -69,7 +83,7 @@ export default function OverlayApp() {
     });
   }, []);
 
-  const advice = panelState?.advice ?? null;
+  const advice = panelState?.draft ? panelState.advice : null;
 
   return (
     <>
@@ -91,9 +105,6 @@ export default function OverlayApp() {
                 {r.winRate !== null ? ` · ${(r.winRate * 100).toFixed(0)}% wins` : ''}
               </div>
             ))
-          )}
-          {advice.abilityNext && !advice.onShop && (
-            <div className="overlay-panel-ability-next">upgrade: {advice.abilityNext}</div>
           )}
           {advice.status && <div className="overlay-panel-status">{advice.status}</div>}
         </div>

@@ -19,7 +19,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { spawnSync } = require('node:child_process');
 const { app } = require('electron');
-app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion,AllowWgcWindowCapturer');
 app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 
 // See electron/main.ts's matching comment: GPU-accelerated surfaces don't reach the physical screen in this

@@ -13,15 +13,19 @@ import {
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { writeFileSync, existsSync, readdirSync } from 'node:fs';
-import { findGameWindow, isGameWindowTitle, sendWindowToBottom, type Rect } from './gameWindow';
+import { findGameWindow, isGameWindowTitle, resizeWindowPhysical, sendWindowToBottom, type Rect } from './gameWindow';
 import { CHANNELS } from './channels';
+import { overlayHasContent } from '../src/brawl/overlayContent';
 import { log } from '../src/log';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL;
 const GAME_WINDOW_TITLE = 'Deadlock'; // exact match only (electron/gameWindow.ts#isGameWindowTitle):
 // the app's own control window is titled "Deadlock Street Brawl Helper" and must never match.
-const RECT_POLL_MS = 250; // ~4 Hz, per the plan
+const RECT_POLL_MS = 250; // base tick; see the poll's own cadence below
+// Game window lookup cadence (in ticks): once a second while no game is open, twice a second while it is.
+const POLL_TICKS_NO_GAME = 4;
+const POLL_TICKS_GAME = 2;
 
 let control: BrowserWindow | null = null;
 let overlay: BrowserWindow | null = null;
@@ -32,6 +36,11 @@ let pollTimer: ReturnType<typeof setInterval> | null = null;
 // *actual* live click-through state instead of the literal `true` createOverlayWindow() happens to pass
 // today (electron/main.ts has no BrowserWindow getter to read this back).
 let overlayIgnoresMouseEvents = false;
+// The overlay window is on screen only while there is something to draw (the item draft screen or the ability tip)
+// and the game window exists: a transparent always-on-top window over a running game is what costs the game frames,
+// so outside those moments it is hidden, not merely blank. `overlayEnabled` is the tray / shortcut toggle.
+let overlayWanted = false;
+let overlayEnabled = true;
 // Last OverlayState relayed to the overlay window, kept only so the e2e harness's forceReroll() hook can
 // resend a reroll:true clone of it -- real capture-derived reads, not a fabricated OverlayState -- for
 // PLAN.md's item 3 forced reroll-box pass (both tracked frames' actual engine verdict is TAKE, so a natural
@@ -197,9 +206,27 @@ function ownWindowHandles(includeTest = false): Set<bigint> {
   return handles;
 }
 
+/** Shows or hides the overlay window to match `overlayWanted`, the game window and the toggle. */
+function syncOverlay() {
+  if (!alive(overlay)) return;
+  const rect = lastRect;
+  const show = !!rect && overlayWanted && overlayEnabled;
+  if (rect && show && !overlay.isVisible()) {
+    overlay.setBounds(toDipBounds(rect));
+    overlay.showInactive();
+    overlay.setAlwaysOnTop(true, 'screen-saver');
+    overlay.moveTop();
+  } else if (!show && overlay.isVisible()) {
+    overlay.hide();
+  }
+}
+
 function startRectPolling() {
   if (pollTimer) return;
+  let tickNo = 0;
   pollTimer = setInterval(() => {
+    tickNo += 1;
+    if (tickNo % (lastRect ? POLL_TICKS_GAME : POLL_TICKS_NO_GAME) !== 0) return;
     if (alive(testWindow) && findGameWindow(GAME_WINDOW_TITLE, ownWindowHandles(true))) {
       // A real Deadlock window appeared while test mode was on: hand over to the real game.
       stopTestMode('A real Deadlock window opened, so test mode was turned off.');
@@ -209,17 +236,13 @@ function startRectPolling() {
       lastRect = found;
       log('electron-main', 'info', found ? 'window.found' : 'window.lost', found ?? undefined);
       sendControl(CHANNELS.gameRect, found);
-      if (found && overlay) {
-        overlay.setBounds(toDipBounds(found));
-        if (!overlay.isVisible()) overlay.showInactive();
-      } else if (!found && overlay?.isVisible()) {
-        overlay.hide();
-      }
+      if (found && alive(overlay)) overlay.setBounds(toDipBounds(found));
+      syncOverlay();
     }
     // The game re-focusing (e.g. after an alt-tab elsewhere, or a fullscreen toast) can cover the overlay
-    // even though it's marked always-on-top; re-assert every tick while the game is found so it never
+    // even though it's marked always-on-top; re-assert every tick while it is on screen so it never
     // silently drops behind, without waiting for the next rect change.
-    if (found && overlay) {
+    if (found && alive(overlay) && overlay.isVisible()) {
       overlay.setAlwaysOnTop(true, 'screen-saver');
       overlay.moveTop();
     }
@@ -299,6 +322,8 @@ async function startTestMode(frame?: string) {
   if (!alive(win)) return testState();
   win.setTitle(GAME_WINDOW_TITLE);
   win.showInactive();
+  if (Math.round(win.getContentBounds().width * sf) < 1920)
+    resizeWindowPhysical(win.getNativeWindowHandle(), 1920, 1080);
   // Harness only: a transparent (opacity < 1) window is not offered by window capture at all, so the dummy is
   // fully opaque but pushed to the bottom of the z-order so it never covers the person's other windows.
   if (process.env.BRAWL_E2E) sendWindowToBottom(win.getNativeWindowHandle());
@@ -445,6 +470,8 @@ function setupIpc() {
   // Relay: the control window computes advice from its capture and forwards state for the overlay to draw.
   ipcMain.on(CHANNELS.overlayState, (_event, state) => {
     lastOverlayState = state;
+    overlayWanted = overlayHasContent(state);
+    syncOverlay();
     if (alive(overlay) && !overlay.webContents.isDestroyed()) overlay.webContents.send(CHANNELS.overlayState, state);
   });
 }
@@ -466,9 +493,8 @@ function setupTray() {
 }
 
 function toggleOverlay() {
-  if (!alive(overlay)) return;
-  if (overlay.isVisible()) overlay.hide();
-  else if (lastRect) overlay.showInactive();
+  overlayEnabled = !overlayEnabled;
+  syncOverlay();
 }
 
 // The demo backdrop window (triggerOverlayDemo) renders correctly inside Electron itself -- confirmed via
@@ -492,6 +518,12 @@ function toggleOverlay() {
 // line runs under those harnesses -- disableHardwareAcceleration() throws in that case; it's a no-op we
 // can safely skip since the harness process is short-lived and re-launched per run anyway.
 if (process.env.BRAWL_E2E && !app.isReady()) app.disableHardwareAcceleration();
+
+// Windows Graphics Capture draws a yellow border around whatever window it captures (Chromium does not ask for the
+// borderless capture access that would remove it). Chromium's older GDI window capturer has no border, so switch the
+// WGC window capturer off: the game window is read without any outline. The harnesses (which are already `ready`
+// when this module loads) pass the same switch themselves; keep the two in sync (scripts/win/*-main.cjs).
+if (!app.isReady()) app.commandLine.appendSwitch('disable-features', 'AllowWgcWindowCapturer');
 
 app.whenReady().then(() => {
   setupDisplayMediaHandler();

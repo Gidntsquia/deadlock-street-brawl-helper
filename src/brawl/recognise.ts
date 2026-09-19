@@ -8,6 +8,9 @@ export interface RGBImage {
   height: number;
   data: Uint8Array | Uint8ClampedArray;
   channels: 3 | 4;
+  /** Set when `data` is only a crop of a bigger frame: (x, y) is the crop's top-left in full-frame px and
+   *  fullWidth/fullHeight the whole frame's size, so layout anchors still scale from the full frame. */
+  origin?: { x: number; y: number; fullWidth: number; fullHeight: number };
 }
 
 /** Draft screen at 2560x1440: three cards, icon centres and icon edge length in pixels. */
@@ -290,6 +293,10 @@ const luma = (img: RGBImage, x: number, y: number) => {
   return 0.299 * img.data[p] + 0.587 * img.data[p + 1] + 0.114 * img.data[p + 2];
 };
 const rgb = (img: RGBImage, x: number, y: number): [number, number, number] => {
+  if (img.origin) {
+    x -= img.origin.x;
+    y -= img.origin.y;
+  }
   if (x < 0 || y < 0 || x >= img.width || y >= img.height) return [0, 0, 0];
   const p = (y * img.width + x) * img.channels;
   return [img.data[p], img.data[p + 1], img.data[p + 2]];
@@ -797,8 +804,8 @@ const readDigit = (
   test: (r: number, g: number, b: number) => boolean,
   digits: Record<number, Float32Array>,
 ): number => {
-  const sx = img.width / BRAWL_LAYOUT.ref.width,
-    sy = img.height / BRAWL_LAYOUT.ref.height;
+  const sx = (img.origin?.fullWidth ?? img.width) / BRAWL_LAYOUT.ref.width,
+    sy = (img.origin?.fullHeight ?? img.height) / BRAWL_LAYOUT.ref.height;
   const g = readGlyph(
     img,
     Math.round(box.x0 * sx),
@@ -880,6 +887,31 @@ export function readDraftMeta(img: RGBImage, index: DecodedIndex): DraftMeta {
  *  transition, gameplay). */
 export function isShopScreen(img: RGBImage): boolean {
   return readDigit(img, LABELS.choice, magentaText, CHOICE_DIGITS) > 0;
+}
+
+/** The part of a `width`x`height` frame `isShopScreen` reads (the "CHOICE n OF 3" digit plus slack), in frame
+ *  px. Idle polling copies only this crop out of the video instead of the whole frame. */
+export function shopProbeRect(width: number, height: number) {
+  const sx = width / BRAWL_LAYOUT.ref.width,
+    sy = height / BRAWL_LAYOUT.ref.height;
+  const b = LABELS.choice;
+  const x = Math.max(0, Math.floor(b.x0 * sx) - 4),
+    y = Math.max(0, Math.floor(b.y0 * sy) - 4);
+  return {
+    x,
+    y,
+    width: Math.min(width, Math.ceil(b.x1 * sx) + 4) - x,
+    height: Math.min(height, Math.ceil(b.y1 * sy) + 4) - y,
+  };
+}
+
+/** Round (0 when unread) and choice (0 when unread) labels of the draft screen: two glyph reads, cheap enough
+ *  to run on every draft frame so a stale label is noticed as soon as it changes. */
+export function readRoundChoice(img: RGBImage): { round: number; choice: number } {
+  return {
+    round: readDigit(img, LABELS.round, lightText, ROUND_DIGITS),
+    choice: readDigit(img, LABELS.choice, magentaText, CHOICE_DIGITS),
+  };
 }
 
 // ---- inventory grid ------------------------------------------------------------------------------------

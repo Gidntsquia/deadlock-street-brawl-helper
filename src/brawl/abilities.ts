@@ -1,4 +1,4 @@
-import type { AbilityOrderStat, AbilityStep } from '../types';
+import type { AbilityOrderStat, AbilityStep, Hero } from '../types';
 import type { BrawlInput } from './types';
 
 const TOP_N = 10; // candidates considered for "prefer the longest sequence" among near-equally-good scores
@@ -64,4 +64,26 @@ export function brawlAbilityOrder(input: BrawlInput): BrawlAbilityOrder {
       winRate: r.s.wins / r.s.matches,
     })),
   };
+}
+
+/** Street Brawl gives roughly one ability point per draft choice: round 1 choice 1 is step 1, and so on. */
+export const abilityStepIndex = (round: number, choice: number) => (round - 1) * 3 + choice - 1;
+
+export interface AbilityTarget {
+  name: string;
+  /** 0-3: the ability's position on the hero's ability bar (the order of `hero.abilities`, left to right). */
+  slot: number;
+}
+
+/** The ability the plan wants upgraded at this round/choice: the step the "Ability order" list marks `now`. */
+export function abilityTargetFor(
+  order: BrawlAbilityOrder,
+  hero: Hero,
+  round: number,
+  choice: number,
+): AbilityTarget | null {
+  const a = order.steps[abilityStepIndex(round, choice)]?.ability;
+  if (!a) return null;
+  const slot = hero.abilities.indexOf(a.class_name);
+  return slot < 0 ? null : { name: a.name, slot };
 }

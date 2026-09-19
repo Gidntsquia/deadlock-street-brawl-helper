@@ -16,14 +16,26 @@ import {
   type RankedOffer,
   type RerollAdvice,
   brawlAbilityOrder,
+  abilityStepIndex,
+  abilityTargetFor,
+  initialTip,
+  stepTip,
+  shopProbeRect,
+  TIP_MS,
+  type AbilityTarget,
+  type TipState,
 } from '../brawl';
 import type { WorkerIn, WorkerOut } from '../brawl/worker';
-import { drawReads, scoresFromAdvice, type OverlayAdvice } from '../brawl/draw';
+import { BLANK_OVERLAY, drawReads, scoresFromAdvice, type OverlayAdvice, type OverlayState } from '../brawl/draw';
 import { ItemTile } from './ItemTile';
 import { log } from '../log';
 import { usePersisted, isNumber, isNumberArray } from '../hooks/usePersisted';
 
-const CAPTURE_MS = 150; // pause between frames; the worker paces the loop (see worker.ts) so it keeps running while the tab is hidden
+const CAPTURE_MS = 200; // pause between draft frames; the worker paces the loop (see worker.ts) so it keeps running while the tab is hidden
+// Capture frame rate: the draft screen needs a look a few times a second, everything else barely at all.
+// Switched on the fly with track.applyConstraints so a game window nobody is drafting in costs almost nothing.
+const DRAFT_FPS = 5;
+const IDLE_FPS = 2;
 const ENEMY_SLOTS = 4;
 const isElectron = typeof window !== 'undefined' && !!window.brawlAPI;
 
@@ -49,7 +61,10 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
   const [cards, setCards] = useState<Offer[]>([]);
   const [capture, setCapture] = useState<'off' | 'starting' | 'on'>('off');
   const [status, setStatus] = useState('');
-  const [onShop, setOnShop] = useState(false); // worker's isShopScreen for the latest frame; ability upgrades happen once this goes false
+  // Debounced "the item draft screen is up" and the ability tip that follows its closing (see abilityTip.ts).
+  // The overlay draws nothing unless one of them is set.
+  const [draftOpen, setDraftOpen] = useState(false);
+  const [tip, setTip] = useState<AbilityTarget | null>(null);
   // Electron only: main.ts denied the last capture attempt (Deadlock isn't open). Blocks the auto-start
   // effect from retrying on every rect tick; cleared once the game window actually appears.
   const [denied, setDenied] = useState(false);
@@ -78,6 +93,20 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
   const rerollRef = useRef<RerollAdvice | null>(null);
   const overlayAdviceRef = useRef<OverlayAdvice | null>(null);
   const previewRef = useRef<HTMLCanvasElement | null>(null);
+  const roundRef = useRef(round);
+  const choiceRef = useRef(choice);
+  const tipStateRef = useRef<TipState<AbilityTarget>>(initialTip());
+  const abilityTargetRef = useRef<AbilityTarget | null>(null);
+  const draftRef = useRef(false);
+  const tipRef = useRef<AbilityTarget | null>(null);
+  const frameDimsRef = useRef({ w: 0, h: 0 });
+  const lastOverlayJsonRef = useRef('');
+  useEffect(() => {
+    roundRef.current = round;
+  }, [round]);
+  useEffect(() => {
+    choiceRef.current = choice;
+  }, [choice]);
   useEffect(() => {
     ownedRef.current = owned;
   }, [owned]);
@@ -130,9 +159,45 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
   const tiers = input ? roundTiers(input, round) : [];
   const topItems = useMemo(() => (input ? topItemsByTier(input) : []), [input]);
   const abilityOrder = useMemo(() => (input ? brawlAbilityOrder(input) : null), [input]);
-  // Street Brawl gives roughly one ability point per draft choice: round 1 choice 1 is step 1, etc.
-  const abilityStepNow = (round - 1) * 3 + choice - 1;
-  const abilityNext = abilityOrder?.steps[abilityStepNow]?.ability.name ?? null;
+  const abilityStepNow = abilityStepIndex(round, choice);
+  // The ability the list below marks `now`; the tip outlines exactly this one (latched when the draft closes).
+  const abilityTarget = useMemo(
+    () => (abilityOrder ? abilityTargetFor(abilityOrder, hero, round, choice) : null),
+    [abilityOrder, hero, round, choice],
+  );
+  useEffect(() => {
+    abilityTargetRef.current = abilityTarget;
+  }, [abilityTarget]);
+  /** Sends the overlay what it may draw, only when that changed since the last send (the overlay is blank unless a
+   *  draft screen is up or the tip is running). */
+  const pushOverlay = () => {
+    const api = window.brawlAPI;
+    if (!api) return;
+    const draft = draftRef.current,
+      tipNow = tipRef.current;
+    let state: OverlayState = BLANK_OVERLAY;
+    if (draft || tipNow) {
+      const rerollNow = !!rerollRef.current;
+      state = {
+        reads: draft ? readsRef.current : [],
+        bestId: rerollNow ? null : (rankedRef.current[0]?.item.id ?? null),
+        reroll: rerollNow && draft,
+        frameW: frameDimsRef.current.w,
+        frameH: frameDimsRef.current.h,
+        advice: draft ? overlayAdviceRef.current : null,
+        draft,
+        tip: tipNow,
+      };
+    }
+    const json = JSON.stringify(state);
+    if (json === lastOverlayJsonRef.current) return;
+    lastOverlayJsonRef.current = json;
+    api.sendOverlayState(state);
+  };
+  useEffect(() => {
+    draftRef.current = draftOpen;
+    tipRef.current = tip;
+  }, [draftOpen, tip]);
   useEffect(() => {
     overlayAdviceRef.current = input
       ? {
@@ -148,12 +213,14 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
             usage: r.usage,
             winRate: r.winRate,
           })),
-          abilityNext,
-          onShop,
           status,
         }
       : null;
-  }, [input, hero, round, choice, reroll, ranked, abilityNext, onShop, status]);
+    draftRef.current = draftOpen;
+    tipRef.current = tip;
+    pushOverlay();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- pushOverlay only reads refs
+  }, [input, hero, round, choice, reroll, ranked, draftOpen, tip, status]);
 
   const stopCapture = useCallback(() => {
     captureGenRef.current += 1;
@@ -161,6 +228,9 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
     streamRef.current = null;
     workerRef.current?.terminate();
     workerRef.current = null;
+    tipStateRef.current = initialTip();
+    setDraftOpen(false);
+    setTip(null);
     setCapture('off');
     setStatus('');
     log('brawl-view', 'info', 'capture.stop', { gen: captureGenRef.current });
@@ -221,7 +291,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
       // never reaches capture.start at all.
       log('brawl-view', 'info', 'capture.attempt');
       {
-        const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 10 }, audio: false });
+        const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: IDLE_FPS }, audio: false });
         if (gen !== captureGenRef.current) {
           // superseded while this real getDisplayMedia() request was pending -- drop it
           // instead of adopting a stream nothing asked for, and don't touch state a newer attempt now owns.
@@ -364,7 +434,22 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
     if (!w) return;
     const canvas = document.createElement('canvas');
     let lastLoggedSource = '';
-    const sendFrame = () => {
+    let fpsForShop: boolean | null = null;
+    let tipTimer: ReturnType<typeof setTimeout> | undefined;
+    const tipMs = window.brawlAPI?.isE2E && window.brawlAPI.tipMs ? window.brawlAPI.tipMs : TIP_MS;
+    // Feeds the debounced draft/tip tracker one frame result, and (re)arms the timer that ends the tip on its own.
+    const stepTracker = (shop: boolean) => {
+      const next = stepTip(tipStateRef.current, shop, Date.now(), abilityTargetRef.current, tipMs);
+      tipStateRef.current = next;
+      draftRef.current = next.draft;
+      tipRef.current = next.tip?.value ?? null;
+      setDraftOpen(next.draft);
+      setTip(next.tip?.value ?? null);
+      clearTimeout(tipTimer);
+      if (next.tip) tipTimer = setTimeout(() => stepTracker(false), Math.max(0, next.tip.endsAt - Date.now()) + 5);
+      pushOverlay();
+    };
+    const sendFrame = (full: boolean) => {
       const src: CanvasImageSource | null = videoRef.current;
       const srcW = videoRef.current?.videoWidth ?? 0;
       const srcH = videoRef.current?.videoHeight ?? 0;
@@ -377,6 +462,30 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
         w.postMessage({ type: 'idle' } satisfies WorkerIn);
         return;
       }
+      frameDimsRef.current = { w: srcW, h: srcH };
+      if (!full) {
+        // Not on the draft screen: copy only the "CHOICE n OF 3" crop, not the whole frame.
+        const r = shopProbeRect(srcW, srcH);
+        canvas.width = r.width;
+        canvas.height = r.height;
+        const pctx2 = canvas.getContext('2d', { willReadFrequently: true })!;
+        pctx2.drawImage(src, r.x, r.y, r.width, r.height, 0, 0, r.width, r.height);
+        const crop = pctx2.getImageData(0, 0, r.width, r.height);
+        w.postMessage(
+          {
+            type: 'probe',
+            frameW: srcW,
+            frameH: srcH,
+            x: r.x,
+            y: r.y,
+            width: r.width,
+            height: r.height,
+            buffer: crop.data.buffer,
+          } satisfies WorkerIn,
+          [crop.data.buffer],
+        );
+        return;
+      }
       canvas.width = srcW;
       canvas.height = srcH;
       const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
@@ -387,10 +496,10 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
         { type: 'frame', width: data.width, height: data.height, buffer: data.data.buffer, prefer } satisfies WorkerIn,
         [data.data.buffer],
       );
-      const rerollNow = !!rerollRef.current;
-      const bestId = rerollNow ? null : (rankedRef.current[0]?.item.id ?? null);
       const pv = previewRef.current;
       if (pv) {
+        const rerollNow = !!rerollRef.current;
+        const bestId = rerollNow ? null : (rankedRef.current[0]?.item.id ?? null);
         const pctx = pv.getContext('2d');
         if (pctx) {
           const scale = pv.width / srcW;
@@ -408,18 +517,10 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
           );
         }
       }
-      window.brawlAPI?.sendOverlayState({
-        reads: readsRef.current,
-        bestId,
-        reroll: rerollNow,
-        frameW: srcW,
-        frameH: srcH,
-        advice: overlayAdviceRef.current,
-      });
     };
     const onMessage = (ev: MessageEvent<WorkerOut>) => {
       if (ev.data.type === 'tick') {
-        sendFrame();
+        sendFrame(ev.data.full);
         return;
       }
       if (ev.data.type === 'rerolls') {
@@ -444,8 +545,20 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
           choice: meta.choice,
           items: offers.map((o) => o.itemId),
         });
-        if (meta.round) setRound(meta.round);
-        if (meta.choice) setChoice(meta.choice);
+        // Round / choice come from the labels on this very frame. If the round label can't be read (small or
+        // scaled windows), the round advances when the choice wraps 3 -> 1; anything else keeps the old value.
+        // Either way the cards and labels are set together, so the panel never mixes a new set with an old label.
+        if (meta.round) {
+          setRound(meta.round);
+          roundRef.current = meta.round;
+        } else if (meta.choice === 1 && choiceRef.current === 3) {
+          roundRef.current = Math.min(5, roundRef.current + 1);
+          setRound(roundRef.current);
+        }
+        if (meta.choice) {
+          setChoice(meta.choice);
+          choiceRef.current = meta.choice;
+        }
         acceptedKeyRef.current = r.key;
         // read straight off the "N Re-Roll Remaining" caption instead of inferring a re-roll from a changed
         // card set, so a stale reroll suggestion clears the moment the game's own counter does. 0 here means
@@ -487,7 +600,19 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
         if (pick) setTook(byId.get(pick)?.name ?? '');
         if (after.length !== before.length || gained.length) setOwned(after);
       }
-      setOnShop(r.shop);
+      if (!r.shop) {
+        readsRef.current = [];
+        const pv = previewRef.current;
+        pv?.getContext('2d')?.clearRect(0, 0, pv.width, pv.height);
+      }
+      if (fpsForShop !== r.shop) {
+        fpsForShop = r.shop;
+        void streamRef.current
+          ?.getVideoTracks()[0]
+          ?.applyConstraints({ frameRate: r.shop ? DRAFT_FPS : IDLE_FPS })
+          .catch(() => {});
+      }
+      stepTracker(r.shop);
       const heroDetected = r.accepted && r.meta!.self && r.meta!.self === heroId;
       const names = !r.shop
         ? 'waiting for the shop'
@@ -496,11 +621,14 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
           : heroDetected
             ? `hero: ${hero.name} · ${seen}/3 cards found`
             : `${seen}/3 cards found`;
-      setStatus(`${names} · ${r.ms.toFixed(0)} ms`);
+      setStatus(names);
     };
     w.addEventListener('message', onMessage);
-    sendFrame(); // the worker's first tick may have arrived before this listener existed
-    return () => w.removeEventListener('message', onMessage);
+    sendFrame(false); // the worker's first tick may have arrived before this listener existed
+    return () => {
+      clearTimeout(tipTimer);
+      w.removeEventListener('message', onMessage);
+    };
   }, [capture, byId, heroId, heroes, onHero, hero]);
 
   const took = (r: RankedOffer) => {
@@ -695,7 +823,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
                 </button>
               </div>
             )}
-            {abilityNext && !onShop && <div className="brawl-ability-next">upgrade: {abilityNext}</div>}
+            {tip && <div className="brawl-ability-next">upgrade: {tip.name}</div>}
             {capture === 'on' && (
               <canvas
                 ref={previewRef}

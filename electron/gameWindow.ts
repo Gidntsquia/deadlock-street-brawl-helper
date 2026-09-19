@@ -13,6 +13,7 @@ const DWMWA_EXTENDED_FRAME_BOUNDS = 9;
 
 let user32: ReturnType<typeof loadUser32> | null = null;
 let dwmapi: ReturnType<typeof loadDwmapi> | null = null;
+let cached: { title: string; handle: unknown } | null = null; // last found game window
 
 // EnumWindows needs a real callback prototype (not a bare 'void *') so koffi can build a native
 // trampoline for it; without this it silently enumerates zero windows instead of throwing, which is
@@ -92,10 +93,27 @@ export function findGameWindow(title: string, exclude?: Set<bigint>): Rect | nul
   try {
     user32 ??= loadUser32(koffi);
     dwmapi ??= loadDwmapi(koffi);
-    enumState = { title, exclude, user32, buf: Buffer.alloc(512), handle: null };
-    user32.EnumWindows(enumCallback, 0);
-    const { handle } = enumState;
-    enumState = null;
+    const buf = Buffer.alloc(512);
+    // Enumerating every top-level window is the expensive part: once the game window is known, just re-check that
+    // same handle (still a window, visible, same exact title) and only enumerate again when it is gone.
+    let handle: unknown = null;
+    if (
+      cached &&
+      cached.title === title &&
+      !exclude?.has(BigInt(koffi.address(cached.handle))) &&
+      user32.IsWindow(cached.handle) &&
+      user32.IsWindowVisible(cached.handle)
+    ) {
+      const len = user32.GetWindowTextW(cached.handle, buf, 256);
+      if (len > 0 && isGameWindowTitle(buf.toString('utf16le', 0, len * 2), title)) handle = cached.handle;
+    }
+    if (!handle) {
+      enumState = { title, exclude, user32, buf, handle: null };
+      user32.EnumWindows(enumCallback, 0);
+      handle = enumState.handle;
+      enumState = null;
+      cached = handle ? { title, handle } : null;
+    }
     if (!handle || user32.IsIconic(handle)) return null;
     const rect = {};
     const hr = dwmapi.DwmGetWindowAttribute(handle, DWMWA_EXTENDED_FRAME_BOUNDS, rect, 16);
@@ -104,6 +122,24 @@ export function findGameWindow(title: string, exclude?: Set<bigint>): Rect | nul
     return { x: r.left, y: r.top, width: r.right - r.left, height: r.bottom - r.top };
   } catch {
     return null; // koffi missing, DLL call failed, or window closed mid-call
+  }
+}
+
+/** Resizes a native window to `width` x `height` *physical* px, keeping its position and z-order. Electron clamps
+ *  a new window to the display's work area; on a small display (a remote session, a 1024x768 fallback mode) that
+ *  would leave Test mode's dummy short of the ~1080p the recogniser needs and not 16:9. Windows itself lets a
+ *  window be larger than the screen. */
+export function resizeWindowPhysical(handle: Buffer, width: number, height: number): boolean {
+  if (process.platform !== 'win32') return false;
+  try {
+    user32 ??= loadUser32(koffi);
+    const SWP_NOMOVE = 0x2,
+      SWP_NOZORDER = 0x4,
+      SWP_NOACTIVATE = 0x10;
+    const hwnd = koffi.decode(handle, 'void *');
+    return user32.SetWindowPos(hwnd, 0, 0, 0, width, height, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+  } catch {
+    return false;
   }
 }
 

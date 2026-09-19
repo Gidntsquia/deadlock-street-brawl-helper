@@ -31,9 +31,10 @@ Repo constitution for planner / worker / evaluator agents. Overrides generic sta
 - `npm run win:dev` — the actual way to run the app from WSL: syncs, then launches real Windows
   `electron.exe` from the Windows copy.
 - `npm run win:e2e [-- --only <case1,case2>]` — drives real Windows `electron.exe` end to end (boot,
-  capture-denied, capture-found/recover, overlay, frames) and writes `logs/win-e2e.json`. Opens real windows
-  on the desktop for ~1-2 min (a full default run takes ~100-110s; the harness's own hard timeout is 180s,
-  raised from 90s once `frames`/`overlay` were added — see the gotcha below). Don't touch a window it didn't
+  capture-denied, test mode: advice/boxes/frame switches/ability tip/blank overlay) and writes
+  `logs/win-e2e.json`. Cases are `boot`, `capture-denied`, `testmode-refuse`, `testmode`, `overlay-closed`. The
+  ability tip runs 3 s in the harness (`BRAWL_TIP_MS`), not the real 15 s. Target: a full run under 30 s; the
+  harness's own hard timeout is 60 s. It needs a >= 1080p desktop (see Overlay behaviour). Don't touch a window it didn't
   create. `--only selftest-fail` is a deliberately failing case that proves the harness can fail — it never
   runs as part of the default full run.
 - `npm run win:demo -- choice1|choice2` — no real Deadlock window needed: starts the app's own **test mode**
@@ -57,6 +58,23 @@ refuses (message in the control window) when a real Deadlock window exists, auto
 closes only the window it opened. While on, the display-media handler serves only the dummy's own
 `getMediaSourceId()` (desktopCapturer never lists the app's own windows, so it can't be found through the
 source list) — nothing else can be captured. The old keyboard-shortcut demo and its tray entry no longer exist.
+
+## Overlay behaviour (blank outside the draft)
+
+- The overlay draws nothing, and its window is hidden (`syncOverlay` in `electron/main.ts`), unless the item draft
+  screen is on the frame (`OverlayState.draft`) or the ability tip (`OverlayState.tip`) is running
+  (`overlayHasContent`, `src/brawl/overlayContent.ts`). The tip is a green outline on the game's ability bar
+  (`abilityCircle`/`drawAbilityTip` in `src/brawl/draw.ts`) for `TIP_MS` (15 s) after the draft screen closes
+  (`src/brawl/abilityTip.ts`, a pure state machine); a reopened draft ends it at once. It outlines the step the
+  "Ability order" list marks `now`.
+- No yellow outline: Windows Graphics Capture draws one; `disable-features=AllowWgcWindowCapturer` (in
+  `electron/main.ts` and both harnesses) falls back to Chromium's GDI window capturer, which has none. Keep that
+  switch in all three places.
+- `findGameWindow` caches the game's handle and only re-enumerates windows when it is gone; the cached path must
+  still honour the `exclude` set (test mode's dummy is excluded by the poll that watches for a real game).
+- Test mode's dummy is resized to 1920x1080 physical with `SetWindowPos` when the display is smaller (Electron
+  clamps to the work area). Window capture still returns at most screen size, so on a display below ~1080p the
+  recogniser cannot read the frame and the layout checks in `win:e2e` fail: run the harness on a >= 1080p desktop.
 
 ## Manual checks (the harness can't cover these)
 
@@ -167,10 +185,8 @@ in `win:e2e`/`win:demo` drives the actual game:
 - The e2e-only forced-reroll hook lives on `__brawlE2E.forceReroll()` in `electron/main.ts`: it resends the
   last real, capture-derived `OverlayState` with `reroll:true`/`bestId:null` — never a fabricated state —
   for PLAN.md item 3's `reroll-box` check when no frame naturally verdicts RE-ROLL.
-- `scripts/win/e2e-main.cjs`'s hard timeout is 300s (`main()`'s `setTimeout`), not 90s — a full default run
-  (all cases) takes ~150-160s once `testmode`/`frames` are included, and the old 90s ceiling cut the run off
-  mid-teardown, which cascaded into spurious failures on whichever case happened to be running last (not a
-  real bug in that case). Raise it again if more cases are added and full runs start bumping the new ceiling.
+- `scripts/win/e2e-main.cjs`'s hard timeout is 60s (`HARD_TIMEOUT_MS`); a hit cascades into spurious failures on
+  whichever case runs last, so treat it as a real failure and speed the harness up rather than raising it.
 - `win:demo`'s and `win:e2e`'s `testmode` case both must wait for a real ranked-best signal
   (`.brawl-card.best` in the control window / `.overlay-panel` text containing an actual card name), not
   just for _some_ status text to render — status text (hero/round/ability line) appears immediately, well
