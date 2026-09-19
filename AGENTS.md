@@ -34,7 +34,7 @@ Repo constitution for planner / worker / evaluator agents. Overrides generic sta
   capture-denied, test mode: advice/boxes/frame switches/ability tip/blank overlay) and writes
   `logs/win-e2e.json`. Cases are `boot`, `capture-denied`, `testmode`, `overlay-closed`. The
   ability tip runs 3 s in the harness (`BRAWL_TIP_MS`), not the real 15 s. Target: a full run under 30 s; the
-  harness's own hard timeout is 60 s. It needs a >= 1080p desktop (see Overlay behaviour). Don't touch a window it didn't
+  harness's own hard timeout is 40 s. It needs a >= 1080p desktop (see Overlay behaviour). Don't touch a window it didn't
   create. `--only selftest-fail` is a deliberately failing case that proves the harness can fail — it never
   runs as part of the default full run.
 - `npm run win:demo -- choice1|choice2` — no real Deadlock window needed: starts the app's own **test mode**
@@ -47,6 +47,14 @@ Repo constitution for planner / worker / evaluator agents. Overrides generic sta
   hook), which keeps the dummy at the bottom of the z-order and the overlay at opacity 0. `logs/win-demo.png`
   (a real canvas rasterisation of the overlay, not a screen grab) is the only output. To see it live, use test
   mode in a normal `npm run win:dev` session.
+
+## Which tests to run
+
+`npm test` (vitest, 69 tests) takes ~5 s: run it after any code change; run one file with
+`npx vitest run <file>`. `npm run check` before pushing. `npm run win:e2e` (~30 s, drives real Windows) only when
+capture, overlay, worker or Electron code changed, and only once per session. Docs/comments: run nothing.
+All e2e-needing checks belong in the single `testmode` pass in `scripts/win/e2e-main.cjs`, asserted against
+that one session; do not add a new case or a second app launch. Commands live in `.claude/test-commands.sh`.
 
 ## Test mode
 
@@ -185,7 +193,7 @@ in `win:e2e`/`win:demo` drives the actual game:
 - The e2e-only forced-reroll hook lives on `__brawlE2E.forceReroll()` in `electron/main.ts`: it resends the
   last real, capture-derived `OverlayState` with `reroll:true`/`bestId:null` — never a fabricated state —
   for PLAN.md item 3's `reroll-box` check when no frame naturally verdicts RE-ROLL.
-- `scripts/win/e2e-main.cjs`'s hard timeout is 60s (`HARD_TIMEOUT_MS`); a hit cascades into spurious failures on
+- `scripts/win/e2e-main.cjs`'s hard timeout is 40s (`HARD_TIMEOUT_MS`); a hit cascades into spurious failures on
   whichever case runs last, so treat it as a real failure and speed the harness up rather than raising it.
 - `win:demo`'s and `win:e2e`'s `testmode` case both must wait for a real ranked-best signal
   (`.brawl-card.best` in the control window / `.overlay-panel` text containing an actual card name), not
