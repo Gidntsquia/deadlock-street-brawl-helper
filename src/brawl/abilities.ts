@@ -1,4 +1,4 @@
-import type { AbilityOrderStat, AbilityStep, Hero } from '../types';
+import type { Ability, AbilityOrderStat, AbilityStep, Hero } from '../types';
 import type { BrawlInput } from './types';
 
 const TOP_N = 10; // candidates considered for "prefer the longest sequence" among near-equally-good scores
@@ -69,21 +69,50 @@ export function brawlAbilityOrder(input: BrawlInput): BrawlAbilityOrder {
 /** Street Brawl gives roughly one ability point per draft choice: round 1 choice 1 is step 1, and so on. */
 export const abilityStepIndex = (round: number, choice: number) => (round - 1) * 3 + choice - 1;
 
-export interface AbilityTarget {
+/** How a point looks in the ability panel: spent this round (`now`, highlighted), spent in an earlier round
+ *  (`done`, dark with a check), or not yet spent (`later`). */
+export type PointState = 'now' | 'done' | 'later';
+
+export interface PanelSlot {
   name: string;
-  /** 0-3: the ability's position on the hero's ability bar (the order of `hero.abilities`, left to right). */
-  slot: number;
+  icon: string; // app-relative image path
+  key: string;
+  unlock: PointState;
+  /** Point pills top to bottom: cost 5 (tier 3), cost 2 (tier 2), cost 1 (tier 1). */
+  tiers: [PointState, PointState, PointState];
 }
 
-/** The ability the plan wants upgraded at this round/choice: the step the "Ability order" list marks `now`. */
-export function abilityTargetFor(
+/** The ability upgrade panel for one round: the hero's four abilities in bar order with each point's state. */
+export interface AbilityPanelData {
+  round: number;
+  slots: PanelSlot[];
+}
+
+/** Key caps under the four abilities, left to right (the third is a guess: the reference shot hides it). */
+export const ABILITY_KEYS = ['Q', 'E', 'R', 'F'] as const;
+
+/** The standard order's points as the panel shows them for `round`: the three steps the order spends this round
+ *  are `now`, earlier steps `done`, later ones `later`. Unlocks are separate from the three tier points. */
+export function abilityPanelFor(
   order: BrawlAbilityOrder,
   hero: Hero,
+  abilities: Ability[],
   round: number,
-  choice: number,
-): AbilityTarget | null {
-  const a = order.steps[abilityStepIndex(round, choice)]?.ability;
-  if (!a) return null;
-  const slot = hero.abilities.indexOf(a.class_name);
-  return slot < 0 ? null : { name: a.name, slot };
+): AbilityPanelData {
+  const first = (round - 1) * 3;
+  const stateOf = (index: number | undefined): PointState =>
+    index === undefined || index >= first + 3 ? 'later' : index >= first ? 'now' : 'done';
+  const slots = hero.abilities.slice(0, 4).map((cls, i): PanelSlot => {
+    const steps = order.steps.filter((s) => s.ability.class_name === cls);
+    const at = (kind: AbilityStep['kind']) => stateOf(steps.find((s) => s.kind === kind)?.index);
+    const ability = abilities.find((a) => a.class_name === cls);
+    return {
+      name: ability?.name ?? cls,
+      icon: ability?.image_webp ?? '',
+      key: ABILITY_KEYS[i]!,
+      unlock: at('unlock'),
+      tiers: [at('tier3'), at('tier2'), at('tier1')],
+    };
+  });
+  return { round, slots };
 }

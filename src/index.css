@@ -966,18 +966,6 @@ footer {
 .brawl-ability-order small {
   opacity: 0.7;
 }
-.brawl-ability-next {
-  display: inline-block;
-  font-size: 13px;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
-  color: #0a1010;
-  background: var(--teal);
-  padding: 4px 8px;
-  border-radius: 6px;
-  margin: 4px 0;
-}
 .brawl-pick {
   display: inline-flex;
   align-items: center;
@@ -1294,18 +1282,6 @@ footer {
   font-size: 14px;
   opacity: 0.85;
 }
-.overlay-panel-ability-next {
-  display: inline-block;
-  margin-top: 6px;
-  font-size: 14px;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
-  color: #0a1010;
-  background: #39ff6a;
-  padding: 3px 8px;
-  border-radius: 6px;
-}
 
 .brawl-testmode {
   align-items: center;
@@ -1313,4 +1289,119 @@ footer {
 }
 .brawl-testmode-message {
   color: #ffb020;
+}
+
+/* Ability upgrade panel (AbilityPanel.tsx), modelled on the game's own. --u = one px of the 485-px-wide original. */
+.ap {
+  --u: 1px;
+  --ap-lilac: rgb(206, 136, 215);
+  width: calc(485 * var(--u));
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: calc(10 * var(--u));
+  padding: calc(18 * var(--u)) calc(14 * var(--u)) calc(16 * var(--u));
+  background: rgb(42, 42, 38);
+  border-top: calc(8 * var(--u)) solid rgb(206, 145, 255);
+  border-radius: calc(8 * var(--u));
+  color: rgb(214, 199, 176);
+  font-family:
+    system-ui,
+    -apple-system,
+    sans-serif;
+  font-weight: 800;
+  font-size: calc(17 * var(--u));
+  pointer-events: none;
+  user-select: none;
+}
+.ap-col {
+  display: flex;
+  flex-direction: column;
+  gap: calc(6 * var(--u));
+}
+.ap-pill {
+  height: calc(28 * var(--u));
+  border-radius: calc(14 * var(--u));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(5 * var(--u));
+}
+.ap-later {
+  background: rgb(35, 35, 30);
+}
+.ap-now {
+  background: var(--ap-lilac);
+  color: rgb(20, 14, 24);
+}
+.ap-done {
+  background: rgb(42, 30, 52);
+  color: rgb(190, 150, 205);
+}
+.ap-bolt {
+  font-size: 0.8em;
+}
+.ap-ability {
+  position: relative;
+  margin-top: calc(18 * var(--u));
+  height: calc(100 * var(--u));
+  display: flex;
+  justify-content: center;
+}
+.ap-circle {
+  width: calc(84 * var(--u));
+  height: calc(84 * var(--u));
+  border-radius: 50%;
+  background: rgb(232, 228, 234);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+}
+.ap-circle img {
+  width: 80%;
+  height: 80%;
+  filter: brightness(0) opacity(0.78);
+}
+.ap-unlock-now .ap-circle {
+  box-shadow: 0 0 0 calc(4 * var(--u)) rgb(206, 145, 255);
+}
+.ap-unlock-later .ap-circle {
+  opacity: 0.4;
+}
+.ap-badge {
+  position: absolute;
+  top: calc(-14 * var(--u));
+  z-index: 1;
+  padding: calc(2 * var(--u)) calc(8 * var(--u));
+  border-radius: calc(4 * var(--u));
+  background: rgb(60, 92, 150);
+  color: rgb(243, 229, 210);
+  font-size: calc(14 * var(--u));
+}
+.ap-key {
+  position: absolute;
+  bottom: 0;
+  min-width: calc(28 * var(--u));
+  text-align: center;
+  border-radius: calc(4 * var(--u));
+  background: rgb(232, 227, 234);
+  color: rgb(30, 30, 30);
+  font-size: calc(18 * var(--u));
+}
+/* On the game: bottom-centre, above the ability bar (which starts ~90 % down), 22 % of the window wide. */
+.overlay-ap {
+  --u: 0.04536vw;
+  position: fixed;
+  left: 50%;
+  bottom: 12.5%;
+  transform: translateX(-50%);
+}
+.ap-control {
+  --u: 0.8px;
+  margin: 8px 0;
+}
+.ap-pip {
+  --u: 0.6px;
+  margin: 6px 0;
 }

@@ -31,9 +31,9 @@ Repo constitution for planner / worker / evaluator agents. Overrides generic sta
 - `npm run win:dev` — the actual way to run the app from WSL: syncs, then launches real Windows
   `electron.exe` from the Windows copy.
 - `npm run win:e2e [-- --only <case1,case2>]` — drives real Windows `electron.exe` end to end (boot,
-  capture-denied, test mode: advice/boxes/frame switches/ability tip/blank overlay) and writes
+  capture-denied, test mode: advice/boxes/frame switches/ability points panel/blank overlay) and writes
   `logs/win-e2e.json`. Cases are `boot`, `capture-denied`, `testmode`, `overlay-closed`. The
-  ability tip runs 3 s in the harness (`BRAWL_TIP_MS`), not the real 15 s. Target: a full run under 30 s; the
+  ability panel runs 1.2 s in the harness (`BRAWL_TIP_MS`), not the real 15 s. Target: a full run under 30 s; the
   harness's own hard timeout is 40 s. It needs a >= 1080p desktop (see Overlay behaviour). Don't touch a window it didn't
   create. `--only selftest-fail` is a deliberately failing case that proves the harness can fail — it never
   runs as part of the default full run.
@@ -58,6 +58,10 @@ that one session; do not add a new case or a second app launch. Commands live in
 
 ## Test mode
 
+On a real desktop the dummy window opens at the left edge of the work area and the control window is resized to
+fill the right side (`arrangeSideBySide`); closing test mode restores the control window's bounds. Under `BRAWL_E2E`
+nothing is moved.
+
 The control window's **Test mode (dummy Deadlock window)** button (`BrawlView.tsx`, state owned by
 `startTestMode`/`stopTestMode` in `electron/main.ts`) opens a frameless dummy window titled exactly `Deadlock`,
 sized 1920x1080 _physical_ px (the recogniser needs ~1080p to read the round/choice glyphs), showing one of
@@ -70,11 +74,11 @@ source list) — nothing else can be captured. The old keyboard-shortcut demo an
 ## Overlay behaviour (blank outside the draft)
 
 - The overlay draws nothing, and its window is hidden (`syncOverlay` in `electron/main.ts`), unless the item draft
-  screen is on the frame (`OverlayState.draft`) or the ability tip (`OverlayState.tip`) is running
-  (`overlayHasContent`, `src/brawl/overlayContent.ts`). The tip is a green outline on the game's ability bar
-  (`abilityCircle`/`drawAbilityTip` in `src/brawl/draw.ts`) for `TIP_MS` (15 s) after the draft screen closes
-  (`src/brawl/abilityTip.ts`, a pure state machine); a reopened draft ends it at once. It outlines the step the
-  "Ability order" list marks `now`.
+  screen is on the frame (`OverlayState.draft`) or the ability points panel (`OverlayState.panel`) is showing
+  (`overlayHasContent`, `src/brawl/overlayContent.ts`). The panel is an HTML picture of the game's ability upgrade
+  panel (`src/components/AbilityPanel.tsx`, data from `abilityPanelFor` in `src/brawl/abilities.ts`) for 15 s after
+  the draft screen closes (`src/brawl/abilityPanelTimer.ts`, a pure state machine); a reopened draft ends it at once.
+  It shows this round's standard points highlighted, earlier rounds' greyed with a check, later ones plain.
 - No yellow outline: Windows Graphics Capture draws one; `disable-features=AllowWgcWindowCapturer` (in
   `electron/main.ts` and both harnesses) falls back to Chromium's GDI window capturer, which has none. Keep that
   switch in all three places.
@@ -225,5 +229,10 @@ in `win:e2e`/`win:demo` drives the actual game:
   identical to full frames. Do not reassign `canvas.width/height` per frame (reallocates); it cost ~100 ms.
 - The worker persists across capture sessions (`reset`/`stop` messages); OCR is warmed on `init`/`reset`.
 - Timing (`src/perf.ts`, `process.metrics`) runs only in dev (`DEV_SERVER_URL` / `import.meta.env.DEV`).
+- Speed (advice latency): matching uses summed-area tables (`integralOf`/`sampleFast` in `recognise.ts`, exact same
+  reads as `sampleSquare`, ~2x faster); the worker is built and its icon index decoded when the app opens; the hero bar
+  read (~0.7 s) is reused for the whole match while a pixel fingerprint of the bar still matches (`matchBar` in
+  `worker.ts`); the control and dummy windows set `backgroundThrottling: false` so covered windows keep rendering.
+  `scripts/__tests__/frame-reads.test.ts` pins the reads on the demo frames so speed work cannot change advice.
 - Main lowers its own and child priority below normal (skipped under `BRAWL_E2E`).
 - Not verified on real Windows: GDI probe with a real Deadlock (borderless and fullscreen). Check by hand.

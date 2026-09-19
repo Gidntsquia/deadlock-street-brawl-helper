@@ -76,7 +76,7 @@ let pollTimer: ReturnType<typeof setInterval> | null = null;
 // *actual* live click-through state instead of the literal `true` createOverlayWindow() happens to pass
 // today (electron/main.ts has no BrowserWindow getter to read this back).
 let overlayIgnoresMouseEvents = false;
-// The overlay window is on screen only while there is something to draw (the item draft screen or the ability tip)
+// The overlay window is on screen only while there is something to draw (the item draft screen or the ability points panel)
 // and the game window exists: a transparent always-on-top window over a running game is what costs the game frames,
 // so outside those moments it is hidden, not merely blank. `overlayEnabled` is the tray / shortcut toggle.
 let overlayWanted = false;
@@ -164,6 +164,7 @@ function createControlWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
+      backgroundThrottling: false, // the capture loop runs here while the game is in front of this window
     },
   });
   logPreloadErrors(control);
@@ -372,6 +373,20 @@ async function showTestFrame(win: BrowserWindow, frame: string): Promise<boolean
   }
 }
 
+let controlBoundsBeforeTest: Electron.Rectangle | null = null;
+
+/** Test mode on a real desktop: the dummy game window goes to the left edge of the work area and the control window
+ *  fills what is left on the right, so both can be seen at once (the overlay follows the dummy on its own). */
+function arrangeSideBySide(dummy: BrowserWindow) {
+  const wa = screen.getDisplayMatching(dummy.getBounds()).workArea;
+  dummy.setPosition(wa.x, wa.y);
+  if (!alive(control)) return;
+  const dw = dummy.getBounds().width;
+  if (!controlBoundsBeforeTest) controlBoundsBeforeTest = control.getBounds();
+  if (control.isMaximized() || control.isMinimized()) control.restore();
+  control.setBounds({ x: wa.x + dw, y: wa.y, width: Math.max(360, wa.width - dw), height: wa.height });
+}
+
 /** Turns test mode on: opens a visible dummy game window (titled exactly "Deadlock", borderless, 16:9, showing
  *  a real draft screenshot) that the normal capture path then finds and reads like the real game. Refuses --
  *  without touching anything -- when a real "Deadlock" window is already open. */
@@ -400,7 +415,7 @@ async function startTestMode(frame?: string) {
     show: false,
     title: GAME_WINDOW_TITLE,
     backgroundColor: '#000000',
-    webPreferences: { contextIsolation: true, nodeIntegration: false },
+    webPreferences: { contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
   });
   testWindow = win;
   win.on('page-title-updated', (e) => e.preventDefault()); // keep the exact game title
@@ -423,6 +438,7 @@ async function startTestMode(frame?: string) {
   // Harness only: a transparent (opacity < 1) window is not offered by window capture at all, so the dummy is
   // fully opaque but pushed to the bottom of the z-order so it never covers the person's other windows.
   if (process.env.BRAWL_E2E) sendWindowToBottom(win.getNativeWindowHandle());
+  else arrangeSideBySide(win);
   log('electron-main', 'info', 'testmode.start', { frame: testFrame, decoded, bounds: win.getBounds() });
   broadcastTestState();
   return testState();
@@ -434,6 +450,8 @@ function stopTestMode(message: string | null = null) {
   testWindow = null;
   testMessage = message;
   if (alive(win)) win.close();
+  if (controlBoundsBeforeTest && alive(control)) control.setBounds(controlBoundsBeforeTest);
+  controlBoundsBeforeTest = null;
   if (alive(overlay) && !lastRect) overlay.hide();
   log('electron-main', 'info', 'testmode.stop');
   broadcastTestState();

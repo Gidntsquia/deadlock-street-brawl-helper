@@ -17,7 +17,7 @@ import {
   type RerollAdvice,
   brawlAbilityOrder,
   abilityStepIndex,
-  abilityTargetFor,
+  abilityPanelFor,
   initialTip,
   stepTip,
   shopProbeRect,
@@ -26,12 +26,13 @@ import {
   REROLL_SEARCH,
   findRerollButton,
   TIP_MS,
-  type AbilityTarget,
+  type AbilityPanelData,
   type TipState,
 } from '../brawl';
 import { createPerf } from '../perf';
 import type { FrameRegion, WorkerIn, WorkerOut } from '../brawl/worker';
 import { BLANK_OVERLAY, drawReads, scoresFromAdvice, type OverlayAdvice, type OverlayState } from '../brawl/draw';
+import { AbilityPanel } from './AbilityPanel';
 import { ItemTile } from './ItemTile';
 import { log } from '../log';
 import { usePersisted, isNumber, isNumberArray } from '../hooks/usePersisted';
@@ -39,12 +40,12 @@ import { usePersisted, isNumber, isNumberArray } from '../hooks/usePersisted';
 const CAPTURE_MS = 120; // pause between draft frames; the worker paces the loop (see worker.ts) so it keeps running while the tab is hidden
 // Capture frame rate: the draft screen needs a look a few times a second, everything else barely at all.
 // Switched on the fly with track.applyConstraints so a game window nobody is drafting in costs almost nothing.
-const DRAFT_FPS = 8;
+const DRAFT_FPS = 15;
 // Dev only (a production build records nothing): timing summaries every 10 s, see src/perf.ts.
 const perf = createPerf(import.meta.env.DEV, 'brawl-view');
 const WAITING_STATUS = 'waiting for the draft screen';
 const CAPTURE_IDLE_MS = 4000; // no draft screen or tip for this long: stop capturing (real game only)
-const IDLE_FPS = 2;
+const IDLE_FPS = 4;
 const ENEMY_SLOTS = 4;
 const isElectron = typeof window !== 'undefined' && !!window.brawlAPI;
 
@@ -70,16 +71,34 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
   const [cards, setCards] = useState<Offer[]>([]);
   const [capture, setCapture] = useState<'off' | 'starting' | 'on'>('off');
   const [status, setStatus] = useState('');
-  // Debounced "the item draft screen is up" and the ability tip that follows its closing (see abilityTip.ts).
+  // Debounced "the item draft screen is up" and the ability tip that follows its closing (see abilityPanelTimer.ts).
   // The overlay draws nothing unless one of them is set.
   const [draftOpen, setDraftOpen] = useState(false);
-  const [tip, setTip] = useState<AbilityTarget | null>(null);
+  const [tip, setTip] = useState<AbilityPanelData | null>(null);
   // Electron only: main.ts denied the last capture attempt (Deadlock isn't open). Blocks the auto-start
   // effect from retrying on every rect tick; cleared once the game window actually appears.
   const [denied, setDenied] = useState(false);
   const [pip, setPip] = useState<Window | null>(null);
   const [took_, setTook] = useState<string>('');
   const workerRef = useRef<Worker | null>(null);
+  const workerStartedRef = useRef(false); // the worker has been sent 'init' (capture loop running or resettable)
+  const workerIndexRef = useRef<IconIndex | null>(null);
+  const workerTiers = () => {
+    const tiers: Record<number, number> = {};
+    for (const i of items) tiers[i.id] = i.item_tier;
+    return tiers;
+  };
+  /** Creates the recogniser worker and has it decode the icon index and warm its readers. Called when the app
+   *  opens (so the first draft frame is not the one that pays for it) and again from startCapture if needed. */
+  const makeWorker = async (): Promise<Worker | null> => {
+    if (workerRef.current) return workerRef.current;
+    workerIndexRef.current ??= await j<IconIndex>('brawl-icons.json');
+    if (workerRef.current) return workerRef.current;
+    const w = new Worker(new URL('../brawl/worker.ts', import.meta.url), { type: 'module' });
+    w.postMessage({ type: 'warm', index: workerIndexRef.current, tiers: workerTiers() } satisfies WorkerIn);
+    workerRef.current = w;
+    return w;
+  };
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   // Set by the capture-denied IPC handler below, reset at the start of every startCapture() attempt.
@@ -104,10 +123,10 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
   const previewRef = useRef<HTMLCanvasElement | null>(null);
   const roundRef = useRef(round);
   const choiceRef = useRef(choice);
-  const tipStateRef = useRef<TipState<AbilityTarget>>(initialTip());
-  const abilityTargetRef = useRef<AbilityTarget | null>(null);
+  const tipStateRef = useRef<TipState<AbilityPanelData>>(initialTip());
+  const abilityTargetRef = useRef<AbilityPanelData | null>(null);
   const draftRef = useRef(false);
-  const tipRef = useRef<AbilityTarget | null>(null);
+  const tipRef = useRef<AbilityPanelData | null>(null);
   const frameDimsRef = useRef({ w: 0, h: 0 });
   const rerollRectRef = useRef<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const rerollCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -171,10 +190,10 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
   const topItems = useMemo(() => (input ? topItemsByTier(input) : []), [input]);
   const abilityOrder = useMemo(() => (input ? brawlAbilityOrder(input) : null), [input]);
   const abilityStepNow = abilityStepIndex(round, choice);
-  // The ability the list below marks `now`; the tip outlines exactly this one (latched when the draft closes).
+  // The standard point allocation for this round, shown ~15 s after the draft closes (latched then).
   const abilityTarget = useMemo(
-    () => (abilityOrder ? abilityTargetFor(abilityOrder, hero, round, choice) : null),
-    [abilityOrder, hero, round, choice],
+    () => (abilityOrder && input ? abilityPanelFor(abilityOrder, hero, input.abilities, round) : null),
+    [abilityOrder, input, hero, round],
   );
   useEffect(() => {
     abilityTargetRef.current = abilityTarget;
@@ -198,7 +217,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
         frameH: frameDimsRef.current.h,
         advice: draft ? overlayAdviceRef.current : null,
         draft,
-        tip: tipNow,
+        panel: tipNow,
       };
     }
     const json = JSON.stringify(state);
@@ -293,15 +312,18 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
     try {
       setCapture('starting');
       setStatus('loading icon index…');
-      if (workerRef.current) workerRef.current.postMessage({ type: 'reset' } satisfies WorkerIn);
+      if (workerRef.current && workerStartedRef.current)
+        workerRef.current.postMessage({ type: 'reset' } satisfies WorkerIn);
       else {
-        const index = await j<IconIndex>('brawl-icons.json');
-        if (gen !== captureGenRef.current) return;
-        const w = new Worker(new URL('../brawl/worker.ts', import.meta.url), { type: 'module' });
-        const tiers: Record<number, number> = {};
-        for (const i of items) tiers[i.id] = i.item_tier;
-        w.postMessage({ type: 'init', index, tiers, intervalMs: CAPTURE_MS } satisfies WorkerIn);
-        workerRef.current = w;
+        const w = workerRef.current ?? (await makeWorker());
+        if (!w || gen !== captureGenRef.current) return;
+        w.postMessage({
+          type: 'init',
+          index: workerIndexRef.current!,
+          tiers: workerTiers(),
+          intervalMs: CAPTURE_MS,
+        } satisfies WorkerIn);
+        workerStartedRef.current = true;
       }
       // Logged before the call, unlike capture.start below, so a denied/failed attempt still leaves a
       // trace — the e2e harness's retry-loop checks count this line, not capture.start, since a denial
@@ -357,9 +379,16 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
       stopCapture();
       workerRef.current?.terminate();
       workerRef.current = null;
+      workerStartedRef.current = false;
     },
     [stopCapture],
   );
+  // Pre-bake: build and warm the recogniser worker as soon as the app opens (Electron only: the browser path
+  // starts from a click), so the first draft frame does not wait for icon decoding and JIT warm-up.
+  useEffect(() => {
+    if (isElectron) void makeWorker().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Belt-and-braces: if the <video> element instance ever changes (React remounting it for any reason)
   // while a capture stream is live, re-attach it instead of leaving the new element with no srcObject.
@@ -909,7 +938,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
                 </button>
               </div>
             )}
-            {tip && <div className="brawl-ability-next">upgrade: {tip.name}</div>}
+            {tip && <AbilityPanel panel={tip} className="ap-pip" />}
             {capture === 'on' && (
               <canvas
                 ref={previewRef}
@@ -980,6 +1009,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
           ) : (
             <div className="muted">no Street Brawl ability data for {hero.name} yet; fallback order shown</div>
           )}
+          {abilityTarget && <AbilityPanel panel={abilityTarget} className="ap-control" />}
           <ol className="brawl-ability-order">
             {abilityOrder.steps.map((s, k) => (
               <li key={k} className={k === abilityStepNow ? 'now' : ''}>

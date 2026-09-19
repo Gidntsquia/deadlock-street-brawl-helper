@@ -1,5 +1,5 @@
 // Win32 window lookup for the Deadlock game window: rect tracking the browser sandbox can't do.
-// Uses koffi (prebuilt FFI, no node-gyp) per docs/electron-overlay-plan.md phase 3.
+// Uses koffi (prebuilt FFI, no node-gyp).
 import koffi from 'koffi';
 
 export interface Rect {

@@ -173,6 +173,89 @@ export function sampleSquare(img: RGBImage, x0: number, y0: number, edge: number
   return out;
 }
 
+/** Summed-area table of a rectangle of `img` (per channel), so a box average costs four lookups instead of a walk
+ *  over every pixel. Sums are whole numbers well inside a double, so `sampleFast` returns exactly what
+ *  `sampleSquare` does. Built once per card / portrait and reused for every position and scale searched there. */
+interface Integral {
+  x0: number;
+  y0: number;
+  w: number;
+  h: number;
+  t: Float64Array;
+}
+function integralOf(img: RGBImage, bx0: number, by0: number, bx1: number, by1: number): Integral {
+  const x0 = Math.max(0, Math.floor(bx0)),
+    y0 = Math.max(0, Math.floor(by0)),
+    x1 = Math.min(img.width, Math.ceil(bx1)),
+    y1 = Math.min(img.height, Math.ceil(by1));
+  const w = Math.max(0, x1 - x0),
+    h = Math.max(0, y1 - y0),
+    ch = img.channels,
+    W = img.width,
+    d = img.data,
+    stride = w + 1,
+    t = new Float64Array(stride * (h + 1) * 3);
+  for (let y = 0; y < h; y++) {
+    let r = 0,
+      g = 0,
+      b = 0,
+      p = ((y0 + y) * W + x0) * ch;
+    for (let x = 0; x < w; x++, p += ch) {
+      r += d[p];
+      g += d[p + 1];
+      b += d[p + 2];
+      const o = ((y + 1) * stride + x + 1) * 3,
+        u = (y * stride + x + 1) * 3;
+      t[o] = t[u] + r;
+      t[o + 1] = t[u + 1] + g;
+      t[o + 2] = t[u + 2] + b;
+    }
+  }
+  return { x0, y0, w, h, t };
+}
+function sampleFast(img: RGBImage, ig: Integral, x0: number, y0: number, edge: number, size: number): Float32Array {
+  const step = edge / size,
+    W = img.width,
+    H = img.height;
+  const xs = new Int32Array(size + 1),
+    ys = new Int32Array(size + 1);
+  for (let g = 0; g <= size; g++) {
+    xs[g] = Math.min(W, Math.max(0, g === size ? Math.ceil(x0 + edge) : Math.floor(x0 + g * step)));
+    ys[g] = Math.min(H, Math.max(0, g === size ? Math.ceil(y0 + edge) : Math.floor(y0 + g * step)));
+  }
+  const ex = ig.x0 + ig.w,
+    ey = ig.y0 + ig.h;
+  if (
+    xs[0] < ig.x0 ||
+    ys[0] < ig.y0 ||
+    Math.max(xs[size], xs[size - 1] + 1) > ex ||
+    Math.max(ys[size], ys[size - 1] + 1) > ey
+  )
+    return sampleSquare(img, x0, y0, edge, size); // outside the table: the slow path gives the same answer
+  const out = new Float32Array(size * size * 3),
+    stride = ig.w + 1,
+    t = ig.t;
+  for (let gy = 0; gy < size; gy++) {
+    const ya = ys[gy],
+      yb = Math.min(H, Math.max(ya, ys[gy + 1] === ya ? ya + 1 : ys[gy + 1]));
+    for (let gx = 0; gx < size; gx++) {
+      const xa = xs[gx],
+        xb = Math.min(W, Math.max(xa, xs[gx + 1] === xa ? xa + 1 : xs[gx + 1]));
+      const n = (xb - xa) * (yb - ya);
+      if (n <= 0) continue;
+      const a = ((ya - ig.y0) * stride + (xa - ig.x0)) * 3,
+        b = ((ya - ig.y0) * stride + (xb - ig.x0)) * 3,
+        c = ((yb - ig.y0) * stride + (xa - ig.x0)) * 3,
+        e = ((yb - ig.y0) * stride + (xb - ig.x0)) * 3,
+        o = (gy * size + gx) * 3;
+      out[o] = (t[e] - t[b] - t[c] + t[a]) / n;
+      out[o + 1] = (t[e + 1] - t[b + 1] - t[c + 1] + t[a + 1]) / n;
+      out[o + 2] = (t[e + 2] - t[b + 2] - t[c + 2] + t[a + 2]) / n;
+    }
+  }
+  return out;
+}
+
 const ncc = (a: Float32Array, b: Float32Array, n: number) => {
   let s = 0;
   for (let i = 0; i < a.length; i++) s += a[i] * b[i];
@@ -224,13 +307,15 @@ export function matchIcon(
   const ks = pool.map((id) => index.ids.indexOf(id)).filter((k) => k >= 0);
   let best: IconMatch = { itemId: 0, score: -1, margin: 0, x: 0, y: 0, edge: icon };
   let second = -1;
+  const reach = (icon * Math.max(1, ...scales)) / 2 + search + 2;
+  const ig = integralOf(img, cx - reach, cy - reach, cx + reach, cy + reach);
   for (const sc of scales) {
     const edge = icon * sc;
     for (let dy = -search; dy <= search; dy += step)
       for (let dx = -search; dx <= search; dx += step) {
         const x = cx - edge / 2 + dx,
           y = cy - edge / 2 + dy;
-        const v = normalise(sampleSquare(img, x, y, edge, index.size), index.size, mask);
+        const v = normalise(sampleFast(img, ig, x, y, edge, index.size), index.size, mask);
         for (const k of ks) {
           const s = ncc(v, index.pixels[k], n);
           if (s > best.score) {
@@ -468,11 +553,13 @@ export function matchHero(img: RGBImage, index: DecodedIndex, cx: number, cy: nu
     for (const id of shortlist(v0, index.heroIds, index.heroPixels, n, HERO_SHORTLIST)) pool.add(id);
   }
   const ks = [...pool].map((id) => index.heroIds.indexOf(id));
+  const reach = (diameter * Math.max(...HERO_BAR.scales)) / 2 + search + 2;
+  const ig = integralOf(img, cx - reach, cy - reach, cx + reach, cy + reach);
   for (const sc of HERO_BAR.scales) {
     const e = diameter * sc;
     for (let dy = -search; dy <= search; dy += step)
       for (let dx = -search; dx <= search; dx += step) {
-        const v = normalise(sampleSquare(img, cx - e / 2 + dx, cy - e / 2 + dy, e, index.size), index.size, mask);
+        const v = normalise(sampleFast(img, ig, cx - e / 2 + dx, cy - e / 2 + dy, e, index.size), index.size, mask);
         for (const k of ks) {
           const s = ncc(v, index.heroPixels[k], n);
           if (s > best.score) {

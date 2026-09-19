@@ -2,7 +2,7 @@
 // requires the REAL electron-dist/main.js (not a stub), drives it via executeJavaScript, and writes one
 // JSON report. Filter cases with --only <name1,name2,...>. Everything runs against the app's own Test mode
 // dummy window (no fake-deadlock.ps1 window is opened). Hard timeout 60s; a full run
-// takes ~25 s. The ability tip lasts TIP_MS here (BRAWL_TIP_MS, 1.2 s) instead of the real 15 s.
+// takes ~25 s. The ability panel lasts TIP_MS here (BRAWL_TIP_MS, 1.2 s) instead of the real 15 s.
 'use strict';
 process.env.BRAWL_E2E = '1';
 const TIP_MS = 1200;
@@ -308,6 +308,14 @@ async function main() {
         drawn: window.__overlayDrawn ?? [],
         head: document.querySelector('.overlay-panel-head')?.textContent ?? '',
         panel: !!document.querySelector('.overlay-panel'),
+        ap: !!document.querySelector('.ap'),
+        now: [...document.querySelectorAll('.ap-col')].flatMap((c) => [
+          ...(c.querySelector('.ap-ability')?.dataset.unlock === 'now' ? [c.dataset.ability + '|unlock'] : []),
+          ...[...c.querySelectorAll('.ap-pill[data-state="now"]')].map(
+            (p) => c.dataset.ability + '|' + ({ 5: 'tier3', 2: 'tier2', 1: 'tier1' })[p.dataset.cost],
+          ),
+        ]).sort(),
+        done: document.querySelectorAll('.ap-pill[data-state="done"]').length,
         cards: [...document.querySelectorAll('.overlay-panel-card')].map((e) => e.textContent).join(' | '),
         scores: [...document.querySelectorAll('.overlay-panel-card')]
           .map((e) => (e.textContent || '').match(/ · (-?[0-9.]+) ·/)?.[1]).filter(Boolean),
@@ -342,7 +350,7 @@ async function main() {
       return { ok: !!ok, ms: Date.now() - start, last };
     };
     // Warm up on the in-round frame (capture start-up is not what the 2 s bound measures); nothing may be
-    // drawn except the ability tip, which the tip checks below use.
+    // drawn.
     await setFrame('gameplay');
     await waitFor(
       () => captureAttempts >= 1 && js(control, '!!document.querySelector("video")?.videoWidth'),
@@ -434,49 +442,54 @@ async function main() {
       results.join(' '),
     );
 
-    // --- leave the draft: gameplay frame -> tip on the ability marked `now`, then gone on its own ---
-    const expectedName = await js(
+    // --- leave the draft: gameplay frame -> ability panel with this round's points highlighted, then gone ---
+    const expectedNow = await js(
       control,
-      `(() => { const li = document.querySelector('.brawl-ability-order li.now'); return li ? li.childNodes[0].textContent.trim() : null; })()`,
+      `(() => {
+        const round = Number(document.querySelector('select[aria-label="Round"]').value);
+        return [...document.querySelectorAll('.brawl-ability-order li')]
+          .slice((round - 1) * 3, (round - 1) * 3 + 3)
+          .map((li) => li.childNodes[0].textContent.trim() + '|' + li.querySelector('small').textContent.replace(/[()]/g, ''))
+          .sort();
+      })()`,
     );
     await setFrame('gameplay');
     const tipSeen = await waitFor(
       async () => {
         const s = await readOverlay();
-        const d = s.drawn.find((r) => r.kind === 'ability');
-        return d && !s.panel ? { s, d } : null;
+        return s.ap && !s.panel ? s : null;
       },
       6_000,
       100,
     );
     const tipStart = Date.now();
     check(
-      'tip-appears',
-      !!tipSeen && tipSeen.d.card === expectedName,
-      `expected="${expectedName}" drawn=${JSON.stringify(tipSeen?.d ?? null)}`,
+      'ability-panel-appears',
+      !!tipSeen && tipSeen.now.length > 0 && JSON.stringify(tipSeen.now) === JSON.stringify(expectedNow),
+      `expected=${JSON.stringify(expectedNow)} highlighted=${JSON.stringify(tipSeen?.now ?? null)}`,
     );
     check(
-      'tip-no-item-drawing',
-      !!tipSeen && tipSeen.s.drawn.every((r) => r.kind === 'ability'),
-      JSON.stringify(tipSeen?.s.drawn.map((r) => r.kind)),
+      'ability-panel-no-drawing',
+      !!tipSeen && tipSeen.drawn.length === 0,
+      JSON.stringify(tipSeen?.drawn.map((r) => r.kind)),
     );
-    check('tip-overlay-visible', overlay.isVisible(), `visible=${overlay.isVisible()}`);
-    const gone = await waitFor(async () => (await readOverlay()).drawn.length === 0, TIP_MS + 2_000, 100);
+    check('ability-panel-overlay-visible', overlay.isVisible(), `visible=${overlay.isVisible()}`);
+    const gone = await waitFor(async () => !(await readOverlay()).ap, TIP_MS + 2_000, 100);
     const shown = Date.now() - tipStart;
     check(
-      'tip-expires',
+      'ability-panel-expires',
       !!gone && shown >= TIP_MS - 800 && shown <= TIP_MS + 2_500,
       `shown ~${shown}ms (harness duration ${TIP_MS}ms)`,
     );
     await sleep(400);
     const after = await readOverlay();
     check(
-      'blank-after-tip',
-      after.drawn.length === 0 && !after.panel && !overlay.isVisible(),
-      `drawn=${after.drawn.length} panel=${after.panel} overlayVisible=${overlay.isVisible()}`,
+      'blank-after-panel',
+      after.drawn.length === 0 && !after.panel && !after.ap && !overlay.isVisible(),
+      `drawn=${after.drawn.length} panel=${after.panel} ap=${after.ap} overlayVisible=${overlay.isVisible()}`,
     );
 
-    // --- reopening the draft ends a running tip at once: draft -> gameplay -> draft ---
+    // --- reopening the draft ends a running panel at once: draft -> gameplay -> draft ---
     const l1 = labels.choice1;
     await js(
       control,
@@ -486,17 +499,17 @@ async function main() {
     );
     await setFrame('choice1');
     await setFrame('gameplay');
-    await waitFor(async () => (await readOverlay()).drawn.some((r) => r.kind === 'ability'), 6_000, 100);
+    await waitFor(async () => (await readOverlay()).ap, 6_000, 100);
     await setFrame('choice1');
     const ended = await waitFor(
       async () => {
         const s = await readOverlay();
-        return s.drawn.length > 0 && !s.drawn.some((r) => r.kind === 'ability') ? s : null;
+        return s.drawn.length > 0 && !s.ap ? s : null;
       },
       3_000,
       100,
     );
-    check('tip-ends-on-draft', !!ended, `drawn kinds=${JSON.stringify(ended?.drawn.map((r) => r.kind) ?? null)}`);
+    check('panel-ends-on-draft', !!ended, `drawn kinds=${JSON.stringify(ended?.drawn.map((r) => r.kind) ?? null)}`);
 
     // --- off ---
     await js(control, CLICK_TEST_MODE_JS);

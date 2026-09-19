@@ -2,6 +2,8 @@
 // responsive while frames are read. It keeps the small amount of state needed to decide when a screen is "new":
 // cards are accepted once two consecutive frames agree, and the expensive labels / hero bar read runs only then.
 import {
+  BRAWL_LAYOUT,
+  HERO_BAR,
   decodeIconIndex,
   isShopScreen,
   readDraftMeta,
@@ -25,6 +27,7 @@ export interface FrameRegion {
 }
 
 export type WorkerIn =
+  | { type: 'warm'; index: IconIndex; tiers: Record<number, number> }
   | { type: 'init'; index: IconIndex; tiers: Record<number, number>; intervalMs: number }
   // A draft frame is only the rectangles the recogniser reads (draftRegions), each with its own pixels: the worker
   // pastes them into a reused frame-sized buffer, so nothing outside them is ever copied out of the video.
@@ -76,9 +79,9 @@ let lastInv = '',
 let intervalMs = 250;
 // Off the shop screen there's nothing to react to quickly -- poll much slower, and only read the small
 // "CHOICE n OF 3" crop, until the shop reappears.
-const IDLE_INTERVAL_MS = 500;
+const IDLE_INTERVAL_MS = 300;
 // Once the draft screen's cards, round and choice are all settled, only a change matters: look less often.
-const SETTLED_INTERVAL_MS = 250;
+const SETTLED_INTERVAL_MS = 100;
 // While the cards are settled, a frame that looks the same (coarse pixel grid, same round/choice labels) skips the
 // expensive card and inventory reads and reuses the last result: a change is noticed within one interval and the
 // idle draft screen costs almost nothing.
@@ -144,6 +147,28 @@ const stage = <T>(name: string, fn: () => T): T => {
     stages[name] = performance.now() - t;
   }
 };
+// Pre-bake: the hero bar (eight portraits) is the slowest read, about 0.8 s, and it is the same for the whole match.
+// Keep the last read with a fingerprint of the bar's pixels; a later draft screen whose bar still matches reuses it
+// instead of searching all eight portraits again. A new match (other portraits) fails the check and is read afresh.
+const BAR_SIG_MAX_CHANGED = 12; // of ~200 sampled channel values; a different portrait moves most of them
+let matchBar: { bar: DraftMeta['bar']; self: number; sig: Uint8Array } | null = null;
+const barSig = (img: { width: number; height: number; data: Uint8ClampedArray }): Uint8Array => {
+  const sx = img.width / BRAWL_LAYOUT.ref.width,
+    sy = img.height / BRAWL_LAYOUT.ref.height,
+    out: number[] = [];
+  for (const cx of [...HERO_BAR.left, ...HERO_BAR.right])
+    for (let dy = -30; dy <= 30; dy += 15)
+      for (let dx = -30; dx <= 30; dx += 15) {
+        const i = (Math.round((HERO_BAR.cy + dy) * sy) * img.width + Math.round((cx + dx) * sx)) * 4;
+        out.push(img.data[i]!, img.data[i + 1]!, img.data[i + 2]!);
+      }
+  return Uint8Array.from(out);
+};
+const sameBar = (a: Uint8Array, b: Uint8Array) => {
+  let changed = 0;
+  for (let i = 0; i < a.length; i++) if (Math.abs(a[i]! - b[i]!) > 40 && ++changed > BAR_SIG_MAX_CHANGED) return false;
+  return true;
+};
 const post = (m: WorkerOut) => (self as unknown as { postMessage(m: unknown): void }).postMessage(m);
 let timer: ReturnType<typeof setTimeout> | undefined;
 const tick = (after: number, full: boolean) => {
@@ -156,12 +181,19 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
   if (msg.type === 'stop') {
     clearTimeout(timer);
     forgetDraft();
+    matchBar = null;
     void terminateOCR();
+    return;
+  }
+  if (msg.type === 'warm') {
+    // Sent when the app opens, long before a draft: decode the icon index now so the first frame does not.
+    index ??= decodeIconIndex(msg.index);
+    tiers = msg.tiers;
     return;
   }
   if (msg.type === 'init' || msg.type === 'reset') {
     if (msg.type === 'init') {
-      index = decodeIconIndex(msg.index);
+      index ??= decodeIconIndex(msg.index);
       tiers = msg.tiers;
       intervalMs = msg.intervalMs;
     }
@@ -250,7 +282,10 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
       acceptedChoice = labels.choice;
       if (labels.round > 0) acceptedRound = labels.round;
       accepted = true;
+      const bsig = barSig(img);
+      if (!knownHero && matchBar && sameBar(matchBar.sig, bsig)) knownHero = matchBar;
       meta = stage('meta', () => readDraftMeta(img, idx, knownHero ?? undefined));
+      if (meta.self) matchBar = { bar: meta.bar, self: meta.self, sig: bsig };
       // the hero bar is constant while the draft screen stays up; keep it until the screen closes (nonShopResult)
       knownHero = meta.self ? { bar: meta.bar, self: meta.self } : null;
       // rerollsRemaining above is only the fast "is there a glyph at all" read (0 or -1 pending); resolve

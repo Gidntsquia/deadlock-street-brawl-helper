@@ -1,12 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import {
-  drawAbilityTip,
-  drawReads,
-  overlayHasContent,
-  scoresFromAdvice,
-  type DrawnRect,
-  type OverlayState,
-} from '../brawl/draw';
+import { drawReads, overlayHasContent, scoresFromAdvice, type DrawnRect, type OverlayState } from '../brawl/draw';
+import { AbilityPanel } from '../components/AbilityPanel';
 import { log } from '../log';
 
 declare global {
@@ -18,7 +12,7 @@ declare global {
 /** Renders in the transparent, click-through overlay window: the highlight circles/scores on the canvas, plus a
  *  fixed HTML panel (bottom-left, out of the inventory grid and ability bar) mirroring the pop-out's ranked cards
  *  and RE-ROLL banner, so the player never has to alt-tab. It draws nothing unless the item draft screen is on
- *  the frame or the ability tip (a green outline on the ability bar, ~15 s after the draft closes) is running. */
+ *  the frame or the ability panel (the standard point allocation for the round, ~15 s after the draft closes) is up. */
 export default function OverlayApp() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const stateRef = useRef<OverlayState | null>(null);
@@ -52,7 +46,6 @@ export default function OverlayApp() {
           state.rerollRect ?? null,
         ),
       );
-    if (state.tip) drawn.push(drawAbilityTip(ctx, state.tip, sx, sy, state.frameW, state.frameH));
     // e2e-only: expose exactly what was stroked (frame px) so the harness can verify boxes without
     // re-deriving them from reads (PLAN.md item 3's boxes-<frame> check).
     if (window.brawlAPI?.isE2E) window.__overlayDrawn = drawn;
@@ -85,6 +78,7 @@ export default function OverlayApp() {
   }, []);
 
   const advice = panelState?.draft ? panelState.advice : null;
+  const abilityPanel = panelState && !panelState.draft ? panelState.panel : null;
 
   return (
     <>
@@ -110,6 +104,7 @@ export default function OverlayApp() {
           {advice.status && <div className="overlay-panel-status">{advice.status}</div>}
         </div>
       )}
+      {abilityPanel && <AbilityPanel panel={abilityPanel} className="overlay-ap" />}
     </>
   );
 }
