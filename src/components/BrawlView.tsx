@@ -610,12 +610,12 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
           items: offers.map((o) => o.itemId),
         });
         // Round / choice come from the labels on this very frame. If the round label can't be read (small or
-        // scaled windows), the round advances when the choice wraps 3 -> 1; anything else keeps the old value.
+        // scaled windows), the round advances when the choice goes back down (e.g. 3 -> 1, or 2 -> 1 after a skipped frame); anything else keeps the old value.
         // Either way the cards and labels are set together, so the panel never mixes a new set with an old label.
         if (meta.round) {
           setRound(meta.round);
           roundRef.current = meta.round;
-        } else if (meta.choice === 1 && choiceRef.current === 3) {
+        } else if (meta.choice > 0 && meta.choice < choiceRef.current) {
           roundRef.current = Math.min(5, roundRef.current + 1);
           setRound(roundRef.current);
         }

@@ -417,17 +417,11 @@ async function main() {
     }
 
     // --- five draft-frame switches: panel round/choice + card names match the frame within 2 s each ---
-    const seq = ['choice2', 'choice1'];
+    const seq = ['choice2', 'choice1', 'choice2', 'choice1', 'choice2'];
     const results = [];
     for (const name of seq) {
       const l = labels[name];
-      // round/choice selects follow the frame the way a player would (they change with each draft)
-      await js(
-        control,
-        `(() => { ${SET_SELECT_JS}
-        __setSelect('select[aria-label="Round"]', ${l.round});
-        __setSelect('select[aria-label="Choice"]', ${l.choice}); })()`,
-      );
+      // round/choice are not touched: the page takes them from the frame's own labels on accept (a real player never sets them)
       await setFrame(name);
       const r = await waitAdvice(l, l.round, l.choice, 2_000);
       results.push(`${name}:${r.ok ? 'ok' : 'FAIL'}@${r.ms}ms`);
@@ -435,7 +429,7 @@ async function main() {
       else if (r.ms > 2000) results.push('SLOW');
     }
     check(
-      'switch-2x',
+      'switch-5x',
       results.every((s) => !s.includes('FAIL') && s !== 'SLOW'),
       results.join(' '),
     );

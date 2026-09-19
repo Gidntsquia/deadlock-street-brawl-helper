@@ -18,12 +18,20 @@ async function nodeOcrDir(): Promise<string> {
   return path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'public', 'ocr');
 }
 
+/** Absolute URLs into public/ocr. A root-relative '/ocr/...' is invalid under file:// (packaged app), where it
+ *  resolves to file:///ocr/; the built worker lives in dist/assets/, so the bundle is at ../ocr there. */
+function browserOcrOpts() {
+  const dir = import.meta.env.DEV
+    ? new URL('/ocr/', self.location.href).href
+    : new URL('../ocr/', self.location.href).href;
+  const base = dir.replace(/\/$/, '');
+  return { workerPath: `${base}/worker.min.js`, corePath: base, langPath: base, gzip: true };
+}
+
 async function getWorker(): Promise<TesseractWorker> {
   if (!workerPromise) {
     workerPromise = (async () => {
-      const opts = isNode
-        ? { langPath: await nodeOcrDir(), gzip: true }
-        : { workerPath: '/ocr/worker.min.js', corePath: '/ocr', langPath: '/ocr', gzip: true };
+      const opts = isNode ? { langPath: await nodeOcrDir(), gzip: true } : browserOcrOpts();
       const worker = await createWorker('eng', 1 /* OEM.LSTM_ONLY */, opts);
       // The crop always shows just "N Re-Roll..."; a digit whitelist means the rest of the caption's
       // letters are simply not in Tesseract's output alphabet, so they don't need to be cropped out.

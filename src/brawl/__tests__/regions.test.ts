@@ -51,17 +51,20 @@ const load = async (file: string, width?: number): Promise<RGBImage> => {
 };
 
 describe('draftRegions', () => {
-  const frames = ['public/demo/choice1.png', 'public/demo/choice2.png', 'scripts/win/frames/choice1.png'];
-  for (const file of frames)
-    for (const width of [undefined, 1920, 2560]) {
-      it(`masking ${file}${width ? ` at ${width}px` : ''} to the regions changes no read`, async () => {
-        const img = await load(file, width);
-        const full = everything(img);
-        expect(full.reads.filter((r) => r.present)).toHaveLength(3); // a real draft frame, not an empty one
-        expect(full.labels.choice).toBeGreaterThan(0);
-        expect(everything(masked(img))).toEqual(full);
-      });
-    }
+  // One case per frame, each at a different size (native / 1920 / 2560): the full cross product cost ~18 s.
+  const cases: [string, number | undefined][] = [
+    ['public/demo/choice1.png', undefined],
+    ['public/demo/choice2.png', 1920],
+    ['scripts/win/frames/choice1.png', 2560],
+  ];
+  for (const [file, width] of cases)
+    it(`masking ${file}${width ? ` at ${width}px` : ''} to the regions changes no read`, async () => {
+      const img = await load(file, width);
+      const full = everything(img);
+      expect(full.reads.filter((r) => r.present)).toHaveLength(3); // a real draft frame, not an empty one
+      expect(full.labels.choice).toBeGreaterThan(0);
+      expect(everything(masked(img))).toEqual(full);
+    });
 
   it('covers a small part of the frame and stays inside it', () => {
     for (const [w, h] of [
