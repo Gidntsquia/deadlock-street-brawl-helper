@@ -17,7 +17,7 @@ mkdir -p "$WIN_COPY"
 rsync -a --delete \
   --exclude node_modules --exclude .git --exclude dist --exclude electron-dist \
   --exclude release --exclude plans --exclude screenshots --exclude logs \
-  --exclude .package-lock.hash --exclude .public.hash --exclude /public \
+  --exclude .package-lock.hash --exclude .public.hash --exclude .build.hash --exclude /public \
   "$REPO_ROOT"/ "$WIN_COPY"/
 
 # public/ is ~50 MB of data and images that rarely change; scanning it over /mnt/c costs seconds, so only sync it
@@ -45,7 +45,14 @@ else
   echo "package-lock.json unchanged — skipping npm ci"
 fi
 
-echo "building electron bundle on Windows…"
-powershell.exe -NoProfile -Command "$PREFIX & 'C:\Program Files\nodejs\npm.cmd' exec -- vite build --mode electron"
+# The Windows-side vite build takes ~5 s; skip it when nothing it reads has changed since the last build.
+BUILD_HASH=$(cd "$REPO_ROOT" && { find src electron -type f -printf '%p %s %T@\n'; ls -l --time-style=+%s.%N index.html vite.config.ts tsconfig*.json package.json package-lock.json; echo "$PUB_HASH"; } | sort | sha256sum | awk '{print $1}')
+if [ "$BUILD_HASH" = "$(cat "$WIN_COPY/.build.hash" 2>/dev/null || echo)" ] && [ -f "$WIN_COPY/electron-dist/main.js" ]; then
+  echo "sources unchanged — skipping electron build"
+else
+  echo "building electron bundle on Windows…"
+  powershell.exe -NoProfile -Command "$PREFIX & 'C:\Program Files\nodejs\npm.cmd' exec -- vite build --mode electron" || exit 1
+  echo "$BUILD_HASH" > "$WIN_COPY/.build.hash"
+fi
 
 echo "synced and built at $WIN_COPY ($WIN_COPY_WIN)"

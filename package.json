@@ -14,7 +14,7 @@
     "typecheck": "tsc -b",
     "test": "vitest run",
     "format": "prettier --check .",
-    "check": "npm run lint && npm run typecheck && npm run format && npm run test",
+    "check": "bash scripts/check.sh",
     "fetch-data": "node scripts/fetch-data.mjs --brawl",
     "fetch-data:abilities": "node scripts/fetch-data.mjs --brawl-abilities",
     "icon-index": "node scripts/build-icon-index.mjs",
