@@ -824,7 +824,7 @@ async function checkPixels(overlay, label, vidSize, expectedBestPos, frameName) 
   if (!canvasSize) return { pass: false, detail: `${frameName}: no overlay canvas` };
   const scaleFrameToCanvas = { x: canvasSize.w / vidSize.w, y: canvasSize.h / vidSize.h };
   const scaleLabelToFrame = vidSize.w / 2000;
-  // The best circle's outline must be white and the other circles' outlines grey (not white): look at the
+  // The best circle's outline must be green and the other circles' outlines grey: look at the
   // strongest pixel within a few px of the circle's leftmost point.
   const img = await overlay.webContents.capturePage();
   const imgSize = img.getSize();
@@ -840,17 +840,19 @@ async function checkPixels(overlay, label, vidSize, expectedBestPos, frameName) 
       const y = Math.min(Math.max(iy, 0), imgSize.height - 1);
       const idx = (y * imgSize.width + x) * 4;
       const px = [bitmap[idx + 2], bitmap[idx + 1], bitmap[idx], bitmap[idx + 3]];
-      if (px[0] + px[1] + px[2] > best[0] + best[1] + best[2]) best = px;
+      // strongest = most saturated-or-bright: green stroke beats its antialiased edge, grey beats background
+      const w = (p) => p[0] + p[1] + p[2] + 3 * (Math.max(p[0], p[1], p[2]) - Math.min(p[0], p[1], p[2]));
+      if (w(px) > w(best)) best = px;
     }
     return best;
   };
   const bestPx = sampleNear(scaleBox(label.circles[expectedBestPos], scaleLabelToFrame));
   const others = ['left', 'top', 'right'].filter((k) => k !== expectedBestPos);
   const otherPx = others.map((k) => sampleNear(scaleBox(label.circles[k], scaleLabelToFrame)));
-  const isWhite = (p) => p[0] >= 225 && p[1] >= 225 && p[2] >= 225;
-  const isGrey = (p) => p[0] > 40 && Math.max(p[0], p[1], p[2]) - Math.min(p[0], p[1], p[2]) <= 30 && !isWhite(p);
+  const isGreen = (p) => p[1] >= 170 && p[1] - p[0] >= 80 && p[1] - p[2] >= 80;
+  const isGrey = (p) => p[0] > 40 && Math.max(p[0], p[1], p[2]) - Math.min(p[0], p[1], p[2]) <= 30;
   return {
-    pass: isWhite(bestPx) && otherPx.every(isGrey),
+    pass: isGreen(bestPx) && otherPx.every(isGrey),
     detail: `${frameName}: bestEdge=${JSON.stringify(bestPx)} otherEdges=${JSON.stringify(otherPx)}`,
   };
 }

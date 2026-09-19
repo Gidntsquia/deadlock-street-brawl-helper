@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { COLOR_BEST, COLOR_OTHER, drawReads, itemCircle } from '../draw';
+import { COLOR_BEST_CIRCLE, COLOR_BEST_TEXT, COLOR_OTHER, drawReads, itemCircle } from '../draw';
 import type { CardRead } from '../recognise';
 import { REROLL_BUTTON } from '../recognise';
 
@@ -50,11 +50,11 @@ describe('drawReads', () => {
     expect(drawn[0].x1 - drawn[0].x0).toBeGreaterThan(2 * 50);
   });
 
-  it('draws each card score above its circle', () => {
+  it('draws each card score, prefixed with "Score: ", above its circle', () => {
     const ctx = stubCtx();
     const drawn = drawReads(ctx, [read(1, 10), read(2, 200)], 1, 1, 1, 2560, 1440, false, SCORES);
     const texts = ctx.fillText.mock.calls.map((c) => c[0]);
-    expect(texts).toEqual(['3.14', '2.50']);
+    expect(texts).toEqual(['Score: 3.14', 'Score: 2.50']);
     const { cx, cy, r } = itemCircle({ x: 10, y: 100, edge: 50 });
     const [, tx, ty] = ctx.fillText.mock.calls[0];
     expect(tx).toBe(cx);
@@ -62,19 +62,25 @@ describe('drawReads', () => {
     expect(drawn.map((d) => d.score)).toEqual([3.14159, 2.5]);
   });
 
-  it('draws the best card white and the others grey', () => {
+  it('draws the best card with a green circle and white score, the others grey', () => {
     const ctx = stubCtx();
     const drawn = drawReads(ctx, [read(1, 10), read(2, 200)], 1, 1, 1, 2560, 1440, false, SCORES);
-    expect(ctx.strokes).toEqual([COLOR_BEST, COLOR_OTHER]);
-    expect(ctx.fills).toEqual([COLOR_BEST, COLOR_OTHER]);
+    expect(ctx.strokes).toEqual([COLOR_BEST_CIRCLE, COLOR_OTHER]);
+    expect(ctx.fills).toEqual([COLOR_BEST_TEXT, COLOR_OTHER]);
+    // literally green / literally white, not just "whatever the constants say"
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(String(ctx.strokes[0]).slice(i, i + 2), 16));
+    expect(g).toBeGreaterThanOrEqual(180);
+    expect(g - Math.max(r, b)).toBeGreaterThanOrEqual(100);
+    expect(ctx.fills[0]).toBe('#ffffff');
     expect(drawn.map((d) => d.kind)).toEqual(['best', 'card']);
   });
 
-  it('draws no white card and boxes the re-roll button when reroll is true', () => {
+  it('draws no green circle or white score and boxes the re-roll button when reroll is true', () => {
     const ctx = stubCtx();
     const drawn = drawReads(ctx, [read(1, 10), read(2, 200)], 1, 1, 1, 2560, 1440, true, SCORES);
-    expect(ctx.strokes.filter((c) => c === COLOR_BEST)).toHaveLength(0);
-    expect(ctx.fills.filter((c) => c === COLOR_BEST)).toHaveLength(0);
+    expect(ctx.strokes).toEqual([COLOR_OTHER, COLOR_OTHER]);
+    expect(ctx.fills.filter((c) => c === COLOR_BEST_TEXT || c === COLOR_BEST_CIRCLE)).toHaveLength(0);
+    expect(ctx.fillText.mock.calls.map((c) => c[0]).slice(0, 2)).toEqual(['Score: 3.14', 'Score: 2.50']);
     expect(drawn.filter((d) => d.kind === 'best')).toHaveLength(0);
     expect(ctx.fillText.mock.calls.filter((c) => c[0] === 'RE-ROLL')).toHaveLength(1);
     const rerollRect = ctx.strokeRect.mock.calls.find(([x0, y0]) => x0 === REROLL_BUTTON.x0 && y0 === REROLL_BUTTON.y0);

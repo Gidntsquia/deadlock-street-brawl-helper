@@ -71,7 +71,7 @@ Start Deadlock in borderless windowed mode, then launch the exe: capture starts 
 Deadlock window is found, no picker dialog. The advice — ranked cards, RE-ROLL banner, ability order —
 is drawn straight onto the game in a small always-on-top panel, so you never have to alt-tab.
 Ctrl+Shift+O toggles the overlay; the tray icon also has a Quit item. Each item is outlined around its
-large circle with the app's score above it; the item to take is white and the others are greyed out. If Deadlock isn't running, the app
+large circle with `Score: <n>` (the app's score) above it; the item to take has a green circle and a white score, and the others are greyed out. If Deadlock isn't running, the app
 says "Deadlock window not found" instead of capturing some other window (matched by the game's exact
 window title, so the app's own window is never mistaken for it). The browser path above still works
 cross-platform and needs no packaging.

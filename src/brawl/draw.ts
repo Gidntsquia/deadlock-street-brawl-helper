@@ -70,14 +70,17 @@ export function itemCircle(match: { x: number; y: number; edge: number }): Circl
   };
 }
 
-export const COLOR_BEST = '#ffffff';
+/** Circle of the item to take. */
+export const COLOR_BEST_CIRCLE = '#22e055';
+/** Score text of the item to take. */
+export const COLOR_BEST_TEXT = '#ffffff';
 export const COLOR_OTHER = 'rgba(170,170,170,.85)';
 const COLOR_REROLL = '#ffb020';
 
 /** Draws the item circles, scores and (on RE-ROLL) the re-roll box for the current card reads, scaled from
  *  capture-frame pixels to the target canvas size. Shared by the preview canvas (BrawlView) and the Electron
- *  overlay window. Each present card gets an outline around its large circle with its score above it; the
- *  best card is white, the rest grey. When `reroll` is true, no card is white (the engine says re-roll, not
+ *  overlay window. Each present card gets an outline around its large circle with `Score: <n>` above it; the
+ *  best card has a green circle and white score text, the rest are grey. When `reroll` is true, no card is green (the engine says re-roll, not
  *  take): the "Use Re-Roll" button is boxed instead. `scores` maps itemId to the score the advice panel shows.
  *  Returns every shape actually stroked, in frame px, for callers (e.g. the e2e harness) that need to verify
  *  what was drawn without re-deriving it from the reads. */
@@ -97,19 +100,18 @@ export function drawReads(
     if (!read.present) continue;
     const isBest = !reroll && read.itemId === bestId;
     const { cx, cy, r } = itemCircle(read.match);
-    const color = isBest ? COLOR_BEST : COLOR_OTHER;
     ctx.lineWidth = isBest ? 5 : 3;
-    ctx.strokeStyle = color;
+    ctx.strokeStyle = isBest ? COLOR_BEST_CIRCLE : COLOR_OTHER;
     ctx.beginPath();
     ctx.ellipse(cx * scaleX, cy * scaleY, r * scaleX, r * scaleY, 0, 0, Math.PI * 2);
     ctx.stroke();
     const score = scores[read.itemId];
     if (score !== undefined) {
-      ctx.fillStyle = color;
+      ctx.fillStyle = isBest ? COLOR_BEST_TEXT : COLOR_OTHER;
       ctx.font = `bold ${Math.max(12, Math.round(read.match.edge * 0.26 * scaleY))}px sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'bottom';
-      ctx.fillText(score.toFixed(2), cx * scaleX, Math.max(14, (cy - r) * scaleY - 6));
+      ctx.fillText(`Score: ${score.toFixed(2)}`, cx * scaleX, Math.max(14, (cy - r) * scaleY - 6));
       ctx.textAlign = 'start';
       ctx.textBaseline = 'alphabetic';
     }

@@ -1,10 +1,11 @@
 // Checks logs/win-demo.png (produced by `npm run win:demo`, PLAN.md item 4's endpoint):
 //   npx tsx scripts/win/check-demo-png.ts logs/win-demo.png [choice1|choice2]
 // Prints `frame-visible: true|false` (the screenshot shows the draft image, not a flat/blank window) and
-// `white-on-best: true|false` (a white outline pixel lands on the labelled best item's circle and none on a
-// non-best circle, using the hand-measured `circles` labels, scaled from
+// `green-on-best` / `green-on-non-best` (a green outline pixel lands on the labelled best item's circle and none
+// on a non-best circle, using the hand-measured `circles` labels, scaled from
 // scripts/win/frames/labels.json's 2000px-wide label space to this PNG's own resolution -- the same scaling
-// scripts/win/e2e-main.cjs's pixels-<frame> check uses for item 3). Exits 1 if either is false.
+// scripts/win/e2e-main.cjs's pixels-<frame> check uses for item 3). Exits 1 unless
+// frame-visible and green-on-best are true and green-on-non-best is false.
 import { readFileSync } from 'node:fs';
 import sharp from 'sharp';
 import { adviseDraft, type BrawlInput } from '../../src/brawl';
@@ -92,12 +93,12 @@ async function main() {
       colours.add(px(Math.floor(((sx + 0.5) * w) / 5), Math.floor(((sy + 0.5) * h) / 5)).join(','));
   const frameVisible = colours.size > 1;
 
-  // white-on-best: label circles are frame px at the source PNG's own 2000-wide resolution; scale to this
-  // screenshot's width, then look for a white outline pixel within a few px of the circle's left/right/top/
+  // green-on-best: label circles are frame px at the source PNG's own 2000-wide resolution; scale to this
+  // screenshot's width, then look for a green outline pixel within a few px of the circle's left/right/top/
   // bottom extremes (the stroke is centred on the circle, so those points lie on it).
   const scale = w / 2000;
-  const isWhite = (r: number, g: number, b: number) => r >= 235 && g >= 235 && b >= 235;
-  const hasWhiteOnCircle = (c: { x0: number; y0: number; x1: number; y1: number }) => {
+  const isGreen = (r: number, g: number, b: number) => g >= 170 && g - r >= 80 && g - b >= 80;
+  const hasGreenOnCircle = (c: { x0: number; y0: number; x1: number; y1: number }) => {
     const cx = ((c.x0 + c.x1) / 2) * scale;
     const cy = ((c.y0 + c.y1) / 2) * scale;
     const pts: [number, number, number, number][] = [
@@ -111,17 +112,17 @@ async function main() {
         const x = Math.round(px0 + d * dx);
         const y = Math.round(py0 + d * dy);
         if (x < 0 || y < 0 || x >= w || y >= h) continue;
-        if (isWhite(...px(x, y))) return true;
+        if (isGreen(...px(x, y))) return true;
       }
     return false;
   };
-  const whiteOnBest = hasWhiteOnCircle(box);
-  const whiteOnNonBest = hasWhiteOnCircle(nonBox);
+  const greenOnBest = hasGreenOnCircle(box);
+  const greenOnNonBest = hasGreenOnCircle(nonBox);
 
   console.log(`frame-visible: ${frameVisible}`);
-  console.log(`white-on-best: ${whiteOnBest}`);
-  console.log(`white-on-non-best: ${whiteOnNonBest}`);
-  if (!frameVisible || !whiteOnBest || whiteOnNonBest) process.exit(1);
+  console.log(`green-on-best: ${greenOnBest}`);
+  console.log(`green-on-non-best: ${greenOnNonBest}`);
+  if (!frameVisible || !greenOnBest || greenOnNonBest) process.exit(1);
 }
 
 main();
