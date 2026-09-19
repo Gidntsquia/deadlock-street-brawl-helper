@@ -587,7 +587,9 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
         // OCR runs off the hot path (see worker.ts); only apply it if the card set it was read for is
         // still the one on screen -- otherwise a slow OCR result from a since-superseded set would
         // overwrite a newer, already-correct count (or the next set's still-pending "-1 unread").
-        if (ev.data.forKey === acceptedKeyRef.current) setRerollsLeft(ev.data.rerollsRemaining);
+        const applied = ev.data.forKey === acceptedKeyRef.current;
+        log('brawl-view', 'info', 'rerolls.read', { value: ev.data.rerollsRemaining, applied });
+        if (applied && ev.data.rerollsRemaining >= 0) setRerollsLeft(ev.data.rerollsRemaining);
         return;
       }
       const r = ev.data;

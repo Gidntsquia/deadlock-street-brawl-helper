@@ -1,5 +1,5 @@
 import { createWorker, PSM, type Worker as TesseractWorker } from 'tesseract.js';
-import { extractRerollLabelCrop, type RGBImage } from './recognise';
+import { extractRerollLabelCrop, rerollGlyphIsOne, type RGBImage } from './recognise';
 
 // All assets (worker script, wasm core, eng.traineddata.gz) are bundled under public/ocr/ so this reads
 // real digits via OCR without any network access at runtime -- required for an offline desktop app, and
@@ -91,7 +91,9 @@ export async function readRerollsRemaining(img: RGBImage): Promise<number> {
     data: { text },
   } = await worker.recognize(png as unknown as Buffer);
   const digits = text.trim().match(/^\d+$/);
-  return digits ? Number(digits[0]) : -1;
+  if (digits) return Number(digits[0]);
+  // OCR reads nothing from a soft, dim "1" (a scaled-up window); a lone thin upright bar is a 1.
+  return rerollGlyphIsOne(img) ? 1 : -1;
 }
 
 /** Releases the OCR worker (and its wasm/model memory). Call on app/window teardown; a new call to

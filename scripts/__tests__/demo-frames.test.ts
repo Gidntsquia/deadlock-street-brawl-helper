@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import sharp from 'sharp';
 import { describe, expect, it } from 'vitest';
+import { readRerollsRemaining } from '../../src/brawl/ocr';
 import {
   decodeIconIndex,
   extractRerollLabelCrop,
@@ -34,4 +35,28 @@ describe('Test-mode draft screenshots', () => {
     const reads = readDraftScreen(await load('draft-r1c2'), index, () => 0);
     expect(reads.map((r) => r.enhanced)).toEqual([false, false, true]);
   }, 20_000);
+});
+
+// What the app really receives: the dummy window's frames as captured (region-only, black elsewhere) in the live
+// Electron run -- softer and dimmer than a sharp-resized PNG, which is why the tests above passed while the app failed.
+describe('Test-mode frames as the app captures them', () => {
+  const loadLive = async (name: string): Promise<RGBImage> => {
+    const { data } = await sharp(`scripts/win/frames/live/${name}.png`)
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    return { width: 1920, height: 1080, data: new Uint8ClampedArray(data), channels: 4 };
+  };
+  it('r1c2: Spirit Lifesteal ENHANCED, round 1, one re-roll', async () => {
+    const img = await loadLive('draft-r1c2');
+    const index = decodeIconIndex(JSON.parse(readFileSync('public/data/brawl-icons.json', 'utf8')));
+    expect(readDraftScreen(img, index, () => 0).map((r) => r.enhanced)).toEqual([false, false, true]);
+    expect(readRoundChoice(img)).toEqual({ round: 1, choice: 2 });
+    expect(await readRerollsRemaining(img)).toBe(1);
+  }, 30_000);
+  it('r2c1: round 2 and one re-roll (OCR cannot read this "1"; the shape fallback does)', async () => {
+    const img = await loadLive('draft-r2c1');
+    expect(readRoundChoice(img)).toEqual({ round: 2, choice: 1 });
+    expect(await readRerollsRemaining(img)).toBe(1);
+  }, 30_000);
 });

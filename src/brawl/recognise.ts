@@ -599,12 +599,12 @@ const LABELS = {
   // "N Re-Roll Remaining", muted grey-brown caption under the "Use Re-Roll" button. Measured from
   // screenshots/brawl/reroll-choice{1,2}.png (2000x1125, both showing "1"): the digit's own bbox there is
   // x 918-921, y 804-815, scaled to the 2560x1440 ref by 2560/2000 with margin.
-  rerolls: { x0: 1150, y0: 1018, x1: 1215, y1: 1090 },
+  rerolls: { x0: 1150, y0: 1030, x1: 1215, y1: 1090 },
 } as const;
 const lightText = (r: number, g: number, b: number) => 0.299 * r + 0.587 * g + 0.114 * b > 165;
 const magentaText = (r: number, g: number, b: number) => r > 140 && b > 140 && g < 130;
 // The re-roll caption is dimmer than the round/choice labels (muted grey-brown, not bold white/magenta).
-const mutedText = (r: number, g: number, b: number) => 0.299 * r + 0.587 * g + 0.114 * b > 100;
+const mutedText = (r: number, g: number, b: number) => 0.299 * r + 0.587 * g + 0.114 * b > 90;
 const tpl = (rows: string[]): Float32Array => Float32Array.from(rows.join(''), (c) => Number(c) / 9);
 /** Round digits: bold face with a footed "1" (rows are 8 cells of fill 0-9). The "5" is drawn by hand: no screenshot of round 5 yet. */
 const ROUND_DIGITS: Record<number, Float32Array> = {
@@ -726,6 +726,9 @@ const CHOICE_DIGITS: Record<number, Float32Array> = {
 };
 export const MAX_DIGIT_DISTANCE = 0.06;
 const LOOSE_DIGIT_DISTANCE = 0.13;
+/** The round digit is only read on the draft screen (the choice label already vouches for that), so it can afford
+ *  to accept the softer glyph a scaled-up window gives: a live capture of the 2 sat at 0.14-0.20, runner-up 0.27-0.33. */
+const ROUND_LOOSE = { maxDistance: 0.25, ratio: 1.5 };
 
 /** Bounding box (window-relative px) of the first glyph in the window, or null when the window holds no text. */
 function readGlyphBBox(
@@ -735,6 +738,7 @@ function readGlyphBBox(
   x1: number,
   y1: number,
   test: (r: number, g: number, b: number) => boolean,
+  minWidth = 4,
 ): { gx0: number; gx1: number; gy0: number; gy1: number } | null {
   const on = (x: number, y: number) => {
     const [r, g, b] = rgb(img, x, y);
@@ -762,7 +766,7 @@ function readGlyphBBox(
       }
   const bw = gx1 - gx0 + 1,
     bh = gy1 - gy0 + 1;
-  if (bw < 4 || bh < 6) return null;
+  if (bw < minWidth || bh < 6) return null;
   return { gx0, gx1, gy0, gy1 };
 }
 
@@ -804,6 +808,8 @@ const readDigit = (
   box: { x0: number; y0: number; x1: number; y1: number },
   test: (r: number, g: number, b: number) => boolean,
   digits: Record<number, Float32Array>,
+  /** Accept a blurrier glyph (max distance, and how many times closer than the runner-up it must be). */
+  loose: { maxDistance: number; ratio: number } = { maxDistance: LOOSE_DIGIT_DISTANCE, ratio: 2 },
 ): number => {
   const sx = (img.origin?.fullWidth ?? img.width) / BRAWL_LAYOUT.ref.width,
     sy = (img.origin?.fullHeight ?? img.height) / BRAWL_LAYOUT.ref.height;
@@ -831,7 +837,7 @@ const readDigit = (
   }
   // A blurred or vertically stretched screenshot (Test mode's dummy) drifts from the templates; still accept a
   // clearly-best match when it is far closer than the runner-up.
-  return bestD <= MAX_DIGIT_DISTANCE || (bestD <= LOOSE_DIGIT_DISTANCE && second >= bestD * 2) ? best : 0;
+  return bestD <= MAX_DIGIT_DISTANCE || (bestD <= loose.maxDistance && second >= bestD * loose.ratio) ? best : 0;
 };
 
 /** RGBA crop of the "N Re-Roll Remaining" caption's own label box (the whole "N Re-Roll..." run, not just
@@ -844,24 +850,69 @@ export function extractRerollLabelCrop(img: RGBImage): { data: Uint8Array; width
   const box = LABELS.rerolls;
   const sx = img.width / BRAWL_LAYOUT.ref.width,
     sy = img.height / BRAWL_LAYOUT.ref.height;
-  const x0 = Math.round(box.x0 * sx),
-    y0 = Math.round(box.y0 * sy),
-    x1 = Math.round(box.x1 * sx),
+  const x1 = Math.round(box.x1 * sx),
     y1 = Math.round(box.y1 * sy);
-  if (!readGlyphBBox(img, x0, y0, x1, y1, mutedText)) return null;
-  const w = x1 - x0,
-    h = y1 - y0;
-  const data = new Uint8Array(w * h * 4);
+  let x0 = Math.round(box.x0 * sx),
+    y0 = Math.round(box.y0 * sy);
+  // minWidth 2: a soft, dim "1" is only ~3 px wide once the window has been scaled up.
+  const bb = readGlyphBBox(img, x0, y0, x1, y1, mutedText, 2);
+  if (!bb) return null;
+  // only the rows of the digit itself (plus a little air): the empty rest of the box, and the button's edge
+  // that a scaled window smears into its top, pull the contrast stretch and the OCR line finder off the text
+  const pad = 4;
+  const ty0 = Math.max(y0, y0 + bb.gy0 - pad);
+  const tx0 = x0;
+  const w = x1 - tx0,
+    h = Math.min(y1, y0 + bb.gy1 + pad + 1) - ty0;
+  y0 = ty0;
+  x0 = tx0;
+  // Dark text on white, contrast-stretched: the dim caption of a scaled-up window (Test mode, or a real game
+  // window that is not 2560x1440) reads as nothing to the OCR engine otherwise.
+  const lum = new Float32Array(w * h);
+  let lo = 255,
+    hi = 0;
   for (let y = 0; y < h; y++)
     for (let x = 0; x < w; x++) {
       const [r, g, b] = rgb(img, x0 + x, y0 + y);
-      const i = (y * w + x) * 4;
-      data[i] = r;
-      data[i + 1] = g;
-      data[i + 2] = b;
-      data[i + 3] = 255;
+      const l = 0.299 * r + 0.587 * g + 0.114 * b;
+      lum[y * w + x] = l;
+      if (l < lo) lo = l;
+      if (l > hi) hi = l;
     }
-  return { data, width: w, height: h };
+  const span = Math.max(1, hi - lo);
+  // white margin: the OCR engine reads text hard against the crop edge as nothing
+  const m = 6,
+    ow = w + 2 * m,
+    oh = h + 2 * m;
+  const data = new Uint8Array(ow * oh * 4).fill(255);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const v = 255 - Math.round(((lum[y * w + x]! - lo) / span) * 255);
+      const i = ((y + m) * ow + x + m) * 4;
+      data[i] = data[i + 1] = data[i + 2] = v;
+    }
+  return { data, width: ow, height: oh };
+}
+
+/** True when the caption's first glyph is a thin upright bar (a "1", about a third as wide as tall): the fallback
+ *  for when OCR cannot read that dim, soft digit. The OCR result wins whenever it produces a digit. */
+export function rerollGlyphIsOne(img: RGBImage): boolean {
+  const box = LABELS.rerolls;
+  const sx = img.width / BRAWL_LAYOUT.ref.width,
+    sy = img.height / BRAWL_LAYOUT.ref.height;
+  const bb = readGlyphBBox(
+    img,
+    Math.round(box.x0 * sx),
+    Math.round(box.y0 * sy),
+    Math.round(box.x1 * sx),
+    Math.round(box.y1 * sy),
+    mutedText,
+    2,
+  );
+  if (!bb) return false;
+  const bw = bb.gx1 - bb.gx0 + 1,
+    bh = bb.gy1 - bb.gy0 + 1;
+  return bh >= 8 && bw / bh <= 0.45;
 }
 
 export interface DraftMeta {
@@ -883,7 +934,7 @@ export function readDraftMeta(
 ): DraftMeta {
   const bar = known?.bar ?? readHeroBar(img, index);
   return {
-    round: readDigit(img, LABELS.round, lightText, ROUND_DIGITS),
+    round: readDigit(img, LABELS.round, lightText, ROUND_DIGITS, ROUND_LOOSE),
     choice: readDigit(img, LABELS.choice, magentaText, CHOICE_DIGITS),
     bar,
     self: known?.self ?? selfHero(bar, readSelfSlot(img)),
@@ -932,7 +983,10 @@ export function draftRegions(width: number, height: number): Region[] {
     sy = height / BRAWL_LAYOUT.ref.height;
   const boxes: [number, number, number, number][] = [];
   const cardHalf = (BRAWL_LAYOUT.icon * 1.1) / 2 + BRAWL_LAYOUT.search + 20;
-  for (const c of BRAWL_LAYOUT.cards) boxes.push([c.cx - cardHalf, c.cy - cardHalf, c.cx + cardHalf, c.cy + cardHalf]);
+  // Extra room below the icon: the ENHANCED box (readMarkers) sits ~85-122 icon-units under it, past a square crop.
+  const below = (BRAWL_LAYOUT.icon / 2 + 122 * (BRAWL_LAYOUT.icon / 185) + BRAWL_LAYOUT.search) * 1.1;
+  for (const c of BRAWL_LAYOUT.cards)
+    boxes.push([c.cx - cardHalf, c.cy - cardHalf, c.cx + cardHalf, c.cy + Math.max(cardHalf, below)]);
   const pad = 12;
   const hb = HERO_BAR;
   boxes.push([hb.left[0] - hb.diameter, 0, hb.right[3] + hb.diameter, hb.cy + hb.diameter + hb.search + pad]);
@@ -963,7 +1017,7 @@ export function draftRegions(width: number, height: number): Region[] {
  *  to run on every draft frame so a stale label is noticed as soon as it changes. */
 export function readRoundChoice(img: RGBImage): { round: number; choice: number } {
   return {
-    round: readDigit(img, LABELS.round, lightText, ROUND_DIGITS),
+    round: readDigit(img, LABELS.round, lightText, ROUND_DIGITS, ROUND_LOOSE),
     choice: readDigit(img, LABELS.choice, magentaText, CHOICE_DIGITS),
   };
 }
