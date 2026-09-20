@@ -263,6 +263,11 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
     tick(SETTLED_INTERVAL_MS, true);
     return;
   }
+  // A new picture is about to be read: ask for the next frame now, so the page copies it while this one is being read
+  // (the two-frame check below then finds it waiting instead of paying copy + hop after the read). One tick per frame:
+  // the end of this handler does not tick again.
+  clearTimeout(timer);
+  post({ type: 'tick', full: true });
   // A frame that looks the same as the one that just produced a full set of cards (and carries the same choice
   // label) confirms that read without repeating the expensive icon search: a new screen is accepted a frame sooner.
   const confirmed = lastKey !== '' && pendingChoice === labels.choice && sameSig(pendingSig, sig);
@@ -284,7 +289,7 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
       accepted = true;
       const bsig = barSig(img);
       if (!knownHero && matchBar && sameBar(matchBar.sig, bsig)) knownHero = matchBar;
-      meta = stage('meta', () => readDraftMeta(img, idx, knownHero ?? undefined));
+      meta = stage('meta', () => readDraftMeta(img, idx, knownHero ?? undefined, true));
       if (meta.self) matchBar = { bar: meta.bar, self: meta.self, sig: bsig };
       // the hero bar is constant while the draft screen stays up; keep it until the screen closes (nonShopResult)
       knownHero = meta.self ? { bar: meta.bar, self: meta.self } : null;
@@ -330,8 +335,6 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
     ms: performance.now() - t0,
     stages,
   });
-  const settled = key !== '' && key === acceptedKey && labels.choice === acceptedChoice && !accepted;
-  tick(settled ? SETTLED_INTERVAL_MS : intervalMs, true);
 });
 
 const nonShopResult = (t0: number): FrameResult => {

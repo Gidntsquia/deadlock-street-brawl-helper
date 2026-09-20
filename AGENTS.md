@@ -233,6 +233,6 @@ in `win:e2e`/`win:demo` drives the actual game:
   reads as `sampleSquare`, ~2x faster); the worker is built and its icon index decoded when the app opens; the hero bar
   read (~0.7 s) is reused for the whole match while a pixel fingerprint of the bar still matches (`matchBar` in
   `worker.ts`); the control and dummy windows set `backgroundThrottling: false` so covered windows keep rendering.
-  `scripts/__tests__/frame-reads.test.ts` pins the reads on the demo frames so speed work cannot change advice.
+  `scripts/__tests__/frame-reads.test.ts` pins the reads on the demo frames so speed work cannot change advice. The worker reads only the player's own portrait and the enemy four (`readLeanBar`; the three teammates come back as unread slots, and `enemiesFrom`/`selfHero` never use them), and hero correlation skips masked-out pixels (`nccMasked`, bit-identical). The page draws the video once per frame into one canvas and cuts the regions from it (each `drawImage` from the video costs ~10 ms whatever its size, so per-region draws were ~70 ms); it copies a draft frame only when the video has presented a new picture since the last copy (`requestVideoFrameCallback`, 150 ms fallback), and the worker asks for the next frame as soon as it starts reading one, so the two-frame check finds it waiting.
 - Main lowers its own and child priority below normal (skipped under `BRAWL_E2E`).
 - Not verified on real Windows: GDI probe with a real Deadlock (borderless and fullscreen). Check by hand.

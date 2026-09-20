@@ -117,8 +117,12 @@ export function decodeIconIndex(idx: IconIndex): DecodedIndex {
 }
 
 /** Mask: 1 inside the inscribed circle (hero portraits are round). */
+const circleMasks = new Map<number, Float32Array>();
 export const circleMask = (size: number): Float32Array => {
+  const cached = circleMasks.get(size);
+  if (cached) return cached;
   const m = new Float32Array(size * size);
+  circleMasks.set(size, m);
   for (let y = 0; y < size; y++)
     for (let x = 0; x < size; x++) {
       const dx = x + 0.5 - size / 2,
@@ -259,6 +263,29 @@ function sampleFast(img: RGBImage, ig: Integral, x0: number, y0: number, edge: n
 const ncc = (a: Float32Array, b: Float32Array, n: number) => {
   let s = 0;
   for (let i = 0; i < a.length; i++) s += a[i] * b[i];
+  return s / (3 * n);
+};
+
+/** `ncc` restricted to the masked-in pixels. The skipped terms are exact zeros (normalise zeroes them), so the sum is
+ *  bit-identical to `ncc`, in about the circle's share of the work. */
+const maskedOffsets = new Map<Float32Array, Int32Array>();
+const offsetsOf = (mask: Float32Array): Int32Array => {
+  let o = maskedOffsets.get(mask);
+  if (!o) {
+    const l: number[] = [];
+    for (let i = 0; i < mask.length; i++) if (mask[i]) l.push(i * 3);
+    maskedOffsets.set(mask, (o = Int32Array.from(l)));
+  }
+  return o;
+};
+const nccMasked = (a: Float32Array, b: Float32Array, n: number, offs: Int32Array) => {
+  let s = 0;
+  for (let j = 0; j < offs.length; j++) {
+    const i = offs[j];
+    s += a[i] * b[i];
+    s += a[i + 1] * b[i + 1];
+    s += a[i + 2] * b[i + 2];
+  }
   return s / (3 * n);
 };
 
@@ -528,7 +555,8 @@ export interface HeroBar {
 }
 
 export function matchHero(img: RGBImage, index: DecodedIndex, cx: number, cy: number, diameter: number): HeroMatch {
-  const mask = circleMask(index.size);
+  const mask = circleMask(index.size),
+    offs = offsetsOf(mask);
   let n = 0;
   for (const v of mask) n += v;
   let best: HeroMatch = { heroId: 0, score: -1, margin: 0 },
@@ -561,7 +589,7 @@ export function matchHero(img: RGBImage, index: DecodedIndex, cx: number, cy: nu
       for (let dx = -search; dx <= search; dx += step) {
         const v = normalise(sampleFast(img, ig, cx - e / 2 + dx, cy - e / 2 + dy, e, index.size), index.size, mask);
         for (const k of ks) {
-          const s = ncc(v, index.heroPixels[k], n);
+          const s = nccMasked(v, index.heroPixels[k], n, offs);
           if (s > best.score) {
             if (index.heroIds[k] !== best.heroId) second = best.score;
             best = { heroId: index.heroIds[k], score: s, margin: 0 };
@@ -581,6 +609,21 @@ export function readHeroBar(img: RGBImage, index: DecodedIndex): HeroBar {
   const read = (xs: readonly number[]) =>
     xs.map((x) => matchHero(img, index, x * sx, HERO_BAR.cy * sy, HERO_BAR.diameter * sx));
   return { left: read(HERO_BAR.left), right: read(HERO_BAR.right) };
+}
+
+/** `readHeroBar` minus the player's three teammates (left as unread slots): `enemiesFrom` and `selfHero` never look at them. */
+export function readLeanBar(img: RGBImage, index: DecodedIndex, slot: { left: number; right: number }): HeroBar {
+  const ownSide = slot.left >= 0 ? 'left' : slot.right >= 0 ? 'right' : null;
+  if (!ownSide) return readHeroBar(img, index);
+  const sx = img.width / BRAWL_LAYOUT.ref.width,
+    sy = img.height / BRAWL_LAYOUT.ref.height;
+  const read = (side: 'left' | 'right') =>
+    HERO_BAR[side].map((x, i): HeroMatch =>
+      side === ownSide && i !== slot[side]
+        ? { heroId: 0, score: 0, margin: 0 }
+        : matchHero(img, index, x * sx, HERO_BAR.cy * sy, HERO_BAR.diameter * sx),
+    );
+  return { left: read('left'), right: read('right') };
 }
 
 // The player's own portrait is the one slot drawn as a square-topped tile (the others are circles): its two vertical
@@ -1018,13 +1061,17 @@ export function readDraftMeta(
   /** The hero bar and own hero from an earlier read of the same draft visit: they do not change between choices
    *  and are the slowest part of this read, so a caller may pass them back instead of re-reading. */
   known?: { bar: HeroBar; self: number },
+  /** Read only what the advice uses: the player's own portrait and the other team's four. The player's three
+   *  teammates come back unread (heroId 0). Falls back to the full bar when the own slot is not found. */
+  lean = false,
 ): DraftMeta {
-  const bar = known?.bar ?? readHeroBar(img, index);
+  const slot = known ? { left: -1, right: -1 } : readSelfSlot(img);
+  const bar = known?.bar ?? (lean ? readLeanBar(img, index, slot) : readHeroBar(img, index));
   return {
     round: readDigit(img, LABELS.round, lightText, ROUND_DIGITS, ROUND_LOOSE),
     choice: readDigit(img, LABELS.choice, magentaText, CHOICE_DIGITS),
     bar,
-    self: known?.self ?? selfHero(bar, readSelfSlot(img)),
+    self: known?.self ?? selfHero(bar, slot),
     rerollsRemaining: extractRerollLabelCrop(img) ? -1 : 0,
   };
 }

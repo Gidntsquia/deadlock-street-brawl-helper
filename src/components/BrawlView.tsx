@@ -37,7 +37,8 @@ import { ItemTile } from './ItemTile';
 import { log } from '../log';
 import { usePersisted, isNumber, isNumberArray } from '../hooks/usePersisted';
 
-const CAPTURE_MS = 120; // pause between draft frames; the worker paces the loop (see worker.ts) so it keeps running while the tab is hidden
+const FRAME_WAIT_MS = 150; // longest wait for a new video frame before copying anyway
+const CAPTURE_MS = 0; // pause between draft frames (the page now waits for a new video frame instead); the worker paces the loop (see worker.ts) so it keeps running while the tab is hidden
 // Capture frame rate: the draft screen needs a look a few times a second, everything else barely at all.
 // Switched on the fly with track.applyConstraints so a game window nobody is drafting in costs almost nothing.
 const DRAFT_FPS = 15;
@@ -510,7 +511,34 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
     const w = workerRef.current;
     if (!w) return;
     const canvas = document.createElement('canvas'); // the probe crop
-    const regionCanvases: HTMLCanvasElement[] = [];
+    const fullCanvasRef = { current: null as HTMLCanvasElement | null };
+    // Video frames presented so far (a persistent requestVideoFrameCallback loop) vs. the count at the last copy.
+    const vid = videoRef.current;
+    const frames = {
+      supported: !!vid && typeof vid.requestVideoFrameCallback === 'function',
+      seen: 0,
+      copied: 0,
+      want: null as (() => void) | null,
+      timer: undefined as ReturnType<typeof setTimeout> | undefined,
+      run() {
+        clearTimeout(this.timer);
+        const f = this.want;
+        this.want = null;
+        if (f) {
+          this.copied = this.seen;
+          f();
+        }
+      },
+    };
+    let vfcId = 0;
+    if (vid && frames.supported) {
+      const loop = () => {
+        frames.seen++;
+        if (frames.want) frames.run();
+        vfcId = vid.requestVideoFrameCallback(loop);
+      };
+      vfcId = vid.requestVideoFrameCallback(loop);
+    }
     let lastLoggedSource = '';
     let fpsForShop: boolean | null = null;
     const setFps = (shop: boolean) => {
@@ -576,13 +604,15 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
       // Only the rectangles the recogniser reads (draftRegions) leave the video, one small canvas each.
       const regions: FrameRegion[] = [];
       const rects = draftRegions(srcW, srcH);
-      for (const [i, r] of rects.entries()) {
-        const c = (regionCanvases[i] ??= document.createElement('canvas'));
-        if (c.width !== r.width) c.width = r.width; // assigning the size (even the same one) reallocates and clears
-        if (c.height !== r.height) c.height = r.height;
-        const rctx = c.getContext('2d', { willReadFrequently: true })!;
-        rctx.drawImage(src, r.x, r.y, r.width, r.height, 0, 0, r.width, r.height);
-        const d = rctx.getImageData(0, 0, r.width, r.height);
+      // One draw of the video per frame, then a cheap read per region: every drawImage from the video costs ~10 ms
+      // whatever its size (a GPU sync), so seven region draws were ~70 ms.
+      const fc = (fullCanvasRef.current ??= document.createElement('canvas'));
+      if (fc.width !== srcW) fc.width = srcW;
+      if (fc.height !== srcH) fc.height = srcH;
+      const fctx = fc.getContext('2d', { willReadFrequently: true })!;
+      fctx.drawImage(src, 0, 0);
+      for (const r of rects) {
+        const d = fctx.getImageData(r.x, r.y, r.width, r.height);
         regions.push({ ...r, buffer: d.data.buffer });
       }
       if (rerollRef.current && draftRef.current) {
@@ -617,7 +647,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
         const pctx = pv.getContext('2d');
         if (pctx) {
           const scale = pv.width / srcW;
-          pctx.drawImage(src, 0, 0, pv.width, pv.height);
+          pctx.drawImage(fc, 0, 0, pv.width, pv.height); // the copy just made: a canvas draw, not another video read
           drawReads(
             pctx,
             readsRef.current,
@@ -635,7 +665,17 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
     const onMessage = (ev: MessageEvent<WorkerOut>) => {
       if (ev.data.type === 'tick') {
         if (ev.data.full) setFps(true); // the probe saw a draft screen: raise the frame rate before the first full read
-        sendFrame(ev.data.full);
+        const full = ev.data.full;
+        // A draft frame is only useful if it is a new picture: the worker accepts a card set when two frames agree, so
+        // never copy the same video frame twice. Wait (briefly) for the next one instead of idling a fixed time.
+        if (full && frames.copied >= frames.seen && frames.supported) {
+          frames.want = () => sendFrame(true);
+          clearTimeout(frames.timer);
+          frames.timer = setTimeout(() => frames.run(), FRAME_WAIT_MS);
+        } else {
+          frames.copied = frames.seen;
+          sendFrame(full);
+        }
         return;
       }
       if (ev.data.type === 'rerolls') {
@@ -742,6 +782,8 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
     sendFrame(false); // the worker's first tick may have arrived before this listener existed
     return () => {
       clearTimeout(tipTimer);
+      clearTimeout(frames.timer);
+      if (vid && frames.supported) vid.cancelVideoFrameCallback(vfcId);
       w.removeEventListener('message', onMessage);
     };
   }, [capture, byId, heroId, heroes, onHero, hero]);
