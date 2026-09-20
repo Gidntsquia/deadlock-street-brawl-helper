@@ -445,11 +445,12 @@ async function main() {
     const expectedNow = await js(
       control,
       `(() => {
-        const round = Number(document.querySelector('select[aria-label="Round"]').value);
-        return [...document.querySelectorAll('.brawl-ability-order li')]
-          .slice((round - 1) * 3, (round - 1) * 3 + 3)
-          .map((li) => li.childNodes[0].textContent.trim() + '|' + li.querySelector('small').textContent.replace(/[()]/g, ''))
-          .sort();
+        // the control window's own panel for this round: the overlay must show the same pills and the round's points
+        return [...document.querySelectorAll('.ap-control .ap-col')].flatMap((c) =>
+          [...c.querySelectorAll('.ap-pill[data-state="now"]')].map(
+            (p) => c.dataset.ability + '|' + ({ 5: 'tier3', 2: 'tier2', 1: 'tier1' })[p.dataset.cost],
+          ),
+        ).sort();
       })()`,
     );
     await setFrame('gameplay');
