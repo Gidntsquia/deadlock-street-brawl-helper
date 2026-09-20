@@ -5,14 +5,17 @@
 </p>
 
 A draft advisor for [Deadlock](https://store.steampowered.com/app/1422450/Deadlock/)'s Street Brawl
-mode. It reads the draft screen while you play, ranks the three cards you're being offered, and tells
-you whether the set is worth a re-roll. The advice shows up in a small window on top of the game.
-Scores come from 30 days of Street Brawl matches from [deadlock-api.com](https://deadlock-api.com).
+mode. It reads the draft screen while you play, ranks the three cards you're offered, and says whether
+the set is worth a re-roll. The advice shows up in a small window on top of the game. Scores are built
+from 30 days of Street Brawl matches from [deadlock-api.com](https://deadlock-api.com).
+
+There is also a Windows app that finds the Deadlock window on its own and draws the advice directly
+over the draft screen, with no picker and no window to place.
 
 ## Quickstart 🚀
 
 Requires [Node.js](https://nodejs.org) 20 or newer, and Chrome or Edge. The match data is already in
-the repo, and refreshes weekly on its own.
+the repo and refreshes weekly.
 
 ```
 git clone https://github.com/Gidntsquia/deadlock-street-brawl-helper
@@ -23,87 +26,51 @@ npm run dev   # Open http://localhost:5173 and leave this running
 
 Then, with Deadlock open:
 
-1. In Deadlock's settings, under Video, set Display Mode to **Borderless Windowed**. The overlay
-   can't sit on top of the game in fullscreen.
+1. In Deadlock's settings, under Video, set Display Mode to **Borderless Windowed**.
 2. In the app, click **Capture game screen + overlay** and pick the Deadlock window from the list.
-3. Play a Street Brawl draft. The advice window follows the draft on its own.
+3. Play a Street Brawl draft. The advice window follows the draft.
 
-The header shows how old the snapshot is ("N days old", flagged once it passes 14 days).
-
-IMPORTANT: Firefox can't open always-on-top windows, so this only works in Chrome or Edge. Press
-Ctrl+C in the terminal to stop the app.
+IMPORTANT: Firefox can't open always-on-top windows, so this only works in Chrome or Edge.
 
 Other commands:
 
 ```
-npm run brawl -- --hero 1 --round 2 --owned "Extra Charge" --enemies "Lash,Seven" \
-    --set "Improved Spirit,Enchanter's Emblem,Swift Striker"   # Advice without the screen reader
-npm run fetch-data                       # Refresh the 30-day snapshot (~1400 requests, slow)
-npm run fetch-data -- --brawl-tierlist   # Rebuild the tier list from the files already on disk
-npm run brawl:see -- --fixtures          # Card recogniser accuracy on the saved screenshots
+npm run brawl -- --hero 1 --round 2 --set "Improved Spirit,Enchanter's Emblem,Swift Striker"   # Advice without the screen reader
+npm run fetch-data                 # Refresh the 30-day snapshot (~1400 requests, ~9 min)
+npm run brawl:see -- --fixtures    # Card recogniser accuracy on the saved screenshots
+npm run dist                       # Build the Windows app (run on Windows)
+npm run win:dev                    # From WSL: run the Windows app from a synced copy
 ```
-
-## Windows app 🪟
-
-A packaged Windows build skips the picker entirely and draws the highlight box straight onto the
-Deadlock window, with no floating overlay window to place by hand.
-
-```
-npm run dist   # Windows only; builds release/*.exe (installer + portable)
-```
-
-Developing from WSL? `npm run dev:electron` run inside WSL boots Linux Electron under WSLg, which can
-never find or capture the Deadlock window. Use `npm run win:dev` instead — it syncs the repo to a native
-Windows path and launches real Windows `electron.exe` from there. (Running `dev:electron` from an actual
-Windows terminal, in that synced copy, also works.) `npm run win:e2e` runs the same way end to end and
-writes a pass/fail report to `logs/win-e2e.json`. `npm run win:demo -- choice1` (or `choice2`) runs test mode
-(below) invisibly and saves what the overlay actually drew to `logs/win-demo.png`; nothing appears on screen
-while it runs, and it refuses to run if a real window titled "Deadlock" is open.
-
-**Test mode (no game needed).** In the app's control window press **Test mode (dummy Deadlock window)**. A
-dummy window titled "Deadlock" opens on your monitor showing a real draft screenshot, and the app treats it as
-the game: it captures it, reads the cards, advises, and draws the overlay on top. Pick hero/round as in a real
-game; use the **Screenshot** menu next to the button to switch between the available screenshots
-(`public/demo/*.png`) and the cards, advice and overlay follow. **Turn test mode off** closes the dummy. If a
-real Deadlock window is open, test mode refuses and says so in the app.
-
-Start Deadlock in borderless windowed mode, then launch the exe: capture starts on its own once the
-Deadlock window is found, no picker dialog. The advice — ranked cards, RE-ROLL banner, ability order —
-is drawn straight onto the game in a small always-on-top panel, so you never have to alt-tab.
-Ctrl+Shift+O toggles the overlay; the tray icon also has a Quit item. Each item is outlined around its
-large circle with `Score: <n>` (the app's score) above it; the item to take has a green circle and a white score, and the others are greyed out.
-
-The overlay is blank (its window hidden) at all other times: it only appears while the item draft screen is up, and for about 15 seconds after the draft closes, when a picture of the game's ability points panel shows this round's standard points highlighted (earlier rounds greyed with a check). The app reads the game through Chromium's older window capturer, so there is no yellow capture outline around the Deadlock window. If Deadlock isn't running, the app
-says "Deadlock window not found" instead of capturing some other window (matched by the game's exact
-window title, so the app's own window is never mistaken for it). The browser path above still works
-cross-platform and needs no packaging.
 
 ## Features 🔬
 
-- The three cards, the round, the enemy team, and the items you've already picked are all read from
-  the screen. Nothing is sent to the game.
-- Cards are ranked for the hero you're playing, from how often the item is picked in Street Brawl,
-  its win rate there, and how well it scales that hero's abilities.
-- Re-roll advice compares the best card in front of you with what a fresh set is expected to offer, shown
-  as an unmissable amber banner; the on-screen box moves to the "Use Re-Roll" button instead of a card.
-  A re-rolled rare or enhanced slot stays rare or enhanced, which is part of the call.
-- An ability upgrade order for the hero you're playing, ranked by Street Brawl usage and win rate, with
-  the step you're probably on now highlighted.
-- Your hero is auto-detected from the scoreboard as soon as the draft screen is read, with an "auto"
-  badge next to the name so you can see it happened; you can still pick a hero manually.
-- The enemy heroes read off the scoreboard move the ranking toward items that do well against them.
-- The legendary items that only appear in Street Brawl are ranked alongside everything else.
-- A second tab grades every hero and every draftable item S, A, B or C from the last 30 days.
-- If the capture misses a card you can pick the three yourself, and the ranking updates.
-- No backend. Everything runs in the browser off the snapshot in the repo.
-- Your hero, tab, round and enemy picks are remembered across reloads (stored in the browser only).
-- Switching hero mid-draft (by hand or auto-detect) never interrupts the capture.
+- The three cards, the round, the enemy team, and the items you've already picked are read from the
+  screen. Nothing is sent to the game.
+- Cards are ranked for your hero using how often each item is picked in Street Brawl, its win rate, and
+  how well it scales that hero's abilities.
+- Your hero is detected from the scoreboard and can be changed by hand.
+- The enemy heroes on the scoreboard shift the ranking toward items that do well against them.
+- Re-roll advice compares the best card on screen with what a fresh set is expected to offer, and the
+  box moves to the Use Re-Roll button when a re-roll is the better call.
+- The legendary items that only appear in Street Brawl are ranked with everything else.
+- An ability upgrade order for your hero, with the step you're probably on highlighted. In the Windows
+  app a picture of the ability points panel shows this round's points for about 15 seconds after the
+  draft closes.
+- A second tab grades every hero and every draftable item S, A, B or C.
+- If the capture misses a card, you can enter the three yourself.
+- A test mode in the Windows app opens a dummy Deadlock window with a real draft screenshot, so you can
+  try the overlay without the game running.
+- There is no backend. Your hero, tab, round and enemy picks are stored in the browser only.
 
 ## Documentation 📚
 
-- [Street Brawl Advisor](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Street-Brawl-Advisor) — the mode's rules, the card scoring function, and the re-roll maths
+More details in the
+[wiki](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki):
+
+- [Street Brawl Advisor](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Street-Brawl-Advisor) — the mode's rules, card scoring, re-roll maths
 - [Screen Reader](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Screen-Reader) — how cards, tiers, labels and your picks are recognised
 - [Overlay](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Overlay) — screen capture and the always-on-top window
+- [Windows App](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Windows-App) — the packaged app, test mode, developing from WSL
 - [Tier List](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Tier-List) — how the S/A/B/C grades are worked out
 - [Data Pipeline](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Data-Pipeline) — what `fetch-data` downloads, and the 30-day window
 - [Development](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Development) — code layout, scripts, checks
