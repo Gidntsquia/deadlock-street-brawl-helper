@@ -310,7 +310,6 @@ async function main() {
         panel: !!document.querySelector('.overlay-panel'),
         ap: !!document.querySelector('.ap'),
         now: [...document.querySelectorAll('.ap-col')].flatMap((c) => [
-          ...(c.querySelector('.ap-ability')?.dataset.unlock === 'now' ? [c.dataset.ability + '|unlock'] : []),
           ...[...c.querySelectorAll('.ap-pill[data-state="now"]')].map(
             (p) => c.dataset.ability + '|' + ({ 5: 'tier3', 2: 'tier2', 1: 'tier1' })[p.dataset.cost],
           ),

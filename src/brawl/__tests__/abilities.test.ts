@@ -5,7 +5,7 @@ import { heroByName, inputFor } from './testData';
 const infernus = inputFor(heroByName('Infernus').id);
 
 describe('brawlAbilityOrder', () => {
-  it("returns a sequence covering most of the game, only the hero's own abilities, unlocks before upgrades", () => {
+  it("returns a sequence covering most of the game, only the hero's own abilities, tiers in order, no unlocks", () => {
     const order = brawlAbilityOrder(infernus);
     expect(order.steps.length).toBeGreaterThanOrEqual(7);
 
@@ -14,12 +14,12 @@ describe('brawlAbilityOrder', () => {
     );
     for (const step of order.steps) expect(sigIds.has(step.ability.id)).toBe(true);
 
-    const firstIndexByAbility = new Map<number, number>();
-    for (const step of order.steps)
-      if (!firstIndexByAbility.has(step.ability.id)) firstIndexByAbility.set(step.ability.id, step.index);
+    // No unlock steps; each ability's points come as tier1, tier2, tier3 in that order.
+    const seen = new Map<number, number>();
     for (const step of order.steps) {
-      if (step.kind === 'unlock') continue;
-      expect(step.index).toBeGreaterThan(firstIndexByAbility.get(step.ability.id)!);
+      const n = seen.get(step.ability.id) ?? 0;
+      expect(step.kind).toBe(['tier1', 'tier2', 'tier3'][n]);
+      seen.set(step.ability.id, n + 1);
     }
 
     expect(order.support).not.toBeNull();

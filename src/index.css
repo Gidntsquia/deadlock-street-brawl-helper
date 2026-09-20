@@ -1314,6 +1314,12 @@ footer {
   pointer-events: none;
   user-select: none;
 }
+.ap-title {
+  grid-column: 1 / -1;
+  text-align: center;
+  color: rgb(243, 229, 210);
+  font-size: calc(20 * var(--u));
+}
 .ap-col {
   display: flex;
   flex-direction: column;
@@ -1362,22 +1368,6 @@ footer {
   width: 80%;
   height: 80%;
   filter: brightness(0) opacity(0.78);
-}
-.ap-unlock-now .ap-circle {
-  box-shadow: 0 0 0 calc(4 * var(--u)) rgb(206, 145, 255);
-}
-.ap-unlock-later .ap-circle {
-  opacity: 0.4;
-}
-.ap-badge {
-  position: absolute;
-  top: calc(-14 * var(--u));
-  z-index: 1;
-  padding: calc(2 * var(--u)) calc(8 * var(--u));
-  border-radius: calc(4 * var(--u));
-  background: rgb(60, 92, 150);
-  color: rgb(243, 229, 210);
-  font-size: calc(14 * var(--u));
 }
 .ap-key {
   position: absolute;

@@ -78,7 +78,7 @@ source list) — nothing else can be captured. The old keyboard-shortcut demo an
   (`overlayHasContent`, `src/brawl/overlayContent.ts`). The panel is an HTML picture of the game's ability upgrade
   panel (`src/components/AbilityPanel.tsx`, data from `abilityPanelFor` in `src/brawl/abilities.ts`) for 15 s after
   the draft screen closes (`src/brawl/abilityPanelTimer.ts`, a pure state machine); a reopened draft ends it at once.
-  It shows this round's standard points highlighted, earlier rounds' greyed with a check, later ones plain.
+  It shows this round's standard points highlighted (Street Brawl gives 6/6/5/5/10 points in rounds 1-5; pills cost 1/2/5; `pillRounds` in `abilities.ts` follows the standard order, carries unspent points, and fills leftovers so all 32 are spent by round 5), earlier rounds' greyed with a check, later ones plain, with a "Round N: X points" title. Every ability starts unlocked in Street Brawl: there is no unlock advice anywhere.
 - No yellow outline: Windows Graphics Capture draws one; `disable-features=AllowWgcWindowCapturer` (in
   `electron/main.ts` and both harnesses) falls back to Chromium's GDI window capturer, which has none. Keep that
   switch in all three places.

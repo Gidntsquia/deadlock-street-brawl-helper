@@ -55,17 +55,11 @@ describe('abilityPanelFor', () => {
   const input = inputFor(hero.id);
   const order = brawlAbilityOrder(input);
   const panel = (round: number) => abilityPanelFor(order, hero, input.abilities, round);
-  /** Every point of the panel with its state, flattened, as [abilityName, kind, state]. */
-  const points = (round: number) =>
-    panel(round).slots.flatMap((s) =>
-      (
-        [
-          ['unlock', s.unlock],
-          ['tier3', s.tiers[0]],
-          ['tier2', s.tiers[1]],
-          ['tier1', s.tiers[2]],
-        ] as const
-      ).map(([kind, st]) => ({ name: s.name, kind, st })),
+  const COST = { 0: 5, 1: 2, 2: 1 } as const;
+  const sum = (round: number, state: string) =>
+    panel(round).slots.reduce(
+      (n, sl) => n + sl.tiers.reduce((m, st, k) => m + (st === state ? COST[k as 0 | 1 | 2] : 0), 0),
+      0,
     );
 
   it('lists the hero abilities in bar order with key caps and icons', () => {
@@ -78,21 +72,21 @@ describe('abilityPanelFor', () => {
     expect(p.slots.map((s) => s.key)).toEqual(['Q', 'E', 'R', 'F']);
   });
 
-  it("highlights exactly the order's points for this round, greys earlier ones, leaves later ones", () => {
-    const rounds = Math.ceil(order.steps.length / 3);
-    for (const round of [1, 2, rounds]) {
-      const lo = (round - 1) * 3;
-      const expected = order.steps.map((st) => ({
-        name: st.ability.name,
-        kind: st.kind === 'unlock' ? 'unlock' : st.kind,
-        st: st.index >= lo + 3 ? 'later' : st.index >= lo ? 'now' : 'done',
-      }));
-      const got = points(round);
-      for (const e of expected) expect(got).toContainEqual(e);
-      const now = got.filter((g) => g.st === 'now');
-      expect(now.length).toBe(order.steps.filter((st) => st.index >= lo && st.index < lo + 3).length);
-      expect(now.length).toBeGreaterThan(0);
-    }
-    expect(points(1).some((g) => g.st === 'done')).toBe(false); // round 1: nothing earlier
+  it('spends 6/6/5/5/10 points a round without overspending, and all 32 by round 5', () => {
+    const pts = [6, 6, 5, 5, 10];
+    let carried = 0;
+    let cum = 0;
+    pts.forEach((p, i) => {
+      expect(panel(i + 1).points).toBe(p);
+      const now = sum(i + 1, 'now');
+      cum += p;
+      expect(sum(i + 1, 'done')).toBe(carried);
+      expect(carried + now).toBeLessThanOrEqual(cum);
+      carried += now;
+    });
+    expect(carried).toBe(32);
+    expect(sum(5, 'later')).toBe(0);
+    expect(sum(1, 'done')).toBe(0);
+    expect(sum(1, 'now')).toBeGreaterThan(1);
   });
 });

@@ -1013,7 +1013,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero }: Props) {
           <ol className="brawl-ability-order">
             {abilityOrder.steps.map((s, k) => (
               <li key={k} className={k === abilityStepNow ? 'now' : ''}>
-                {s.ability.name} <small>({s.kind === 'unlock' ? 'unlock' : s.kind})</small>
+                {s.ability.name} <small>({s.kind})</small>
               </li>
             ))}
           </ol>
