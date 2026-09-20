@@ -14,7 +14,7 @@ over the draft screen, with no picker and no window to place.
 
 ## Quickstart 🚀
 
-Requires [Node.js](https://nodejs.org) 20 or newer, and Chrome or Edge. The match data is already in
+Requires [Node.js](https://nodejs.org) 20 or newer. The match data is already in
 the repo and refreshes weekly.
 
 ```
@@ -30,7 +30,8 @@ Then, with Deadlock open:
 2. In the app, click **Capture game screen + overlay** and pick the Deadlock window from the list.
 3. Play a Street Brawl draft. The advice window follows the draft.
 
-IMPORTANT: Firefox can't open always-on-top windows, so this only works in Chrome or Edge.
+Chrome and Edge keep the advice window on top of the game. Firefox opens it as a plain popup, which
+is best placed on a second monitor.
 
 Other commands:
 
