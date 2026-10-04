@@ -182,11 +182,16 @@ in `win:e2e`/`win:demo` drives the actual game:
   which drops its cards whenever `live` is false. The game swaps label, cards and grid a beat apart; the old
   two-frame accept advised old cards under the new label, half-swapped sets, and new cards under the stale label
   (`scripts/__tests__/worker-transitions.test.ts` replays those on real frames).
-- Card names: the worker OCRs the item name printed under each card (`cardNameCrop` in `recognise.ts`, a second
-  Tesseract engine in `ocr.ts`, fuzzy match in `names.ts`) once per slot and icon guess; a clear name match overrides
-  the icon, and a card whose icon match is shaky (score < 0.8 or margin < 0.08) keeps the set out of the gate until its
-  name is read. The page sends item names on `warm`/`init`; the page logs each read as `card.name`
-  (`fixed: true` = the name overrode the icon). `draftRegions` copies the name lines' ends as the last 6 boxes.
+- Cards sit at fixed screen positions and print their exact item name: the worker pins every card read to
+  `cardSquares` (`recognise.ts`, anchors x 0.95 icon edge, matches the hand-labelled circles) so the overlay never follows
+  the icon search's step/scale wobble, and each slot's item comes from a **name lock** (`applyNames` in `worker.ts`): the
+  item its name line (`cardNameCrop`, OCR in `ocr.ts`, fuzzy match in `names.ts`) last read as, plus a pixel fingerprint
+  of that line. While the line looks the same the slot is that item whatever the icon says; a changed line is re-read
+  (~30 ms) and only a clear read of another item moves the lock; an icon that surely shows another item (re-roll) makes
+  the slot unsettled at once. No set is accepted until every slot has its lock (`GateFrame.ready`), a shaky icon keeps
+  its set out of the gate entirely, and after 1.5 s of failed reads the icon guess stands. The re-roll caption is also
+  read before accept (and a later change needs two agreeing re-reads); the owned list reaches the page with the accepted
+  set and not again while it stays up. Logs: `card.name` per read. `draftRegions` copies the name lines' ends as the last 6 boxes.
 - Changing the Round/Choice selects clears the accepted cards, and the worker never re-sends a set it already
   accepted: set hero/round/choice before capture starts, or advice stays null for that frame.
 - `drawReads` (`src/brawl/draw.ts`) returns the rects it stroked (`DrawnRect[]`, frame px, tagged

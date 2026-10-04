@@ -3,7 +3,7 @@ import sharp from 'sharp';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { matchItemName, nameList } from '../../src/brawl/names';
 import { readCardName, terminateOCR } from '../../src/brawl/ocr';
-import { cardNameCrop, decodeIconIndex, draftRegions, readDraftScreen } from '../../src/brawl/recognise';
+import { cardNameCrop, cardSquares, decodeIconIndex, draftRegions, readDraftScreen } from '../../src/brawl/recognise';
 import type { Item } from '../../src/types';
 
 // Real OCR (the bundled Tesseract) of the item name printed under each card, on every tracked draft frame, with every
@@ -36,7 +36,7 @@ describe('card name OCR', () => {
     const reads = readDraftScreen(img, index, tierOf);
     expect(reads.filter((r) => r.present)).toHaveLength(3);
     for (const r of reads) {
-      const crop = cardNameCrop(img, r.match)!;
+      const crop = cardNameCrop(img, { ...r.match, ...cardSquares(info.width, info.height)[reads.indexOf(r)]! })!;
       const text = await readCardName(crop);
       expect({ text, id: matchItemName(text, list)?.itemId }).toEqual({ text, id: r.itemId });
     }
