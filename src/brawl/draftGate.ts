@@ -28,6 +28,7 @@ export interface GateFrame {
   choice: number;
   now: number; // ms
   inventory: number[] | null; // the inventory grid, once two reads agree; null when not known
+  ready?: boolean; // false: a read the advice needs (the re-roll caption) is still in flight; hold the accept
 }
 
 interface Labelled {
@@ -135,7 +136,7 @@ export function stepGate(s: GateState, f: GateFrame): GateOut {
   // The set that was just up comes back under the same labels (a hover tooltip moved away): no need to wait.
   const returning = last !== null && sameSet(last.key, f.key) && sameLabels(last, now);
   const need = returning ? 0 : relabel || back ? RELABEL_SETTLE_MS : SETTLE_MS;
-  if (f.now - cand.since < need) return out(false);
+  if (f.now - cand.since < need || f.ready === false) return out(false);
 
   last = { key: f.key, round: cand.round, choice: f.choice, inv: f.inventory ?? last?.inv ?? null };
   live = true;

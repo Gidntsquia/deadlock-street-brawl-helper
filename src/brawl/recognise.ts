@@ -33,6 +33,17 @@ export const cardAnchors = (width: number, height: number) => {
   return BRAWL_LAYOUT.cards.map((c) => ({ name: c.name, cx: c.cx * sx, cy: c.cy * sy, icon: BRAWL_LAYOUT.icon * sx }));
 };
 
+/** The game always draws the three cards at the same place, so the overlay and the name reads use this fixed square per
+ *  card rather than wherever the icon search landed (that moves a search step or a scale step from frame to frame).
+ *  The icon on screen is ~0.95 of BRAWL_LAYOUT.icon: measured from the hand-labelled circles in
+ *  scripts/win/frames/labels.json (radius 176 px at 2000 wide) and the live 2560 frames, whose icons centre on the anchors. */
+export const CARD_EDGE = 0.95;
+export const cardSquares = (width: number, height: number) =>
+  cardAnchors(width, height).map((a) => {
+    const edge = a.icon * CARD_EDGE;
+    return { x: a.cx - edge / 2, y: a.cy - edge / 2, edge };
+  });
+
 /** The "Use Re-Roll" pill on the draft screen, measured at 2560x1440 from the user's screenshots
  *  (screenshots/brawl/reroll-choice{1,2}.png, gitignored): a light-bordered pill roughly 1140-1420 x 913-996. */
 const REROLL_BUTTON = { x0: 1140, y0: 913, x1: 1420, y1: 996 } as const;

@@ -12,12 +12,13 @@ import {
   readDraftScreen,
   readInventory,
   cardNameCrop,
+  cardSquares,
   type CardRead,
   type DecodedIndex,
   type DraftMeta,
   type InventoryRead,
 } from './recognise';
-import { readCardName, readRerollsRemaining, terminateOCR, warmOCR } from './ocr';
+import { readCardName, readRerollsRemaining, terminateOCR, warmOCR, type NameCrop } from './ocr';
 import { matchItemName, nameList, type NameList } from './names';
 import { initialGate, offScreenGate, stepGate } from './draftGate';
 import type { IconIndex } from './types';
@@ -95,66 +96,152 @@ const setNames = (n: Record<number, string> | undefined) => {
 };
 
 // ---- item names under the cards ----------------------------------------------------------------------------
-// The name printed under each card is the item's exact name, so a clear OCR match overrides the icon search (which
-// misses when the game's art differs from the shop art). Each card is read once per (slot, icon guess) while the draft
-// screen stays up; a card whose icon match is shaky is held back from the gate until its name is in, so wrong advice
-// never shows first. A name that does not read (the hover tooltip covers it, a mid-animation frame) is retried.
+// The game always draws the three cards at the same place and prints each item's exact name under it, so the name
+// decides which item a card is. Each slot keeps a lock: the item its name line last read as, plus a fingerprint of that
+// line's pixels. While the line looks the same, the slot is that item whatever the icon search says this frame (a hover
+// glow, an animation, a search landing one step off): the per-frame icon wobble never reaches the gate or the overlay.
+// A changed line (re-roll, next choice, a tooltip over it) is read again (~30 ms); only a clear read of another item
+// moves the lock. Until a slot has its first lock it is "waiting" and the set is not offered to the gate, so a wrong
+// icon guess is never advised first. Without a name list (CLI tools) or after a read failed, the icon guess stands.
 const NAME_RETRY_MS = 700;
-/** An icon match below this score or margin is not trusted on its own: the card waits for its name. */
+/** An icon match at least this good is trusted on its own; below it a card waits for its name. */
 const SURE_SCORE = 0.8,
   SURE_MARGIN = 0.08;
-const nameFix = new Map<string, { id: number; at: number }>(); // `${slot}:${iconId}` -> named item (0: unread)
-const nameBusy = new Set<string>();
-let nameChoice = 0;
+/** A slot whose name reads keep failing falls back to its icon guess after this long. */
+const NAME_GIVE_UP_MS = 1500;
+interface SlotLock {
+  id: number;
+  sig: Uint8Array;
+  enhanced: boolean;
+  rare: boolean;
+}
+let locks: (SlotLock | null)[] = [null, null, null];
+let nameFail: ({ sig: Uint8Array; at: number; since: number } | null)[] = [null, null, null];
+const nameBusy = [false, false, false];
+let nameChoice = 0,
+  nameGen = 0; // bumped when locks are dropped, so a read started before that lands nowhere
 const forgetNames = () => {
-  nameFix.clear();
+  locks = [null, null, null];
+  nameFail = [null, null, null];
   nameChoice = 0;
+  nameGen++;
 };
-/** The reads with each card's item replaced by the one its name line names; `waiting` while a shaky card's name is
- *  still being read. Starts the OCR reads that are missing. */
+
+// Fingerprint of a name line (the black-on-white OCR crop): ink share in a coarse grid over the text area.
+const SIG_COLS = 32,
+  SIG_ROWS = 4,
+  CROP_PAD = 12; // cardNameCrop's white margin
+const nameSig = (c: NameCrop): Uint8Array => {
+  const out = new Uint8Array(SIG_COLS * SIG_ROWS);
+  const w = c.width - 2 * CROP_PAD,
+    h = c.height - 2 * CROP_PAD;
+  const counts = new Uint32Array(out.length),
+    totals = new Uint32Array(out.length);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const k =
+        Math.min(SIG_ROWS - 1, Math.floor((y * SIG_ROWS) / h)) * SIG_COLS +
+        Math.min(SIG_COLS - 1, Math.floor((x * SIG_COLS) / w));
+      totals[k]++;
+      if (c.data[((y + CROP_PAD) * c.width + x + CROP_PAD) * 4] === 0) counts[k]++;
+    }
+  for (let k = 0; k < out.length; k++) out[k] = totals[k] ? Math.round((255 * counts[k]!) / totals[k]!) : 0;
+  return out;
+};
+/** Same lettering: at most a few grid cells moved by more than a sixth. */
+const sameName = (a: Uint8Array, b: Uint8Array) => {
+  let changed = 0;
+  for (let i = 0; i < a.length; i++) if (Math.abs(a[i]! - b[i]!) > 42 && ++changed > 4) return false;
+  return true;
+};
+/** A line with almost no ink shows no name (hidden, or the screen is mid-swap): nothing to read. */
+const hasInk = (s: Uint8Array) => s.reduce((n, v) => n + v, 0) > 255 * 2;
+
+/** The reads with each slot's item set from its name lock and its position pinned to the fixed card square;
+ *  `waiting`: a slot's item is too unsure to offer the set to the gate; `pending`: a slot's name is still being read,
+ *  so the set must not be accepted yet. Starts the name reads that are needed. */
 const applyNames = (
   img: Parameters<typeof cardNameCrop>[0],
-  reads: CardRead[],
+  raw: CardRead[],
   choice: number,
-): { reads: CardRead[]; waiting: boolean } => {
-  if (!names) return { reads, waiting: false };
+): { reads: CardRead[]; waiting: boolean; pending: boolean } => {
+  const squares = cardSquares(img.width, img.height);
+  const pinned = raw.map((r, i) => ({ ...r, match: { ...r.match, ...squares[i]! } }));
+  if (!names) return { reads: pinned, waiting: false, pending: false };
   if (choice !== nameChoice) {
-    nameFix.clear(); // a new choice can bring the same icon guess in the same slot for a different card
+    forgetNames(); // the next choice's cards
     nameChoice = choice;
   }
   const list = names;
-  let waiting = false;
-  const out = reads.map((r, slot) => {
-    if (!r.present) return r;
-    const k = `${slot}:${r.itemId}`;
-    const fix = nameFix.get(k);
-    const sure = r.match.score >= SURE_SCORE && r.match.margin >= SURE_MARGIN;
-    if (fix && fix.id) {
-      if (fix.id === r.itemId) return r;
-      return { ...r, itemId: fix.id, tier: tiers[fix.id] ?? r.tier, match: { ...r.match, itemId: fix.id } };
+  const now = performance.now();
+  let waiting = false,
+    pending = false;
+  const out = pinned.map((r, slot) => {
+    const crop = cardNameCrop(img, r.match);
+    const sig = crop ? nameSig(crop) : null;
+    const lock = locks[slot];
+    const sure = r.present && r.match.score >= SURE_SCORE && r.match.margin >= SURE_MARGIN;
+    const asLock = (l: SlotLock): CardRead => ({
+      ...r,
+      present: true,
+      itemId: l.id,
+      tier: tiers[l.id] ?? r.tier,
+      enhanced: l.enhanced,
+      rare: l.rare,
+      match: { ...r.match, itemId: l.id },
+    });
+    if (lock && sig && sameName(lock.sig, sig)) return asLock(lock);
+    // The line changed (or is hidden): read it again unless that exact picture already failed a moment ago.
+    const fail = nameFail[slot];
+    const failedThis =
+      !!fail && !!sig && fail.sig.length === sig.length && sameName(fail.sig, sig) && now - fail.at < NAME_RETRY_MS;
+    if (!crop || !sig || !hasInk(sig)) {
+      // nothing printed there to read: counts as a failed read, so a slot that never shows a name falls back in time
+      if (!lock) nameFail[slot] = { sig: sig ?? new Uint8Array(0), at: now, since: fail?.since ?? now };
+    } else if (!nameBusy[slot] && !failedThis) {
+      nameBusy[slot] = true;
+      const gen = nameGen,
+        icon = r.present ? r.itemId : 0,
+        t = now,
+        enhanced = r.enhanced,
+        rare = r.rare;
+      readCardName(crop)
+        .then((text) => {
+          const m = matchItemName(text, list);
+          const ms = performance.now() - t;
+          post({ type: 'name', slot, icon, text, itemId: m?.itemId ?? 0, ms });
+          if (gen !== nameGen) return;
+          if (m) {
+            const prev = locks[slot];
+            locks[slot] = prev?.id === m.itemId ? { ...prev, sig } : { id: m.itemId, sig, enhanced, rare };
+            nameFail[slot] = null;
+          } else {
+            const f = nameFail[slot];
+            nameFail[slot] = { sig, at: performance.now(), since: f?.since ?? t };
+          }
+        })
+        .catch(() => {}) // the OCR engine was freed (capture stopped) while this was running
+        .finally(() => (nameBusy[slot] = false));
     }
-    const retry = !fix || performance.now() - fix.at > NAME_RETRY_MS;
-    if (!nameBusy.has(k) && retry) {
-      const crop = cardNameCrop(img, r.match);
-      if (crop) {
-        nameBusy.add(k);
-        const t = performance.now(),
-          forChoice = choice;
-        readCardName(crop)
-          .then((text) => {
-            const m = matchItemName(text, list);
-            if (forChoice === nameChoice) nameFix.set(k, { id: m?.itemId ?? 0, at: performance.now() });
-            post({ type: 'name', slot, icon: r.itemId, text, itemId: m?.itemId ?? 0, ms: performance.now() - t });
-          })
-          .catch(() => {}) // the OCR engine was freed (capture stopped) while this was running
-          .finally(() => nameBusy.delete(k));
+    if (lock) {
+      // A changed line under a lock is a hover/tooltip far more often than a new card. Only an icon that surely shows
+      // another item (a re-roll) makes the slot unsettled until its name is read.
+      if (sure && r.itemId !== lock.id) {
+        waiting = true;
+        return r;
       }
+      return asLock(lock);
     }
-    // A shaky icon waits for its first name read; once a read failed, the icon guess stands (retries go on).
-    if (!sure && !fix) waiting = true;
+    // No lock yet. A sure icon offers its set to the gate so the settle time runs while the name is read (`pending`
+    // holds the accept until it is in); a shaky one keeps the set out. After the name has failed to read for a while,
+    // the icon guess stands.
+    const f = nameFail[slot];
+    if (f && now - f.since > NAME_GIVE_UP_MS && r.present) return r;
+    pending = true;
+    if (!sure) waiting = true;
     return r;
   });
-  return { reads: out, waiting };
+  return { reads: out, waiting, pending };
 };
 let lastKey = '',
   acceptedKey = '';
@@ -162,11 +249,46 @@ let lastInv = '',
   sentInv = '';
 let stableInv: number[] | null = null; // the last inventory read two frames agreed on
 let gate = initialGate();
-// re-roll caption re-reads on a settled draft screen (see the draft branch of the frame handler)
-let rerollBusy = false,
-  rerollAt = 0,
-  rerollLast = -2,
-  rerollKey = '';
+// The "N Re-Roll Remaining" caption, read for the set on screen before that set is accepted (so the advice never
+// starts as "take" and flips to "re-roll" when the read lands), then re-read while it stays up: the caption can
+// update a beat after the cards. A new value is taken only when two re-reads in a row agree on it.
+const REROLL_REREAD_MS = 600;
+let rr: { set: string; value: number | null; next: number | null; busy: boolean; at: number } = {
+  set: '',
+  value: null,
+  next: null,
+  busy: false,
+  at: 0,
+};
+let rrGen = 0;
+const forgetRerolls = () => {
+  rr = { set: '', value: null, next: null, busy: false, at: 0 };
+  rrGen++;
+};
+/** Starts a caption read for the set `set` when one is due; `onChange` runs when a re-read moves the settled value. */
+const readRerolls = (img: Parameters<typeof readRerollsRemaining>[0], set: string, onChange: (v: number) => void) => {
+  if (rr.set !== set) (forgetRerolls(), (rr.set = set));
+  const now = performance.now();
+  if (rr.busy || (rr.value !== null && now - rr.at < REROLL_REREAD_MS)) return;
+  rr.busy = true;
+  rr.at = now;
+  const gen = rrGen;
+  readRerollsRemaining(img)
+    .then((v) => {
+      if (gen !== rrGen) return;
+      if (rr.value === null) rr.value = v;
+      else if (v === rr.value) rr.next = null;
+      else if (rr.next === v) {
+        rr.value = v;
+        rr.next = null;
+        onChange(v);
+      } else rr.next = v;
+    })
+    .catch(() => {}) // the OCR engine was freed (capture stopped) while this was running
+    .finally(() => {
+      if (gen === rrGen) rr.busy = false;
+    });
+};
 
 let intervalMs = 250;
 // Off the shop screen there's nothing to react to quickly -- poll much slower, and only read the small
@@ -225,8 +347,7 @@ let acceptedRound = 0,
 const forgetDraft = () => {
   forgetNames();
   lastKey = acceptedKey = lastInv = sentInv = '';
-  rerollLast = -2;
-  rerollKey = '';
+  forgetRerolls();
   wasShop = false;
   offFrames = 0;
   settledSig = pendingSig = null;
@@ -401,17 +522,19 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
       .filter(Boolean)
       .sort((a, b) => a - b);
     const ik = ids.join(',');
-    if (ik === lastInv) {
-      stableInv = ids;
-      if (ik !== sentInv) {
-        sentInv = ik;
-        inventory = ids;
-      }
-    }
+    if (ik === lastInv) stableInv = ids;
     lastInv = ik;
   } else if (!key) lastInv = '';
+  // The re-roll caption is read for every full set (its own key: the '+' flags wobble), and the gate holds the accept
+  // until it is in, so the first advice already knows whether a re-roll is left.
+  const set = key ? `${labels.choice}|${key.replace(/\+/g, '')}` : '';
+  if (set)
+    readRerolls(img, set, (v) => {
+      if (acceptedKey) post({ type: 'rerolls', forKey: acceptedKey, rerollsRemaining: v });
+    });
   // The gate decides when this screen is settled enough to advise on, and spots the player's selection.
   const g = stepGate(gate, {
+    ready: !named.pending && (!set || (rr.set === set && rr.value !== null)),
     key,
     present: reads.filter((r) => r.present).map((r) => r.itemId),
     round: labels.round,
@@ -432,39 +555,15 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
     if (meta.self) matchBar = { bar: meta.bar, self: meta.self, sig: bsig };
     // the hero bar is constant while the draft screen stays up; keep it until the screen closes (nonShopResult)
     knownHero = meta.self ? { bar: meta.bar, self: meta.self } : null;
-    // rerollsRemaining above is only the fast "is there a glyph at all" read (0 or -1 pending); resolve
-    // the actual digit via real OCR off the hot path and post it once it's ready, tagged with the key it
-    // was read for so a stale, slow OCR result from a since-superseded card set is never applied.
-    if (meta.rerollsRemaining < 0) {
-      const forKey = key;
-      readRerollsRemaining(img)
-        .then((rerollsRemaining) => {
-          rerollLast = rerollsRemaining;
-          rerollKey = forKey;
-          post({ type: 'rerolls', forKey, rerollsRemaining });
-        })
-        .catch(() => {}); // the OCR engine was freed (capture stopped) while this was running
-    }
-  } else if (g.live && key === acceptedKey) {
-    // The caption can update a beat after the cards do (or the first read can land mid-animation), so keep
-    // re-reading it on the settled screen and post whenever the count changes. Throttled, one read at a time.
-    const now = Date.now();
-    if (!rerollBusy && now - rerollAt > 600) {
-      rerollBusy = true;
-      rerollAt = now;
-      const forKey = key;
-      readRerollsRemaining(img)
-        .then((v) => {
-          if (v !== rerollLast || forKey !== rerollKey) {
-            rerollLast = v;
-            rerollKey = forKey;
-            post({ type: 'rerolls', forKey, rerollsRemaining: v });
-          }
-        })
-        .catch(() => {})
-        .finally(() => {
-          rerollBusy = false;
-        });
+    meta.rerollsRemaining = rr.value ?? meta.rerollsRemaining;
+  }
+  // The owned list changes the scores, so it reaches the page with the accepted set and not again while that set is up
+  // (the player cannot gain an item without leaving it): a grid read that wobbles never re-ranks the cards on screen.
+  if (stableInv && (accepted || !g.live)) {
+    const ik = stableInv.join(',');
+    if (ik !== sentInv) {
+      sentInv = ik;
+      inventory = stableInv;
     }
   }
   if (!g.live) acceptedKey = '';
