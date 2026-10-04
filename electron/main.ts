@@ -79,6 +79,9 @@ let lastCaptureStateJson = '';
 let captureHeld = false;
 // The last capture start failed or was denied (grey dot).
 let captureFailed = false;
+/** When the renderer last stopped an idle capture; until a probe miss (or PROBE_REARM_MS) a probe hit is ignored. */
+let idleAt = 0;
+const PROBE_REARM_MS = 30_000;
 // Lobby status dot (see src/brawl/lobbyDot.ts) and the F8 hotkey, which exists only while a game window does.
 let lobby = initialLobby();
 let lastDot: DotState | null = null;
@@ -459,7 +462,12 @@ function startRectPolling() {
     } else if (!probeMode()) captureWanted = !captureHeld;
     else if (!captureWanted && isGameForeground()) {
       const hit = perf.time('probe', () => probeShopScreen(found, grabScreenRegion));
-      if (hit) {
+      if (!hit) idleAt = 0;
+      else if (idleAt && Date.now() - idleAt < PROBE_REARM_MS) {
+        // the screen the capture just gave up on (the probe sees a CHOICE glyph the full read does not): do not
+        // start it again at once, or Start/Stop flips every few seconds
+      } else {
+        idleAt = 0;
         captureWanted = true;
         log('electron-main', 'info', 'draft.probe.hit');
       }
@@ -752,6 +760,7 @@ function setupIpc() {
   ipcMain.on(CHANNELS.captureIdle, () => {
     if (!probeMode()) return; // test mode / harness: capture just follows the window
     captureWanted = false;
+    idleAt = Date.now();
     emitCaptureState();
   });
   ipcMain.handle(CHANNELS.detectNow, () => detectNow('button'));

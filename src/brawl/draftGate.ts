@@ -17,7 +17,7 @@
 export const SETTLE_MS = 300;
 /** The accepted cards under new labels (or labels that went backwards) must hold this long. */
 export const RELABEL_SETTLE_MS = 1200;
-/** Key-less frames (a card hidden by a hover tooltip) that keep an accepted set's advice up. */
+/** Frames with no card read at all that keep an accepted set's advice up. */
 export const MISSING_FRAMES = 3;
 const SPENT_KEEP = 6;
 
@@ -57,6 +57,8 @@ export const initialGate = (): GateState => ({ cand: null, last: null, live: fal
 export const offScreenGate = (s: GateState): GateState => ({ ...initialGate(), spent: s.spent });
 
 const cardIds = (key: string) => key.split(',').map((k) => Number(k.replace('+', '')));
+/** Same three items, whatever the enhanced ('+') reads say: that flag wobbles under the hover glow. */
+const sameSet = (a: string, b: string) => a.replace(/\+/g, '') === b.replace(/\+/g, '');
 const step = (l: { round: number; choice: number }) => (l.round > 0 ? (l.round - 1) * 3 + l.choice : 0);
 /** Same labels; an unread round (0) matches any round. */
 const sameLabels = (a: Labelled, b: Labelled) => a.choice === b.choice && (!a.round || !b.round || a.round === b.round);
@@ -68,7 +70,7 @@ export function stepGate(s: GateState, f: GateFrame): GateOut {
   // A selection shows up in the inventory grid: an item that was on the last accepted set and was not owned then.
   if (last && f.inventory) {
     if (!last.inv) last = { ...last, inv: f.inventory };
-    else if (!spent.includes(last.key)) {
+    else if (!spent.some((k) => sameSet(k, last!.key))) {
       const was = last.inv,
         ids = cardIds(last.key);
       const gain = f.inventory.find((id) => !was.includes(id) && ids.includes(id));
@@ -92,14 +94,19 @@ export function stepGate(s: GateState, f: GateFrame): GateOut {
     cand = null;
     if (live) {
       // A card read that is not on the accepted set means a new screen with a card still hidden: drop at once.
+      // Cards that are all from the accepted set (one hidden by the hover tooltip, or by the cursor on a plate) keep
+      // the advice up for as long as the hover lasts; only frames with no card read at all count down.
       const shown = last ? cardIds(last.key) : [];
-      if (f.present.some((id) => id && !shown.includes(id)) || ++missing >= MISSING_FRAMES) live = false;
+      const read = f.present.filter((id) => id);
+      if (read.some((id) => !shown.includes(id))) live = false;
+      else if (read.length) missing = 0;
+      else if (++missing >= MISSING_FRAMES) live = false;
     }
     return out(false);
   }
   missing = 0;
 
-  if (spent.includes(f.key)) {
+  if (spent.some((k) => sameSet(k, f.key))) {
     cand = null;
     live = false;
     return out(false, true);
@@ -107,13 +114,13 @@ export function stepGate(s: GateState, f: GateFrame): GateOut {
 
   const now: Labelled = { key: f.key, round: f.round, choice: f.choice };
   // Still the accepted screen: nothing to decide (a round read that was 0 is filled in).
-  if (live && last && last.key === f.key && sameLabels(last, now)) {
+  if (live && last && sameSet(last.key, f.key) && sameLabels(last, now)) {
     if (!last.round && f.round) last = { ...last, round: f.round };
     cand = null;
     return out(false);
   }
 
-  if (cand && cand.key === now.key && sameLabels(cand, now))
+  if (cand && sameSet(cand.key, now.key) && sameLabels(cand, now))
     cand = { ...cand, round: cand.round || now.round, frames: cand.frames + 1 };
   else cand = { ...now, since: f.now, frames: 1 };
 
@@ -124,9 +131,9 @@ export function stepGate(s: GateState, f: GateFrame): GateOut {
 
   if (cand.frames < 2) return out(false);
   const back = last !== null && step(now) > 0 && step(last) > 0 && step(now) < step(last);
-  const relabel = last !== null && last.key === f.key && !sameLabels(last, now);
+  const relabel = last !== null && sameSet(last.key, f.key) && !sameLabels(last, now);
   // The set that was just up comes back under the same labels (a hover tooltip moved away): no need to wait.
-  const returning = last !== null && last.key === f.key && sameLabels(last, now);
+  const returning = last !== null && sameSet(last.key, f.key) && sameLabels(last, now);
   const need = returning ? 0 : relabel || back ? RELABEL_SETTLE_MS : SETTLE_MS;
   if (f.now - cand.since < need) return out(false);
 

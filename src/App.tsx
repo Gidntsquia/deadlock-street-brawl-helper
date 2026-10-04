@@ -144,7 +144,10 @@ export default function App() {
       <div hidden={tab !== 'advisor'}>
         <BrawlView hero={hero} heroes={heroes} items={items} abilities={abilities} onHero={handleHero} debug={debug} />
       </div>
-      {tab === 'tiers' && <TierList heroes={heroes} items={items} />}
+      {/* Kept mounted too: unmounting refetched the tier list, flashed "Loading…" and reset its filters on every switch. */}
+      <div hidden={tab !== 'tiers'}>
+        <TierList heroes={heroes} items={items} />
+      </div>
       <footer>
         Data: deadlock-api.com (aggregate analytics, assets). See the{' '}
         <a href="https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Street-Brawl-Advisor">

@@ -136,6 +136,9 @@ const sameSig = (a: Uint8Array | null, b: Uint8Array): boolean => {
   return true;
 };
 let wasShop = false; // the previous result was a draft frame: the next non-draft frame is re-checked quickly
+/** Draft frames in a row with no CHOICE glyph before the draft screen counts as closed. */
+const OFF_FRAMES = 3;
+let offFrames = 0;
 let acceptedRound = 0,
   acceptedChoice = 0;
 
@@ -144,6 +147,7 @@ const forgetDraft = () => {
   rerollLast = -2;
   rerollKey = '';
   wasShop = false;
+  offFrames = 0;
   settledSig = pendingSig = null;
   knownHero = null;
   acceptedRound = acceptedChoice = 0;
@@ -197,7 +201,8 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
   if (msg.type === 'stop') {
     clearTimeout(timer);
     forgetDraft();
-    matchBar = null;
+    // matchBar is kept: capture stops between every round, and the bar fingerprint is checked before it is reused
+    // (a new match has different portraits), so the ~0.7 s hero bar read is paid once per match, not once per round.
     void terminateOCR();
     return;
   }
@@ -249,12 +254,19 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
   // into the next shop) -- isShopScreen is one small glyph read instead of three full icon searches.
   const labels = readRoundChoice(img);
   if (labels.choice === 0) {
+    // One unreadable CHOICE glyph on a draft screen (a hover glow, a frame caught mid-animation) is not the screen
+    // closing: look at the next frames before forgetting the accepted set, or the plates blank and re-settle.
+    if (wasShop && ++offFrames < OFF_FRAMES) {
+      tick(intervalMs, true);
+      return;
+    }
     post(nonShopResult(t0));
     tick(wasShop ? intervalMs : IDLE_INTERVAL_MS, false);
     wasShop = false;
     return;
   }
   wasShop = true;
+  offFrames = 0;
   const sig = frameSig(msg.regions);
   if (
     acceptedKey &&

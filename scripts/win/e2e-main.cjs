@@ -97,7 +97,7 @@ const SET_SELECT_JS = `
     const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
     setter.call(el, String(value));
     el.dispatchEvent(new Event('change', { bubbles: true }));
-    return true;
+    return el.value === String(value); // false when no option has that value
   }
   function __setHero(name) {
     const el = document.querySelector('.hero-select');
@@ -269,11 +269,21 @@ async function main() {
       __setSelect('select[aria-label="Choice"]', ${c1.choice}); })()`,
     );
     await sleep(300);
-    const setFrame = (name) =>
-      js(
-        control,
-        `(() => { ${SET_SELECT_JS} return __setSelect('select[aria-label="Test screenshot"]', ${JSON.stringify(name)}); })()`,
+    // The screenshot select renders only after main broadcasts the test state, which can trail getTestWindow():
+    // wait for it and fail loudly if the switch did not happen (it once silently left the previous frame up).
+    const setFrame = async (name) => {
+      const ok = await waitFor(
+        () =>
+          js(
+            control,
+            `(() => { ${SET_SELECT_JS} return __setSelect('select[aria-label="Test screenshot"]', ${JSON.stringify(name)}); })()`,
+          ),
+        3_000,
+        50,
       );
+      if (!ok) check(`set-frame-${name}`, false, 'Test screenshot select missing or option not found');
+      return !!ok;
+    };
     const readOverlay = () =>
       js(
         overlay,

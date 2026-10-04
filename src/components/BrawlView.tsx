@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { emptyStable, stabilise, type StableState } from '../brawl/stabilise';
 import { createPortal } from 'react-dom';
 import type { Ability, Hero, Item } from '../types';
@@ -251,6 +251,10 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
       tipNow = tipRef.current;
     let state: OverlayState = BLANK_OVERLAY;
     if (draft || tipNow) {
+      // A newly accepted set's reads arrive before React has ranked it: sending them now would draw them with the
+      // previous set's scores and pick for a frame. Wait for the advice effect, which pushes again once it has run.
+      const adviceIds = overlayAdviceRef.current?.ranked.map((r) => r.itemId) ?? [];
+      if (draft && adviceIds.length && readsRef.current.some((r) => r.present && !adviceIds.includes(r.itemId))) return;
       const rerollNow = !!rerollRef.current;
       state = {
         reads: draft ? readsRef.current : [],
@@ -290,14 +294,13 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
             grade: gradeById.get(r.item.id) ?? '-',
             rows: breakdownRows(r.parts, r.score, r.known),
           })),
-          status,
         }
       : null;
     draftRef.current = draftOpen;
     tipRef.current = tip;
     pushOverlay();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- pushOverlay only reads refs
-  }, [input, hero, round, choice, reroll, ranked, draftOpen, tip, status, gradeById]);
+  }, [input, hero, round, choice, reroll, ranked, draftOpen, tip, gradeById]);
 
   /** Ends a Detect now try and logs `detect.manual` with the outcome. */
   function finishDetect(outcome: 'hit' | 'miss' | 'failed') {
@@ -426,7 +429,9 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
       // never reaches capture.start at all.
       log('brawl-view', 'info', 'capture.attempt');
       {
-        const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: IDLE_FPS }, audio: false });
+        // Start at the draft rate: capture is mostly started because the probe just saw the draft screen, and the
+        // first non-draft result lowers it to IDLE_FPS (setFps in the frame loop).
+        const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: DRAFT_FPS }, audio: false });
         if (gen !== captureGenRef.current) {
           // superseded while this real getDisplayMedia() request was pending -- drop it
           // instead of adopting a stream nothing asked for, and don't touch state a newer attempt now owns.
@@ -510,6 +515,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
     void window.brawlAPI!.getCaptureState().then((st) => {
       captureWantedRef.current = st.wanted;
       probeModeRef.current = st.probe;
+      setProbing(st.probe);
       if (!st.probe || st.wanted) void startCapture();
       else setStatus(WAITING_STATUS);
     });
@@ -540,11 +546,14 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
   // whole session; under test mode / the harness (`probe: false`) it simply follows the game window.
   const captureWantedRef = useRef(false);
   const probeModeRef = useRef(false);
+  // Mirrors probeModeRef for rendering: with a real game, capture being off is the normal "watching" state.
+  const [probing, setProbing] = useState(false);
   useEffect(() => {
     if (!isElectron) return;
     return window.brawlAPI!.onCaptureState((st) => {
       captureWantedRef.current = st.wanted;
       probeModeRef.current = st.probe;
+      setProbing(st.probe);
       if (st.wanted && capture === 'off' && !manualStopRef.current) {
         setDenied(false);
         void startCapture();
@@ -627,6 +636,10 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
     });
   }, []);
 
+  const loopCtxRef = useRef({ byId, heroId, heroes, onHero, hero });
+  useLayoutEffect(() => {
+    loopCtxRef.current = { byId, heroId, heroes, onHero, hero };
+  });
   // frame loop: the worker asks for a frame ('tick'), the page draws the video to a canvas and sends the pixels,
   // the worker answers with what it read and asks again after CAPTURE_MS. Nothing here depends on page timers.
   useEffect(() => {
@@ -787,6 +800,8 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
       }
     };
     const onMessage = (ev: MessageEvent<WorkerOut>) => {
+      // read through a ref: a hero switch must not tear this loop down (it cleared the tip timer and frame wait)
+      const { byId, heroId, heroes, onHero, hero } = loopCtxRef.current;
       if (ev.data.type === 'tick') {
         if (ev.data.full) setFps(true); // the probe saw a draft screen: raise the frame rate before the first full read
         const full = ev.data.full;
@@ -816,7 +831,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
         perf.record(r.shop ? 'worker.draft' : 'worker.probe', r.ms);
         for (const [k, v] of Object.entries(r.stages ?? {})) perf.record(`worker.${k}`, v);
       }
-      stableRef.current = r.shop ? stabilise(stableRef.current, r.reads) : emptyStable();
+      stableRef.current = r.shop ? stabilise(stableRef.current, r.reads, r.live) : emptyStable();
       // Cards are only drawn on while their set is accepted: nothing over a screen that is still changing or over
       // cards the player already picked from (see draftGate.ts).
       readsRef.current = r.live ? stableRef.current.reads : [];
@@ -836,6 +851,16 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
         // Round / choice come from the labels on this very frame. If the round label can't be read (small or
         // scaled windows), the round advances only when the choice wraps back to 1 (3 -> 1, or 2 -> 1 after a skipped frame); anything else keeps the old value.
         // Either way the cards and labels are set together, so the panel never mixes a new set with an old label.
+        // Round 1, choice 1 is the first pick of a match: nothing is owned yet. The owned list is otherwise only reset
+        // when the detected hero changes, and an empty inventory grid is never reported, so a new match on the same
+        // hero kept the last match's items and scored any of them on offer with the "already held" penalty.
+        if (meta.round === 1 && meta.choice === 1 && ownedRef.current.length) {
+          log('brawl-view', 'info', 'owned.reset', { reason: 'new-match', had: ownedRef.current });
+          ownedRef.current = [];
+          setOwned([]);
+          offeredRef.current.clear();
+          for (const o of offers) offeredRef.current.add(o.itemId);
+        }
         if (meta.round) {
           setRound(meta.round);
           roundRef.current = meta.round;
@@ -912,9 +937,13 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
         else if (++detectMissesRef.current < DETECT_MISSES) {
           return;
         } else {
-          // report it, but keep watching: the draft may simply not be open yet
+          // Not a draft: stop, say so, and tell main to hold capture off until the next press (AGENTS.md, Detect now).
+          // Keeping capture on here let the next frame overwrite "No draft found" before anyone could read it.
           finishDetect('miss');
+          captureWantedRef.current = false;
+          stopCapture();
           setStatus(NO_DRAFT_STATUS);
+          window.brawlAPI?.detectMiss?.();
           return;
         }
       }
@@ -953,7 +982,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
       if (vid && frames.supported) vid.cancelVideoFrameCallback(vfcId);
       w.removeEventListener('message', onMessage);
     };
-  }, [capture, byId, heroId, heroes, onHero, hero, setRound, setEnemies]);
+  }, [capture, setRound, setEnemies]);
 
   const took = (r: RankedOffer) => {
     setOwned((o) => [...o, r.item.id]);
@@ -1008,7 +1037,8 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
     if (!isElectron) return status || 'Capture off — press Start';
     if (gameFound && f8InUse) return 'F8 is in use by another program';
     if (!gameFound) return 'Deadlock window not found';
-    return manualStop ? 'Capture stopped — press Start' : 'Deadlock found, capture off';
+    if (manualStop) return 'Capture stopped — press Start';
+    return probing ? 'Watching for the draft screen' : 'Deadlock found, capture off';
   })();
   const advicePanel = (
     <AdvicePanel
@@ -1034,7 +1064,11 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
       <div className="panel brawl-controls">
         <div className="brawl-buttons">
           <button
-            className={capture === 'off' ? 'btn primary brawl-capture' : 'btn brawl-capture'}
+            className={
+              capture === 'off' && !(probing && gameFound && !manualStop)
+                ? 'btn primary brawl-capture'
+                : 'btn brawl-capture'
+            }
             onClick={capture === 'on' ? onStop : onStart}
             disabled={capture === 'starting'}
           >
@@ -1051,8 +1085,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
             </button>
           )}
         </div>
-        {isElectron && !gameFound && <div className="muted brawl-status">Deadlock not found</div>}
-        <div className="muted brawl-status" role="status" aria-live="polite">
+        <div className="muted brawl-status" role="status" aria-live="polite" title={statusLine}>
           {statusLine}
         </div>
         {!draftSeen && (

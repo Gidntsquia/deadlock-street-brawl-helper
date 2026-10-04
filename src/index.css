@@ -1403,6 +1403,10 @@ footer {
 }
 .brawl-controls .brawl-status {
   margin-top: 8px;
+  /* one line, always: a longer message must not push the rest of the panel down */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .brawl-debug {
   margin-top: 12px;

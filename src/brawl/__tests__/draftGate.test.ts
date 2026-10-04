@@ -94,19 +94,29 @@ describe('draftGate', () => {
     expect(accepted.map((a) => a.key)).toEqual([A, B]);
   });
 
-  it('a hover tooltip hiding a card keeps the advice for a moment and gets it back without the settle wait', () => {
+  it('a hover tooltip hiding a card keeps the advice up for as long as the hover lasts', () => {
     const { outs } = run([
       ...hold({ key: A, choice: 1 }, 500),
-      { key: '', choice: 1, present: [1, 2] },
-      { key: '', choice: 1, present: [1, 2] },
-      { key: '', choice: 1, present: [1, 2] },
+      ...hold({ key: '', choice: 1, present: [1, 2] }, 2000),
       { key: A, choice: 1 },
       { key: A, choice: 1 },
     ]);
-    const n = outs.length;
-    expect(outs[n - 5]!.live).toBe(true);
-    expect(outs[n - 3]!.live).toBe(false);
-    expect(outs[n - 1]!.accept).toBe(true);
+    const at = outs.findIndex((o) => o.accept);
+    expect(outs.slice(at).every((o) => o.live)).toBe(true); // never blanks once accepted
+    expect(outs.filter((o) => o.accept)).toHaveLength(1); // no re-accept after the hover
+  });
+
+  it('frames with no card read at all drop the advice after a few frames', () => {
+    const { outs } = run([...hold({ key: A, choice: 1 }, 500), ...hold({ key: '', choice: 1, present: [] }, 300)]);
+    expect(outs.at(-1)!.live).toBe(false);
+  });
+
+  it('a wobbling enhanced (+) read keeps the same set live without a re-accept', () => {
+    const frames: F[] = [...hold({ key: A, choice: 1 }, 500)];
+    for (let i = 0; i < 10; i++) frames.push({ key: i % 2 ? A : '1+,2,3', choice: 1 });
+    const { outs } = run(frames);
+    expect(outs.filter((o) => o.accept)).toHaveLength(1);
+    expect(outs.at(-1)!.live).toBe(true);
   });
 
   it('a card read outside the accepted set while another is hidden drops the advice at once', () => {
