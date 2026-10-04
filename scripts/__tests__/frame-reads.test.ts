@@ -1,7 +1,10 @@
 import { readFileSync } from 'node:fs';
 import sharp from 'sharp';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { decodeIconIndex, readDraftMeta, readDraftScreen, readRoundChoice } from '../../src/brawl/recognise';
+
+// Measured 6.8 s for choice1 under a parallel `npm run check`; 1.8 s alone.
+vi.setConfig({ testTimeout: 30_000 });
 
 // What the recogniser reads from the tracked demo frames: card ids, round/choice and the hero bar. The advice
 // is a pure function of these, so pinning them proves speed work (warm-up, caching) never changes the advice.
