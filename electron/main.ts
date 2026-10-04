@@ -224,6 +224,7 @@ function createControlWindow() {
     frame: false, // the page draws its own title strip (src/components/TitleBar.tsx); no Windows title bar or menu
     backgroundColor: WINDOW_BG,
     title: 'Deadlock Street Brawl Helper',
+    icon: appIconPath(),
     show: !process.env.BRAWL_E2E,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -789,11 +790,15 @@ function setupIpc() {
   });
 }
 
-function setupTray() {
-  const iconPath = app.isPackaged
+/** The app logo (public/favicon.svg rendered to PNG): tray and the control window's taskbar entry. */
+function appIconPath(): string {
+  return app.isPackaged
     ? path.join(process.resourcesPath, 'app.asar', 'dist', 'apple-touch-icon.png')
     : path.join(__dirname, '../public/apple-touch-icon.png');
-  const icon = nativeImage.createFromPath(iconPath);
+}
+
+function setupTray() {
+  const icon = nativeImage.createFromPath(appIconPath());
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
   tray.setToolTip('Deadlock Street Brawl Helper');
   tray.setContextMenu(
