@@ -702,7 +702,9 @@ function readSelfSlot(img: RGBImage): { left: number; right: number } {
     return best;
   };
   const scores = [...HERO_BAR.left, ...HERO_BAR.right].map((x) => tile(x * sx));
-  const tiles = scores.filter((v) => v > 0).length;
+  // Only a full-strength tile counts towards the banner check: the player's own tile leaks a weak score into the
+  // slots beside it (its edge falls inside their search window), which once rejected a real frame with self in slot 3.
+  const tiles = scores.filter((v) => v >= SELF_TILE.minScore).length;
   const order = scores.map((_, i) => i).sort((p, q) => scores[q] - scores[p]);
   const ok =
     tiles <= SELF_TILE.maxTiles && scores[order[0]] >= SELF_TILE.minScore && scores[order[0]] >= 2 * scores[order[1]];
