@@ -182,6 +182,11 @@ in `win:e2e`/`win:demo` drives the actual game:
   which drops its cards whenever `live` is false. The game swaps label, cards and grid a beat apart; the old
   two-frame accept advised old cards under the new label, half-swapped sets, and new cards under the stale label
   (`scripts/__tests__/worker-transitions.test.ts` replays those on real frames).
+- Card names: the worker OCRs the item name printed under each card (`cardNameCrop` in `recognise.ts`, a second
+  Tesseract engine in `ocr.ts`, fuzzy match in `names.ts`) once per slot and icon guess; a clear name match overrides
+  the icon, and a card whose icon match is shaky (score < 0.8 or margin < 0.08) keeps the set out of the gate until its
+  name is read. The page sends item names on `warm`/`init`; the page logs each read as `card.name`
+  (`fixed: true` = the name overrode the icon). `draftRegions` copies the name lines' ends as the last 6 boxes.
 - Changing the Round/Choice selects clears the accepted cards, and the worker never re-sends a set it already
   accepted: set hero/round/choice before capture starts, or advice stays null for that frame.
 - `drawReads` (`src/brawl/draw.ts`) returns the rects it stroked (`DrawnRect[]`, frame px, tagged

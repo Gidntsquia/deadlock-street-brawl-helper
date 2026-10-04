@@ -120,6 +120,11 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
     for (const i of items) tiers[i.id] = i.item_tier;
     return tiers;
   };
+  const workerNames = () => {
+    const names: Record<number, string> = {};
+    for (const i of items) names[i.id] = i.name;
+    return names;
+  };
   /** Creates the recogniser worker and has it decode the icon index and warm its readers. Called when the app
    *  opens (so the first draft frame is not the one that pays for it) and again from startCapture if needed. */
   const makeWorker = async (): Promise<Worker | null> => {
@@ -127,7 +132,12 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
     workerIndexRef.current ??= await j<IconIndex>('brawl-icons.json');
     if (workerRef.current) return workerRef.current;
     const w = new Worker(new URL('../brawl/worker.ts', import.meta.url), { type: 'module' });
-    w.postMessage({ type: 'warm', index: workerIndexRef.current, tiers: workerTiers() } satisfies WorkerIn);
+    w.postMessage({
+      type: 'warm',
+      index: workerIndexRef.current,
+      tiers: workerTiers(),
+      names: workerNames(),
+    } satisfies WorkerIn);
     workerRef.current = w;
     return w;
   };
@@ -420,6 +430,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
           type: 'init',
           index: workerIndexRef.current!,
           tiers: workerTiers(),
+          names: workerNames(),
           intervalMs: CAPTURE_MS,
         } satisfies WorkerIn);
         workerStartedRef.current = true;
@@ -824,6 +835,18 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
         const applied = ev.data.forKey === acceptedKeyRef.current;
         log('brawl-view', 'info', 'rerolls.read', { value: ev.data.rerollsRemaining, applied });
         if (applied && ev.data.rerollsRemaining >= 0) setRerollsLeft(ev.data.rerollsRemaining);
+        return;
+      }
+      if (ev.data.type === 'name') {
+        const { slot, icon, text, itemId, ms } = ev.data;
+        log('brawl-view', 'info', 'card.name', {
+          slot,
+          icon,
+          text,
+          itemId,
+          fixed: itemId !== 0 && itemId !== icon,
+          ms,
+        });
         return;
       }
       const r = ev.data;

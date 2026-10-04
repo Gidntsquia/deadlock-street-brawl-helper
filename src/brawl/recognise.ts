@@ -423,6 +423,46 @@ const rgb = (img: RGBImage, x: number, y: number): [number, number, number] => {
   return [img.data[p], img.data[p + 1], img.data[p + 2]];
 };
 
+/** The item name printed under a card's icon, in icon edges from the icon square's top-left: centred under the icon,
+ *  the longest names (Transcendent Cooldown, Spirit Shredder Bullets) reach 1.25 edges either side, and the line sits
+ *  1.1-1.48 edges down (the tilted right card lowest), above the ENHANCED box. `text` is how far the letters can reach:
+ *  draftRegions copies only that much, and the crop's wider margin arrives black, which reads as background. */
+export const CARD_NAME = { halfWidth: 1.4, text: 1.3, top: 1.08, bottom: 1.52 } as const;
+
+/** The name line under a card as black text on white (RGBA, with a white margin) for the OCR engine, or null when
+ *  it falls off the frame. The name is white/off-white; everything with colour (the card ring, the blue ENHANCED
+ *  label, the background art) or darkness (the text's own outline) becomes white. `line` is the name line's height
+ *  in frame px (without the margin). */
+export function cardNameCrop(
+  img: RGBImage,
+  m: IconMatch,
+): { data: Uint8Array; width: number; height: number; line: number } | null {
+  const fw = img.origin?.fullWidth ?? img.width,
+    fh = img.origin?.fullHeight ?? img.height;
+  const cx = m.x + m.edge / 2;
+  const x0 = Math.max(0, Math.round(cx - CARD_NAME.halfWidth * m.edge)),
+    x1 = Math.min(fw, Math.round(cx + CARD_NAME.halfWidth * m.edge)),
+    y0 = Math.round(m.y + CARD_NAME.top * m.edge),
+    y1 = Math.min(fh, Math.round(m.y + CARD_NAME.bottom * m.edge));
+  const w = x1 - x0,
+    h = y1 - y0;
+  if (w < 8 || h < 6) return null;
+  const pad = 12,
+    ow = w + 2 * pad,
+    oh = h + 2 * pad;
+  const data = new Uint8Array(ow * oh * 4).fill(255);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const [r, g, b] = rgb(img, x0 + x, y0 + y);
+      const hi = Math.max(r, g, b);
+      if (hi > 170 && hi - Math.min(r, g, b) < 60) {
+        const i = ((y + pad) * ow + x + pad) * 4;
+        data[i] = data[i + 1] = data[i + 2] = 0;
+      }
+    }
+  return { data, width: ow, height: oh, line: h };
+}
+
 /** Tier 1..5 read from the numeral, or 0 when no numeral is found. `m` is the icon square from matchIcon. */
 export function readTier(img: RGBImage, m: IconMatch): number {
   const u = m.edge / 185,
@@ -1161,6 +1201,18 @@ export function draftRegions(width: number, height: number): Region[] {
       inv.x0 + (inv.cols - 1) * inv.pitch + inv.icon + inv.search + pad,
       inv.y0 + (inv.rows - 1) * inv.pitch + inv.icon + inv.search + pad,
     ]);
+  // The item name line under each card (cardNameCrop), at the largest icon scale tried plus the search slack. The card
+  // box above already spans its rows and middle, so only the two ends of the line stick out. Last, so the indices of
+  // the boxes above stay put.
+  const big = BRAWL_LAYOUT.icon * BRAWL_LAYOUT.scales[BRAWL_LAYOUT.scales.length - 1]!,
+    slack = BRAWL_LAYOUT.search,
+    reach = CARD_NAME.text * big + slack,
+    y0 = (CARD_NAME.top - 0.5) * BRAWL_LAYOUT.icon * BRAWL_LAYOUT.scales[0] - slack,
+    y1 = (CARD_NAME.bottom - 0.5) * big + slack;
+  for (const c of BRAWL_LAYOUT.cards) {
+    boxes.push([c.cx - reach, c.cy + y0, c.cx - cardHalf, c.cy + y1]);
+    boxes.push([c.cx + cardHalf, c.cy + y0, c.cx + reach, c.cy + y1]);
+  }
   return boxes.map(([x0, y0, x1, y1]) => {
     const x = Math.max(0, Math.floor(x0 * sx)),
       y = Math.max(0, Math.floor(y0 * sy));

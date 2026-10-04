@@ -1,5 +1,5 @@
 import { createWorker, PSM, type Worker as TesseractWorker } from 'tesseract.js';
-import { extractRerollLabelCrop, rerollGlyphIsOne, type RGBImage } from './recognise';
+import { extractRerollLabelCrop, rerollGlyphIsOne, type cardNameCrop, type RGBImage } from './recognise';
 
 // All assets (worker script, wasm core, eng.traineddata.gz) are bundled under public/ocr/ so this reads
 // real digits via OCR without any network access at runtime -- required for an offline desktop app, and
@@ -11,6 +11,11 @@ const isNode = typeof process !== 'undefined' && !!process.versions?.node && typ
 const UPSCALE = 8;
 
 let workerPromise: Promise<TesseractWorker> | null = null;
+// A second engine for the item names under the cards: the digit engine's whitelist and page mode are set once, and
+// switching them per call would race the two kinds of read.
+let nameWorkerPromise: Promise<TesseractWorker> | null = null;
+/** The name crop is scaled so its text line is about this tall before OCR (it is ~25 px tall in a 1280 px frame). */
+const NAME_PX = 64;
 
 async function nodeOcrDir(): Promise<string> {
   const { fileURLToPath } = await import('node:url');
@@ -26,6 +31,22 @@ function browserOcrOpts() {
     : new URL('../ocr/', self.location.href).href;
   const base = dir.replace(/\/$/, '');
   return { workerPath: `${base}/worker.min.js`, corePath: base, langPath: base, gzip: true };
+}
+
+async function getNameWorker(): Promise<TesseractWorker> {
+  if (!nameWorkerPromise) {
+    nameWorkerPromise = (async () => {
+      const opts = isNode ? { langPath: await nodeOcrDir(), gzip: true } : browserOcrOpts();
+      const worker = await createWorker('eng', 1 /* OEM.LSTM_ONLY */, opts);
+      await worker.setParameters({
+        tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz -'",
+        tessedit_pageseg_mode: PSM.SINGLE_LINE,
+        user_defined_dpi: '300', // the PNG carries none; without it Tesseract guesses and warns on every read
+      });
+      return worker;
+    })();
+  }
+  return nameWorkerPromise;
 }
 
 async function getWorker(): Promise<TesseractWorker> {
@@ -45,9 +66,9 @@ async function getWorker(): Promise<TesseractWorker> {
 /** Upscales the raw RGBA crop with smooth (Lanczos-equivalent) resampling and encodes it as PNG for
  *  Tesseract -- plain nearest-neighbor/binarized upscaling reads as empty text; smooth resampling is what
  *  actually let Tesseract read the real "1" in screenshots/brawl/reroll-choice*.png. */
-async function upscaledPng(data: Uint8Array, width: number, height: number): Promise<Uint8Array> {
-  const outW = width * UPSCALE,
-    outH = height * UPSCALE;
+async function upscaledPng(data: Uint8Array, width: number, height: number, scale = UPSCALE): Promise<Uint8Array> {
+  const outW = Math.round(width * scale),
+    outH = Math.round(height * scale);
   if (typeof OffscreenCanvas !== 'undefined') {
     const src = new OffscreenCanvas(width, height);
     const sctx = src.getContext('2d');
@@ -78,6 +99,24 @@ export function warmOCR(): void {
   void getWorker().catch(() => {
     workerPromise = null;
   });
+  void getNameWorker().catch(() => {
+    nameWorkerPromise = null;
+  });
+}
+
+/** A card's name line (cardNameCrop), already copied out of the frame: the worker reuses its frame buffer for the
+ *  next frame while the OCR read is still running. */
+export type NameCrop = NonNullable<ReturnType<typeof cardNameCrop>>;
+
+/** OCR of a card's item name line; the raw text, '' when nothing reads. */
+export async function readCardName(crop: NameCrop): Promise<string> {
+  const scale = Math.max(1, NAME_PX / crop.line);
+  const png = await upscaledPng(crop.data, crop.width, crop.height, scale);
+  const worker = await getNameWorker();
+  const {
+    data: { text },
+  } = await worker.recognize(png as unknown as Buffer);
+  return text.trim();
 }
 
 export async function readRerollsRemaining(img: RGBImage): Promise<number> {
@@ -101,12 +140,14 @@ export async function readRerollsRemaining(img: RGBImage): Promise<number> {
 /** Releases the OCR worker (and its wasm/model memory). Call on app/window teardown; a new call to
  *  readRerollsRemaining after this spins up a fresh worker on demand. */
 export async function terminateOCR(): Promise<void> {
-  if (!workerPromise) return;
-  const pending = workerPromise;
-  workerPromise = null;
-  try {
-    await (await pending).terminate();
-  } catch {
-    /* it never finished loading, or is already gone */
+  const pending = [workerPromise, nameWorkerPromise];
+  workerPromise = nameWorkerPromise = null;
+  for (const p of pending) {
+    if (!p) continue;
+    try {
+      await (await p).terminate();
+    } catch {
+      /* it never finished loading, or is already gone */
+    }
   }
 }

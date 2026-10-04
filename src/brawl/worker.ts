@@ -11,12 +11,14 @@ import {
   readRoundChoice,
   readDraftScreen,
   readInventory,
+  cardNameCrop,
   type CardRead,
   type DecodedIndex,
   type DraftMeta,
   type InventoryRead,
 } from './recognise';
-import { readRerollsRemaining, terminateOCR, warmOCR } from './ocr';
+import { readCardName, readRerollsRemaining, terminateOCR, warmOCR } from './ocr';
+import { matchItemName, nameList, type NameList } from './names';
 import { initialGate, offScreenGate, stepGate } from './draftGate';
 import type { IconIndex } from './types';
 
@@ -29,8 +31,15 @@ export interface FrameRegion {
 }
 
 export type WorkerIn =
-  | { type: 'warm'; index: IconIndex; tiers: Record<number, number> }
-  | { type: 'init'; index: IconIndex; tiers: Record<number, number>; intervalMs: number }
+  // names: item names by id, for reading the name printed under each card (absent: cards are read by icon only)
+  | { type: 'warm'; index: IconIndex; tiers: Record<number, number>; names?: Record<number, string> }
+  | {
+      type: 'init';
+      index: IconIndex;
+      tiers: Record<number, number>;
+      names?: Record<number, string>;
+      intervalMs: number;
+    }
   // A draft frame is only the rectangles the recogniser reads (draftRegions), each with its own pixels: the worker
   // pastes them into a reused frame-sized buffer, so nothing outside them is ever copied out of the video.
   | { type: 'frame'; width: number; height: number; regions: FrameRegion[]; prefer: number[] }
@@ -55,7 +64,9 @@ export type WorkerIn =
 export type WorkerOut =
   | FrameResult
   | { type: 'tick'; full: boolean } // full: send a whole frame; otherwise just the probe crop
-  | { type: 'rerolls'; forKey: string; rerollsRemaining: number };
+  | { type: 'rerolls'; forKey: string; rerollsRemaining: number }
+  // a card's name line was read: what the icon said, the OCR text, and the item it names (0: no clear match)
+  | { type: 'name'; slot: number; icon: number; text: string; itemId: number; ms: number };
 
 interface FrameResult {
   type: 'result';
@@ -76,6 +87,75 @@ interface FrameResult {
 
 let index: DecodedIndex | null = null;
 let tiers: Record<number, number> = {};
+let names: NameList | null = null;
+const setNames = (n: Record<number, string> | undefined) => {
+  if (!n || !index) return;
+  const list = nameList(index.ids, n);
+  names = list.length ? list : null;
+};
+
+// ---- item names under the cards ----------------------------------------------------------------------------
+// The name printed under each card is the item's exact name, so a clear OCR match overrides the icon search (which
+// misses when the game's art differs from the shop art). Each card is read once per (slot, icon guess) while the draft
+// screen stays up; a card whose icon match is shaky is held back from the gate until its name is in, so wrong advice
+// never shows first. A name that does not read (the hover tooltip covers it, a mid-animation frame) is retried.
+const NAME_RETRY_MS = 700;
+/** An icon match below this score or margin is not trusted on its own: the card waits for its name. */
+const SURE_SCORE = 0.8,
+  SURE_MARGIN = 0.08;
+const nameFix = new Map<string, { id: number; at: number }>(); // `${slot}:${iconId}` -> named item (0: unread)
+const nameBusy = new Set<string>();
+let nameChoice = 0;
+const forgetNames = () => {
+  nameFix.clear();
+  nameChoice = 0;
+};
+/** The reads with each card's item replaced by the one its name line names; `waiting` while a shaky card's name is
+ *  still being read. Starts the OCR reads that are missing. */
+const applyNames = (
+  img: Parameters<typeof cardNameCrop>[0],
+  reads: CardRead[],
+  choice: number,
+): { reads: CardRead[]; waiting: boolean } => {
+  if (!names) return { reads, waiting: false };
+  if (choice !== nameChoice) {
+    nameFix.clear(); // a new choice can bring the same icon guess in the same slot for a different card
+    nameChoice = choice;
+  }
+  const list = names;
+  let waiting = false;
+  const out = reads.map((r, slot) => {
+    if (!r.present) return r;
+    const k = `${slot}:${r.itemId}`;
+    const fix = nameFix.get(k);
+    const sure = r.match.score >= SURE_SCORE && r.match.margin >= SURE_MARGIN;
+    if (fix && fix.id) {
+      if (fix.id === r.itemId) return r;
+      return { ...r, itemId: fix.id, tier: tiers[fix.id] ?? r.tier, match: { ...r.match, itemId: fix.id } };
+    }
+    const retry = !fix || performance.now() - fix.at > NAME_RETRY_MS;
+    if (!nameBusy.has(k) && retry) {
+      const crop = cardNameCrop(img, r.match);
+      if (crop) {
+        nameBusy.add(k);
+        const t = performance.now(),
+          forChoice = choice;
+        readCardName(crop)
+          .then((text) => {
+            const m = matchItemName(text, list);
+            if (forChoice === nameChoice) nameFix.set(k, { id: m?.itemId ?? 0, at: performance.now() });
+            post({ type: 'name', slot, icon: r.itemId, text, itemId: m?.itemId ?? 0, ms: performance.now() - t });
+          })
+          .catch(() => {}) // the OCR engine was freed (capture stopped) while this was running
+          .finally(() => nameBusy.delete(k));
+      }
+    }
+    // A shaky icon waits for its first name read; once a read failed, the icon guess stands (retries go on).
+    if (!sure && !fix) waiting = true;
+    return r;
+  });
+  return { reads: out, waiting };
+};
 let lastKey = '',
   acceptedKey = '';
 let lastInv = '',
@@ -143,6 +223,7 @@ let acceptedRound = 0,
   acceptedChoice = 0;
 
 const forgetDraft = () => {
+  forgetNames();
   lastKey = acceptedKey = lastInv = sentInv = '';
   rerollLast = -2;
   rerollKey = '';
@@ -210,12 +291,14 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
     // Sent when the app opens, long before a draft: decode the icon index now so the first frame does not.
     index ??= decodeIconIndex(msg.index);
     tiers = msg.tiers;
+    setNames(msg.names);
     return;
   }
   if (msg.type === 'init' || msg.type === 'reset') {
     if (msg.type === 'init') {
       index ??= decodeIconIndex(msg.index);
       tiers = msg.tiers;
+      setNames(msg.names);
       intervalMs = msg.intervalMs;
     }
     forgetDraft();
@@ -302,9 +385,12 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
   // A frame that looks the same as the one that just produced a full set of cards (and carries the same choice
   // label) confirms that read without repeating the expensive icon search: a new screen is accepted a frame sooner.
   const confirmed = lastKey !== '' && pendingChoice === labels.choice && sameSig(pendingSig, sig);
-  const reads = confirmed ? pendingReads : stage('cards', () => readDraftScreen(img, idx, (id) => tiers[id] ?? 0));
+  const raw = confirmed ? pendingReads : stage('cards', () => readDraftScreen(img, idx, (id) => tiers[id] ?? 0));
+  const named = applyNames(img, raw, labels.choice);
+  const reads = named.reads;
   const seen = reads.filter((r) => r.present).length;
-  const key = seen === 3 ? reads.map((r) => `${r.itemId}${r.enhanced ? '+' : ''}`).join(',') : '';
+  // A set with a shaky card whose name is still being read is not a full set yet: the gate must not settle on it.
+  const key = seen === 3 && !named.waiting ? reads.map((r) => `${r.itemId}${r.enhanced ? '+' : ''}`).join(',') : '';
   let meta: DraftMeta | null = null,
     inventory: number[] | null = null;
   if (key && key === lastKey) {
@@ -384,7 +470,7 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
   if (!g.live) acceptedKey = '';
   lastKey = key;
   pendingSig = key ? sig : null;
-  pendingReads = reads;
+  pendingReads = raw;
   pendingChoice = labels.choice;
   settledSig = key !== '' && key === acceptedKey ? sig : null;
   settledReads = reads;
@@ -407,6 +493,7 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
 });
 
 const nonShopResult = (t0: number): FrameResult => {
+  forgetNames();
   lastKey = acceptedKey = lastInv = sentInv = '';
   settledSig = pendingSig = null;
   knownHero = null;
