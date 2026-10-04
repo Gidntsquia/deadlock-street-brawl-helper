@@ -1357,6 +1357,31 @@ footer {
 .app-header .hero-portrait {
   width: 48px;
   height: 48px;
+  flex: none;
+}
+/* Same header height on both tabs, so the tab strip below never moves when switching. */
+.app-header {
+  box-sizing: border-box;
+  height: 72px;
+  overflow: hidden;
+}
+.app-header > div {
+  flex: 1;
+  min-width: 0;
+}
+.app-header .hero-select {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  min-height: 30px;
+  margin: 2px 0 0;
+  padding: 4px 10px;
+}
+.app-header .sub {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
 }
 .link-btn {
   background: none;
