@@ -281,9 +281,41 @@ const DOT_WORD: Record<DotState, string> = {
   reading: 'Reading the draft',
   failed: 'Capture failed',
 };
-// Deadlock bolt from public/favicon.svg (48 x 45 box)
-const BOLT =
-  'M25.946 44.938c-.664.845-2.021.375-2.021-.698V33.937a2.26 2.26 0 0 0-2.262-2.262H10.287c-.92 0-1.456-1.04-.92-1.788l7.48-10.471c1.07-1.497 0-3.578-1.842-3.578H1.237c-.92 0-1.456-1.04-.92-1.788L10.013.474c.214-.297.556-.474.92-.474h28.894c.92 0 1.456 1.04.92 1.788l-7.48 10.471c-1.07 1.498 0 3.579 1.842 3.579h11.377c.943 0 1.473 1.088.89 1.83L25.947 44.94z';
+// The app logo from public/favicon.svg (64 x 64 box): four draft-slot circles in a diamond, the pick ringed in teal
+const LOGO_CIRCLES: [number, number, number, string][] = [
+  [32, 16.83, 9.727, '#e6ad5f'],
+  [47.17, 32, 8.477, '#a6cf6e'],
+  [32, 47.17, 9.727, '#62b6c8'],
+  [16.83, 32, 9.727, '#b992e4'],
+];
+
+/** Draws public/favicon.svg at (x, y), `size` px square. */
+function drawLogo(ctx: CanvasRenderingContext2D, x: number, y: number, size: number) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(size / 64, size / 64);
+  ctx.fillStyle = '#0e1a19';
+  ctx.beginPath();
+  ctx.roundRect(0, 0, 64, 64, 12);
+  ctx.fill();
+  ctx.strokeStyle = '#62b6c8';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.roundRect(2, 2, 60, 60, 10);
+  ctx.stroke();
+  for (const [cx, cy, r, fill] of LOGO_CIRCLES) {
+    ctx.fillStyle = fill;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.strokeStyle = '#2ec4b6';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.arc(47.17, 32, 8.477, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
 
 /** The lobby badge's rectangle (logo, title and status line around the dot) on a canvas of this height. */
 export function dotBadgeRect(canvasH: number) {
@@ -291,7 +323,7 @@ export function dotBadgeRect(canvasH: number) {
   return { x: 4 * k, y: 1 * k, w: 232 * k, h: 32 * k };
 }
 
-/** Draws the lobby badge: status dot (teal watching / amber reading / grey failed), the bolt logo, the
+/** Draws the lobby badge: status dot (teal watching / amber reading / grey failed), the app logo, the
  *  "STREET BRAWL ADVISOR" title and a status line; returns what it drew (the dot, as before). */
 export function drawDot(
   ctx: CanvasRenderingContext2D,
@@ -331,12 +363,7 @@ export function drawDot(
   }
   // logo
   ctx.globalAlpha = 1;
-  ctx.save();
-  ctx.translate(28 * k, 6 * k);
-  ctx.scale((20 * k) / 48, (20 * k) / 48);
-  ctx.fillStyle = theme.teal;
-  ctx.fill(new Path2D(BOLT));
-  ctx.restore();
+  drawLogo(ctx, 27 * k, 6 * k, 22 * k);
   // title + status line
   ctx.textBaseline = 'alphabetic';
   ctx.fillStyle = theme.text;
