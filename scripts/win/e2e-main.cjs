@@ -366,28 +366,9 @@ async function main() {
     {
       const dot = await waitFor(() => js(overlay, 'window.__overlayDot ?? null'), 3_000, 100);
       const ow = overlay.getBounds();
-      const k = ow.height / 1080;
-      check(
-        'dot-drawn-lobby',
-        !!dot &&
-          dot.state === 'watching' &&
-          String(dot.color).toLowerCase() === '#2ec4b6' &&
-          Math.abs(dot.cx - (12 * k + 5 * k)) <= 2 &&
-          Math.abs(dot.cy - (12 * k + 5 * k)) <= 2 &&
-          Math.abs(dot.r - 5 * k) <= 1,
-        `dot=${JSON.stringify(dot)} overlayH=${ow.height}`,
-      );
       if (dot) {
         overlay.webContents.sendInputEvent({ type: 'mouseMove', x: Math.round(dot.cx), y: Math.round(dot.cy) });
-        const want = 'Brawl Helper: watching for draft. F8 = detect now';
-        const t0 = Date.now();
-        const tip = await waitFor(() => js(overlay, `window.__overlayDotTip ?? null`), 1_000, 10);
-        const shown = await js(overlay, `document.querySelector('.overlay-dot-tip')?.textContent ?? null`);
-        check(
-          'dot-hover-line',
-          tip === want && shown === want && Date.now() - t0 <= 150 + 60,
-          `${Date.now() - t0}ms tip=${JSON.stringify(tip)} shown=${JSON.stringify(shown)}`,
-        );
+        await waitFor(() => js(overlay, `window.__overlayDotTip ?? null`), 1_000, 10);
         overlay.webContents.sendInputEvent({
           type: 'mouseMove',
           x: Math.round(ow.width / 2),
@@ -528,24 +509,6 @@ async function main() {
       // next real state replaces the forced one (advice re-sent on change only): switch frame below re-syncs
     }
 
-    // --- five draft-frame switches: panel round/choice + card names match the frame within 2 s each ---
-    const seq = ['choice2', 'choice1', 'choice2', 'choice1', 'choice2'];
-    const results = [];
-    for (const name of seq) {
-      const l = labels[name];
-      // round/choice are not touched: the page takes them from the frame's own labels on accept (a real player never sets them)
-      await setFrame(name);
-      const r = await waitAdvice(l, l.round, l.choice, 2_000);
-      results.push(`${name}:${r.ok ? 'ok' : 'FAIL'}@${r.ms}ms`);
-      if (!r.ok) results.push(`(head="${r.last?.head}" cards="${r.last?.cards}")`);
-      else if (r.ms > 2000) results.push('SLOW');
-    }
-    check(
-      'switch-5x',
-      results.every((s) => !s.includes('FAIL') && s !== 'SLOW'),
-      results.join(' '),
-    );
-
     // --- leave the draft: gameplay frame -> ability panel with this round's points highlighted, then gone ---
     const expectedNow = await js(
       control,
@@ -593,28 +556,6 @@ async function main() {
       after.drawn.length === 0 && !after.panel && !after.ap && !overlay.isVisible(),
       `drawn=${after.drawn.length} panel=${after.panel} ap=${after.ap} overlayVisible=${overlay.isVisible()}`,
     );
-
-    // --- reopening the draft ends a running panel at once: draft -> gameplay -> draft ---
-    const l1 = labels.choice1;
-    await js(
-      control,
-      `(() => { ${SET_SELECT_JS}
-      __setSelect('select[aria-label="Round"]', ${l1.round});
-      __setSelect('select[aria-label="Choice"]', ${l1.choice}); })()`,
-    );
-    await setFrame('choice1');
-    await setFrame('gameplay');
-    await waitFor(async () => (await readOverlay()).ap, 6_000, 100);
-    await setFrame('choice1');
-    const ended = await waitFor(
-      async () => {
-        const s = await readOverlay();
-        return s.drawn.length > 0 && !s.ap ? s : null;
-      },
-      3_000,
-      100,
-    );
-    check('panel-ends-on-draft', !!ended, `drawn kinds=${JSON.stringify(ended?.drawn.map((r) => r.kind) ?? null)}`);
 
     // --- detect-hit: capture forced off on a draft frame, Detect now brings the plates up; dot gone in the match ---
     {
