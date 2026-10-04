@@ -1,6 +1,7 @@
 // Web Worker that runs the Street Brawl screen recogniser off the main thread, so the page and the overlay stay
 // responsive while frames are read. It keeps the small amount of state needed to decide when a screen is "new":
-// cards are accepted once two consecutive frames agree, and the expensive labels / hero bar read runs only then.
+// cards are accepted once the screen has settled and the player has not already picked from them (draftGate.ts), and
+// the expensive labels / hero bar read runs only then.
 import {
   BRAWL_LAYOUT,
   HERO_BAR,
@@ -16,6 +17,7 @@ import {
   type InventoryRead,
 } from './recognise';
 import { readRerollsRemaining, terminateOCR, warmOCR } from './ocr';
+import { initialGate, offScreenGate, stepGate } from './draftGate';
 import type { IconIndex } from './types';
 
 export interface FrameRegion {
@@ -62,7 +64,10 @@ interface FrameResult {
   choice: number;
   reads: CardRead[];
   key: string; // item ids of the three cards, '' when fewer than three are visible
-  accepted: boolean; // true on the frame a new stable set of three cards is first accepted
+  accepted: boolean; // true on the frame a new, settled set of three cards is first accepted (see draftGate.ts)
+  live: boolean; // the accepted set is still what is on screen: its advice stands
+  picked: number | null; // the item the player just selected from the accepted set (seen in the inventory grid)
+  spent: boolean; // the cards on screen are a set the player already selected from: advise nothing
   meta: DraftMeta | null; // round / choice / hero bar, on the accepted frame only
   inventory: number[] | null; // owned items from the inventory grid, once two consecutive reads agree; null otherwise
   ms: number;
@@ -75,6 +80,8 @@ let lastKey = '',
   acceptedKey = '';
 let lastInv = '',
   sentInv = '';
+let stableInv: number[] | null = null; // the last inventory read two frames agreed on
+let gate = initialGate();
 // re-roll caption re-reads on a settled draft screen (see the draft branch of the frame handler)
 let rerollBusy = false,
   rerollAt = 0,
@@ -140,6 +147,8 @@ const forgetDraft = () => {
   settledSig = pendingSig = null;
   knownHero = null;
   acceptedRound = acceptedChoice = 0;
+  gate = initialGate();
+  stableInv = null;
 };
 // Dev builds only (`import.meta.env.DEV` is false in a production build, so this all folds away): milliseconds per
 // recogniser stage, sent back on each result for the page's perf summary.
@@ -262,6 +271,9 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
       reads: settledReads,
       key: acceptedKey,
       accepted: false,
+      live: true,
+      picked: null,
+      spent: false,
       meta: null,
       inventory: null,
       ms: performance.now() - t0,
@@ -281,79 +293,83 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
   const reads = confirmed ? pendingReads : stage('cards', () => readDraftScreen(img, idx, (id) => tiers[id] ?? 0));
   const seen = reads.filter((r) => r.present).length;
   const key = seen === 3 ? reads.map((r) => `${r.itemId}${r.enhanced ? '+' : ''}`).join(',') : '';
-  let accepted = false,
-    meta: DraftMeta | null = null,
+  let meta: DraftMeta | null = null,
     inventory: number[] | null = null;
   if (key && key === lastKey) {
-    // A new card set, or the ROUND / CHOICE label changed under the same cards (a stale label must not stand):
-    // (re)accept, which re-reads the hero bar and labels once the screen has settled.
-    const labelsChanged =
-      key === acceptedKey && (labels.choice !== acceptedChoice || (labels.round > 0 && labels.round !== acceptedRound));
-    if (key !== acceptedKey || labelsChanged) {
-      acceptedKey = key;
-      acceptedChoice = labels.choice;
-      if (labels.round > 0) acceptedRound = labels.round;
-      accepted = true;
-      const bsig = barSig(img);
-      if (!knownHero && matchBar && sameBar(matchBar.sig, bsig)) knownHero = matchBar;
-      meta = stage('meta', () => readDraftMeta(img, idx, knownHero ?? undefined, true));
-      if (meta.self) matchBar = { bar: meta.bar, self: meta.self, sig: bsig };
-      // the hero bar is constant while the draft screen stays up; keep it until the screen closes (nonShopResult)
-      knownHero = meta.self ? { bar: meta.bar, self: meta.self } : null;
-      // rerollsRemaining above is only the fast "is there a glyph at all" read (0 or -1 pending); resolve
-      // the actual digit via real OCR off the hot path and post it once it's ready, tagged with the key it
-      // was read for so a stale, slow OCR result from a since-superseded card set is never applied.
-      if (meta.rerollsRemaining < 0) {
-        const forKey = key;
-        readRerollsRemaining(img)
-          .then((rerollsRemaining) => {
-            rerollLast = rerollsRemaining;
-            rerollKey = forKey;
-            post({ type: 'rerolls', forKey, rerollsRemaining });
-          })
-          .catch(() => {}); // the OCR engine was freed (capture stopped) while this was running
-      }
-    }
-    // The caption can update a beat after the cards do (or the first read can land mid-animation), so keep
-    // re-reading it on the settled screen and post whenever the count changes. Throttled, one read at a time.
-    if (!accepted && key === acceptedKey) {
-      const now = Date.now();
-      if (!rerollBusy && now - rerollAt > 600) {
-        rerollBusy = true;
-        rerollAt = now;
-        const forKey = key;
-        readRerollsRemaining(img)
-          .then((v) => {
-            if (v !== rerollLast || forKey !== rerollKey) {
-              rerollLast = v;
-              rerollKey = forKey;
-              post({ type: 'rerolls', forKey, rerollsRemaining: v });
-            }
-          })
-          .catch(() => {})
-          .finally(() => {
-            rerollBusy = false;
-          });
-      }
-    }
-    // the inventory grid is only on the draft screen; accept a read once two frames agree
+    // the inventory grid is only on the draft screen; a read counts once two frames agree
     const inv: InventoryRead[] = stage('inventory', () => readInventory(img, idx, msg.prefer));
     const ids = inv
       .map((r) => r.itemId)
       .filter(Boolean)
       .sort((a, b) => a - b);
     const ik = ids.join(',');
-    if (ik === lastInv && ik !== sentInv) {
-      sentInv = ik;
-      inventory = ids;
+    if (ik === lastInv) {
+      stableInv = ids;
+      if (ik !== sentInv) {
+        sentInv = ik;
+        inventory = ids;
+      }
     }
     lastInv = ik;
-  } else if (!key) {
-    lastInv = '';
-    // A card is unreadable: the page may drop its advice (see BrawlView), so the same set must be accepted again
-    // once all three cards read, or the advice would never come back.
-    acceptedKey = '';
+  } else if (!key) lastInv = '';
+  // The gate decides when this screen is settled enough to advise on, and spots the player's selection.
+  const g = stepGate(gate, {
+    key,
+    present: reads.filter((r) => r.present).map((r) => r.itemId),
+    round: labels.round,
+    choice: labels.choice,
+    now: performance.now(),
+    inventory: stableInv,
+  });
+  gate = g.state;
+  if (g.live && gate.last) acceptedRound = gate.last.round;
+  const accepted = g.accept;
+  if (accepted) {
+    acceptedKey = key;
+    acceptedChoice = labels.choice;
+    acceptedRound = labels.round;
+    const bsig = barSig(img);
+    if (!knownHero && matchBar && sameBar(matchBar.sig, bsig)) knownHero = matchBar;
+    meta = stage('meta', () => readDraftMeta(img, idx, knownHero ?? undefined, true));
+    if (meta.self) matchBar = { bar: meta.bar, self: meta.self, sig: bsig };
+    // the hero bar is constant while the draft screen stays up; keep it until the screen closes (nonShopResult)
+    knownHero = meta.self ? { bar: meta.bar, self: meta.self } : null;
+    // rerollsRemaining above is only the fast "is there a glyph at all" read (0 or -1 pending); resolve
+    // the actual digit via real OCR off the hot path and post it once it's ready, tagged with the key it
+    // was read for so a stale, slow OCR result from a since-superseded card set is never applied.
+    if (meta.rerollsRemaining < 0) {
+      const forKey = key;
+      readRerollsRemaining(img)
+        .then((rerollsRemaining) => {
+          rerollLast = rerollsRemaining;
+          rerollKey = forKey;
+          post({ type: 'rerolls', forKey, rerollsRemaining });
+        })
+        .catch(() => {}); // the OCR engine was freed (capture stopped) while this was running
+    }
+  } else if (g.live && key === acceptedKey) {
+    // The caption can update a beat after the cards do (or the first read can land mid-animation), so keep
+    // re-reading it on the settled screen and post whenever the count changes. Throttled, one read at a time.
+    const now = Date.now();
+    if (!rerollBusy && now - rerollAt > 600) {
+      rerollBusy = true;
+      rerollAt = now;
+      const forKey = key;
+      readRerollsRemaining(img)
+        .then((v) => {
+          if (v !== rerollLast || forKey !== rerollKey) {
+            rerollLast = v;
+            rerollKey = forKey;
+            post({ type: 'rerolls', forKey, rerollsRemaining: v });
+          }
+        })
+        .catch(() => {})
+        .finally(() => {
+          rerollBusy = false;
+        });
+    }
   }
+  if (!g.live) acceptedKey = '';
   lastKey = key;
   pendingSig = key ? sig : null;
   pendingReads = reads;
@@ -368,6 +384,9 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
     reads,
     key,
     accepted,
+    live: g.live,
+    picked: g.picked,
+    spent: g.spent,
     meta,
     inventory,
     ms: performance.now() - t0,
@@ -380,6 +399,8 @@ const nonShopResult = (t0: number): FrameResult => {
   settledSig = pendingSig = null;
   knownHero = null;
   acceptedRound = acceptedChoice = 0;
+  gate = offScreenGate(gate);
+  stableInv = null;
   return {
     type: 'result',
     shop: false,
@@ -388,6 +409,9 @@ const nonShopResult = (t0: number): FrameResult => {
     reads: [],
     key: '',
     accepted: false,
+    live: false,
+    picked: null,
+    spent: false,
     meta: null,
     inventory: null,
     ms: performance.now() - t0,

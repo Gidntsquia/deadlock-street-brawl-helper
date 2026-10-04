@@ -175,6 +175,13 @@ in `win:e2e`/`win:demo` drives the actual game:
   `startCapture()` every 2 s whenever a game rect is known and `capture === 'off'`, regardless of `denied`;
   don't gate that retry on `denied` (it once left capture dead after a window swap). `desktopCapturer` can
   also lag a newly found window by a moment.
+- When a draft set counts as ready is decided by `src/brawl/draftGate.ts` (pure, stepped by the worker): the same
+  three cards and the same ROUND/CHOICE labels must hold for 300 ms; the same cards under new labels (or labels
+  going backwards) need 1.2 s; a set the player picked from (the pick shows up in the inventory grid; only readable
+  at ~2000 px wide and up) is "spent" and never advised again. `FrameResult.live/picked/spent` carry this to the page,
+  which drops its cards whenever `live` is false. The game swaps label, cards and grid a beat apart; the old
+  two-frame accept advised old cards under the new label, half-swapped sets, and new cards under the stale label
+  (`scripts/__tests__/worker-transitions.test.ts` replays those on real frames).
 - Changing the Round/Choice selects clears the accepted cards, and the worker never re-sends a set it already
   accepted: set hero/round/choice before capture starts, or advice stays null for that frame.
 - `drawReads` (`src/brawl/draw.ts`) returns the rects it stroked (`DrawnRect[]`, frame px, tagged

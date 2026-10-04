@@ -109,7 +109,6 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
   // A running Detect now try: pressed-at time; the first frame result decides hit or miss.
   const detectMissesRef = useRef(0);
   const lastReadSigRef = useRef('');
-  const unreadFramesRef = useRef(0);
   const fullCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const detectRef = useRef<{ at: number; timer: ReturnType<typeof setTimeout> } | null>(null);
   const [took_, setTook] = useState<string>('');
@@ -323,7 +322,6 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
     cardsRef.current = [];
     prevCardsRef.current = [];
     acceptedKeyRef.current = '';
-    unreadFramesRef.current = 0;
     lastReadSigRef.current = '';
     setCards([]);
     setRerollsLeft(null);
@@ -819,12 +817,14 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
         for (const [k, v] of Object.entries(r.stages ?? {})) perf.record(`worker.${k}`, v);
       }
       stableRef.current = r.shop ? stabilise(stableRef.current, r.reads) : emptyStable();
-      readsRef.current = stableRef.current.reads;
+      // Cards are only drawn on while their set is accepted: nothing over a screen that is still changing or over
+      // cards the player already picked from (see draftGate.ts).
+      readsRef.current = r.live ? stableRef.current.reads : [];
       const seen = r.reads.filter((x) => x.present).length;
       if (r.accepted) {
         const offers = r.reads.map(toOffer);
         for (const o of offers) offeredRef.current.add(o.itemId);
-        prevCardsRef.current = cardsRef.current;
+        if (cardsRef.current.length) prevCardsRef.current = cardsRef.current;
         cardsRef.current = offers;
         setCards(offers);
         const meta = r.meta!;
@@ -885,7 +885,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
           after = r.inventory;
         const gained = after.filter((id) => !before.includes(id));
         const pick = gained.find((id) => [...prevCardsRef.current, ...cardsRef.current].some((c) => c.itemId === id));
-        if (pick) setTook(byId.get(pick)?.name ?? '');
+        if (pick && !r.picked) setTook(byId.get(pick)?.name ?? '');
         if (after.length !== before.length || gained.length) setOwned(after);
       }
       if (!r.shop) {
@@ -919,25 +919,30 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
         }
       }
       const heroDetected = r.accepted && r.meta!.self && r.meta!.self === heroId;
-      // A card the recogniser cannot read (usually a hover tooltip covering it) must not leave the previous
-      // screen's advice up: after three such frames of a new card set, drop the old cards.
-      if (r.shop && !r.accepted && seen < 3 && r.key !== acceptedKeyRef.current) {
-        // A readable card outside the shown set means a new screen with a card still hidden: drop at once.
-        const shown = new Set(cardsRef.current.map((c) => c.itemId));
-        const foreign = r.reads.some((x) => x.present && x.itemId && !shown.has(x.itemId));
-        if ((foreign || ++unreadFramesRef.current >= 3) && cardsRef.current.length) {
-          cardsRef.current = [];
-          setCards([]);
-        }
-      } else unreadFramesRef.current = 0;
+      // The worker's gate says when the accepted set no longer stands: a selection was made from it, the screen is
+      // changing to the next set, or a card stayed hidden for a few frames. Its advice must not stay up meanwhile.
+      if (r.shop && !r.live && cardsRef.current.length) {
+        prevCardsRef.current = cardsRef.current;
+        cardsRef.current = [];
+        setCards([]);
+      }
+      if (r.picked) {
+        const name = byId.get(r.picked)?.name ?? '';
+        setTook(name);
+        log('brawl-view', 'info', 'draft.picked', { item: r.picked, name });
+      }
       const hidden = r.shop && seen < 3 ? ' · move the mouse off the cards' : '';
       const names = !r.shop
         ? 'waiting for the shop'
-        : seen === 3
-          ? r.reads.map((x) => byId.get(x.itemId)?.name ?? '?').join(' / ')
-          : heroDetected
-            ? `hero: ${hero.name} · ${seen}/3 cards found${hidden}`
-            : `${seen}/3 cards found${hidden}`;
+        : r.spent || r.picked
+          ? 'selection made · waiting for the next cards'
+          : seen === 3 && !r.live
+            ? 'reading the new cards…'
+            : seen === 3
+              ? r.reads.map((x) => byId.get(x.itemId)?.name ?? '?').join(' / ')
+              : heroDetected
+                ? `hero: ${hero.name} · ${seen}/3 cards found${hidden}`
+                : `${seen}/3 cards found${hidden}`;
       setStatus(names);
     };
     w.addEventListener('message', onMessage);
