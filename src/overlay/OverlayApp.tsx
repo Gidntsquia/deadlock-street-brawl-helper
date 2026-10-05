@@ -93,6 +93,24 @@ export default function OverlayApp() {
     }
   };
 
+  // Forwarded mouse moves are sparse and the badge is redrawn every 100 ms, so the tip shows at once but
+  // hides only after the cursor has stayed away for a moment; this stops it flickering.
+  const dotHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showDotTip = (state: DotState) => {
+    if (dotHideTimer.current) clearTimeout(dotHideTimer.current);
+    dotHideTimer.current = null;
+    setDotTip((prev) => (prev === state ? prev : state));
+    if (window.brawlAPI?.isE2E) window.__overlayDotTip = DOT_TEXT[state];
+  };
+  const hideDotTip = () => {
+    if (dotHideTimer.current) return;
+    dotHideTimer.current = setTimeout(() => {
+      dotHideTimer.current = null;
+      setDotTip(null);
+      if (window.brawlAPI?.isE2E) window.__overlayDotTip = null;
+    }, 250);
+  };
+
   /** Hover: which plate (if any) is under the cursor. Does nothing unless a draft is on screen. */
   const onMove = (ev: MouseEvent) => {
     const st = stateRef.current;
@@ -100,11 +118,12 @@ export default function OverlayApp() {
     if (c0 && dotRef.current) {
       const b = dotBadgeRect(c0.height);
       const near = ev.clientX >= b.x && ev.clientX <= b.x + b.w && ev.clientY >= b.y && ev.clientY <= b.y + b.h;
-      const next = near ? dotRef.current : null;
-      setDotTip((prev) => (prev === next ? prev : next));
-      if (window.brawlAPI?.isE2E) window.__overlayDotTip = next ? DOT_TEXT[next] : null;
-      if (near) return;
-    } else setDotTip((prev) => (prev === null ? prev : null));
+      if (near) {
+        showDotTip(dotRef.current);
+        return;
+      }
+      hideDotTip();
+    } else hideDotTip();
     if (!st?.draft) return;
     const c = canvasRef.current;
     if (!c || !st.frameW) return;
@@ -137,8 +156,7 @@ export default function OverlayApp() {
     });
   };
   const clearHover = () => {
-    setDotTip(null);
-    if (window.brawlAPI?.isE2E) window.__overlayDotTip = null;
+    hideDotTip();
     if (hoverRef.current === null) return;
     hoverRef.current = null;
     setHover(null);
