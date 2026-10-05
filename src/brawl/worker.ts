@@ -358,7 +358,12 @@ let acceptedRound = 0,
 /** Without a sure read of all three cards this long after the draft screen (or a new set) appeared, the sure cards are
  *  advised and each other card shows a grey `?`. */
 export const FALLBACK_MS = 2500;
-let readingSince: number | null = null; // when the current not-yet-accepted screen was first seen
+let readingSince: number | null = null; // when the cards on the not-yet-accepted screen last changed (or were first seen)
+let readingFirst: number | null = null; // when the not-yet-accepted screen was first seen
+let readingCardsSig: Uint8Array | null = null; // the card pictures at readingSince
+/** The fallback clock restarts while the three card pictures are still changing (the swap animation after a pick or
+ *  re-roll), but never runs past this long from the first sight. */
+const FALLBACK_MAX_MS = 6000;
 let frozenReads: CardRead[] | null = null; // the accepted set's reads, sent unchanged for as long as the set is live
 
 const forgetDraft = () => {
@@ -370,7 +375,7 @@ const forgetDraft = () => {
   settledSig = pendingSig = null;
   knownHero = null;
   acceptedRound = acceptedChoice = 0;
-  readingSince = frozenReads = null;
+  readingSince = readingFirst = readingCardsSig = frozenReads = null;
   gate = initialGate();
   stableInv = null;
 };
@@ -532,14 +537,20 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
   // A set with a shaky card whose name is still being read is not a full set yet: the gate must not settle on it.
   const key = seen === 3 && !named.waiting ? reads.map((r) => `${r.itemId}${r.enhanced ? '+' : ''}`).join(',') : '';
   const nowMs = performance.now();
-  if (!gate.live && readingSince === null) readingSince = nowMs;
+  if (gate.live) readingFirst = readingCardsSig = null;
+  else {
+    const cardsSig = frameSig(msg.regions.slice(0, 3));
+    if (readingSince === null) readingFirst = readingSince = nowMs;
+    else if (!sameSig(readingCardsSig, cardsSig)) readingSince = nowMs;
+    readingCardsSig = cardsSig;
+  }
   // Fallback: no sure set within FALLBACK_MS. The sure cards are advised, the others become `?`. Never for a set the
   // player already picked from (its cards read sure, so it never gets here with its own key).
   const fullKey = seen === 3 ? reads.map((r) => `${r.itemId}${r.enhanced ? '+' : ''}`).join(',') : '';
   const fbDue =
     !gate.live &&
     readingSince !== null &&
-    nowMs - readingSince >= FALLBACK_MS &&
+    (nowMs - readingSince >= FALLBACK_MS || nowMs - (readingFirst ?? nowMs) >= FALLBACK_MAX_MS) &&
     !gate.spent.some((k) => fullKey && k.replace(/\+/g, '') === fullKey.replace(/\+/g, ''));
   const fbReads = reads.map((r, i) =>
     named.slotSure[i] && r.present ? r : { ...r, present: true, unsure: true, itemId: 0, tier: 0, enhanced: false },
@@ -581,7 +592,7 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
   if (g.live && gate.last) acceptedRound = gate.last.round;
   const accepted = g.accept;
   if (accepted) {
-    readingSince = null;
+    readingSince = readingFirst = readingCardsSig = null;
     frozenReads = fbDue ? fbReads : reads;
     acceptedKey = fbDue ? fbKey : key;
     acceptedChoice = labels.choice;
@@ -640,7 +651,7 @@ const nonShopResult = (t0: number): FrameResult => {
   settledSig = pendingSig = null;
   knownHero = null;
   acceptedRound = acceptedChoice = 0;
-  readingSince = frozenReads = null;
+  readingSince = readingFirst = readingCardsSig = frozenReads = null;
   gate = offScreenGate(gate);
   stableInv = null;
   return {
