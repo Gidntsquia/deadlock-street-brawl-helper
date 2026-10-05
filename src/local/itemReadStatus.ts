@@ -30,12 +30,12 @@ export function completedItemStatus(outcome: CardNameOutcome): ItemReadStatus {
 
 export function itemReadStatusText(status: ItemReadStatus): string {
   const progress = `${status.confirmed}/3`;
-  if (status.phase === 'reading') return `Draft — reading items (${progress})…`;
-  if (status.phase === 'settling') return 'Draft — confirming items (3/3)…';
-  if (status.phase === 'unavailable') return `Draft — item reader unavailable (${progress}); retrying`;
+  if (status.phase === 'reading') return `Draft - reading items (${progress})…`;
+  if (status.phase === 'settling') return 'Draft - confirming items (3/3)…';
+  if (status.phase === 'unavailable') return `Draft - item reader unavailable (${progress}); retrying`;
   const slots = status.unresolved
     .map((slot) => ['left', 'top', 'right'][slot])
     .filter(Boolean)
     .join(', ');
-  return `Draft — ${slots || 'item'} name unread (${progress}); reveal the names or press F8`;
+  return `Draft - ${slots || 'item'} name unread (${progress}); reveal the names or press F8`;
 }

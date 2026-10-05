@@ -1278,6 +1278,14 @@ footer {
   color: rgb(243, 229, 210);
   font-size: calc(20 * var(--u));
 }
+.ap-evidence {
+  grid-column: 1 / -1;
+  text-align: center;
+  margin-top: calc(-6 * var(--u));
+  font-size: calc(14 * var(--u));
+  font-weight: 600;
+  color: rgb(170, 158, 140);
+}
 .ap-col {
   display: flex;
   flex-direction: column;
@@ -1357,6 +1365,31 @@ footer {
 .app-header .hero-portrait {
   width: 48px;
   height: 48px;
+  flex: none;
+}
+/* Same header height on both tabs, so the tab strip below never moves when switching. */
+.app-header {
+  box-sizing: border-box;
+  height: 72px;
+  overflow: hidden;
+}
+.app-header > div {
+  flex: 1;
+  min-width: 0;
+}
+.app-header .hero-select {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  min-height: 30px;
+  margin: 2px 0 0;
+  padding: 4px 10px;
+}
+.app-header .sub {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
 }
 .link-btn {
   background: none;
@@ -1378,6 +1411,10 @@ footer {
 }
 .brawl-controls .brawl-status {
   margin-top: 8px;
+  /* one line, always: a longer message must not push the rest of the panel down */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .brawl-debug {
   margin-top: 12px;
@@ -1389,6 +1426,9 @@ footer {
   --bg-raised: #171c1d;
   --bg-hover: #1f2627;
   --overlay-panel: rgba(16, 19, 20, 0.85);
+  --overlay-grey: #8a9092;
+  --overlay-veil: rgba(0, 0, 0, 0.35);
+  --overlay-dim: 0.6;
   --teal: #2ec4b6;
   --teal-dim: #1b6f68;
   --teal-ink: #06201d;
@@ -1653,4 +1693,68 @@ body:not(.overlay-window) #root {
   overflow: auto;
   font-size: 12px;
   padding-left: 20px;
+}
+
+.titlebar-debug {
+  margin-right: 8px;
+  padding: 1px 6px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+}
+
+.overlay-notice {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 70vw;
+  padding: 8px 14px;
+  border: 1px solid var(--teal);
+  border-radius: 4px;
+  background: rgba(24, 26, 28, 0.94);
+  color: #f2ede4;
+  font-size: 15px;
+}
+
+.session-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  align-items: center;
+  padding: 6px 0;
+  border-top: 1px solid var(--board-edge);
+  font-size: 13px;
+}
+.session-row.wrong {
+  background: rgba(230, 173, 95, 0.18);
+}
+.session-crops img {
+  height: 44px;
+  margin-right: 4px;
+  border-radius: 2px;
+}
+.session-flags {
+  color: var(--weapon-deep);
+}
+.brawl-problem {
+  margin-top: 6px;
+  color: var(--weapon-deep);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.brawl-firstrun ul {
+  margin: 0 0 8px;
+  padding-left: 0;
+  list-style: none;
 }

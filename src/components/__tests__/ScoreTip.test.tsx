@@ -24,6 +24,7 @@ const card = (known: boolean): OverlayAdviceCard => ({
   name: 'Extra Regen',
   score,
   enhanced: false,
+  enhancedBonus: 0,
   usage: 0.5,
   winRate: 0.5,
   grade: 'A',
@@ -33,7 +34,7 @@ const card = (known: boolean): OverlayAdviceCard => ({
 describe('ScoreTip', () => {
   it('lists name and tier, fixed labels with signed numbers, and rows that add up to the score', () => {
     const { container } = render(<ScoreTip card={card(true)} />);
-    expect(screen.getByText('Extra Regen · A')).toBeTruthy();
+    expect(screen.getByText('Extra Regen, A')).toBeTruthy();
     const nums = [...container.querySelectorAll('.tip-row:not(.tip-total) b')].map((e) =>
       Number(e.textContent!.replace('−', '-')),
     );

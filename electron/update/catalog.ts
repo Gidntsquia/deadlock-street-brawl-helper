@@ -161,7 +161,7 @@ export async function fetchCatalog(
       }
     if (usable) job.apply(job.rel);
     else warn(`No image for ${job.rel}. Item-name recognition can recover draft cards.`);
-    report(++completed, jobs.length, `Images: ${completed}/${jobs.length} · ${job.rel}`);
+    report(++completed, jobs.length, `Images: ${completed}/${jobs.length} , ${job.rel}`);
   }
   await saveJson(dir, 'items.json', items);
   await saveJson(dir, 'heroes.json', heroes);

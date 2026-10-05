@@ -33,7 +33,7 @@ Repo constitution for planner / worker / evaluator agents. Overrides generic sta
 - `npm run win:dev` — the actual way to run the app from WSL: syncs, then launches real Windows
   `electron.exe` from the Windows copy.
 - `npm run win:e2e [-- --only <case1,case2>]` — drives real Windows `electron.exe` end to end (boot,
-  capture-denied, test mode: advice/boxes/frame switches/ability points panel/blank overlay) and writes
+  capture-denied, first-run panel, `Reading` before plates, advice time under 2.5 s, test mode: advice/boxes/frame switches/ability points panel/blank overlay) and writes
   `logs/win-e2e.json`. Cases are `boot`, `capture-denied`, `testmode`, `overlay-closed`. The
   ability panel runs 1.2 s in the harness (`BRAWL_TIP_MS`), not the real 15 s. Target: a full run under 30 s; the
   harness's own hard timeout is 40 s. It needs a >= 1080p desktop (see Overlay behaviour). Don't touch a window it didn't
@@ -53,17 +53,61 @@ Repo constitution for planner / worker / evaluator agents. Overrides generic sta
 
 ## Which tests to run
 
-`npm test` (vitest, 125 tests, already the whole suite) takes ~3 s wall: run it after any code change; run one file with
+`npm test` (vitest, ~210 tests, already the whole suite; the two real-frame worker tests can time out once under heavy machine load) takes ~3 s wall: run it after any code change; run one file with
 `npx vitest run <file>`. `npm run check` before pushing. `npm run win:e2e` (~30 s, drives real Windows) only when
 capture, overlay, worker or Electron code changed, and only once per session. Docs/comments: run nothing.
 All e2e-needing checks belong in the single `testmode` pass in `scripts/win/e2e-main.cjs`, asserted against
 that one session; do not add a new case or a second app launch. Commands live in `.claude/test-commands.sh`.
 
-## Debug panel
+## Debug mode, sessions, replay
 
-The control window is slim (hero header, Start/Stop capture, status line, how-to) plus the Tier List tab. Ctrl+Shift+D
-(or the tray entry "Debug panel", channel `debugToggle`) toggles a hidden Debug panel with test mode, round/choice/
-re-rolls, enemies, owned, advice list, ability order. Not persisted. `win:e2e`/`win:demo` open it before using those controls.
+Debug mode (`src/debugMode.ts`) is on in dev and in any `-rc` version (last rc was `0.3.0-rc.1`; `0.3.0` is final, debug off); the title bar shows `DEBUG`.
+Ctrl+Shift+D (or the tray entry, channel `debugToggle`) toggles the Debug panel: Start/Stop capture, Detect now (F8 still
+works without it), test mode, round/choice/re-rolls, enemies, owned, advice list, ability order, and the **session report**
+(one row per draft with its crops, items, shown plates, advice ms, and `Mark wrong`). The main view has only the status
+sentence, a one-sentence problem (`src/brawl/problems.ts`, also drawn on the overlay for 5 s) and `Hero not read. Using <name>`.
+With debug on, `electron/sessionStore.ts` records the last 3 matches under `userData/sessions/m-<id>/dNNN/` (crops only, 300 MB
+cap, oldest deleted first; never commit them). `npm run brawl:replay -- <session folder>` re-runs each draft through the real
+worker and gate on a virtual clock and prints items, `?` count, changes, drop-outs, advice ms and `same as live` or `differs
+from live`. `npm run brawl:fixture -- <session folder>` copies every marked-wrong, `?`-fallback or changed draft into
+`scripts/fixtures/sessions/` with an `expect.json`; `session-fixtures.test.ts` replays them. That tool is the only way to add them.
+
+## Loading-screen hero
+
+While the game is foreground and capture is off, the probe tick also grabs the "Joining the fight as..." name box
+(`loadingNameRect`, `probeLoadingName` in `electron/shopProbe.ts`; cream-on-dark test `looksLikeLoadingName`). A hit sends
+the pixels over `loadingName` (at most 3 times per screen) to `BrawlView`, which OCRs them (`readHeroName`), matches the
+text to a hero name and uses it ahead of the portrait read for that match (valid 60 min). A hand-picked hero (`pinned`)
+beats both. Not verified on real Windows: only the one frame in `scripts/fixtures/loading/` is tested.
+
+## Reading sign and the fallback
+
+While the draft screen is up and no plates are drawn the overlay shows `Reading` (`OverlayState.reading`). Plates, take mark and
+re-roll call appear together once every sure card has advice (`pushOverlay` waits for it) and are then frozen for the set. After
+`FALLBACK_MS` (2.5 s) the sure cards are advised and the rest get grey `?` plates; take and re-roll only if the best sure card
+beats `unknownCeiling`. The hero is used only when the read is sure (`chooseHero`): else the last sure hero of the match, else
+the window's hero with the `Hero not read` line and no ability panel. Round 1 choice 1 empties the owned list.
+
+## First run and problems
+
+`FirstRun.tsx` shows three ticks (Borderless, window size, capture) with `Show me` (test mode); dismissal is remembered
+(`brawl.firstRunDone`) and the tray entry `First-run check` reopens it. Borderless is read from the missing WS_CAPTION style;
+exclusive fullscreen is told apart by the GDI probe region reading black 3 polls in a row. If the style cannot be read the line
+is an instruction with no tick. Strings: no `!`, emoji, em dashes, arrows or middle dots in `src/`, `electron/` or README
+(`scripts/__tests__/strings.test.ts`; the wiki is checked by hand).
+
+## Overlay look (clearer overlay)
+
+Only the advised card is teal. The other plates are charcoal with a 1 px grey border (`--overlay-grey`), grey badge and text, drawn at
+`--overlay-dim` (0.6) opacity, and a `--overlay-veil` (black 35 %) circle sits over each non-advised card under the plates; hover and
+`ScoreTip` still work on a veiled card. A `?` card is grey and veiled; with no best card and no re-roll nothing is veiled. An enhanced card
+has a right-end cell `Enhanced +n` (`Enh +n` when plates would touch), n = `RankedOffer.enhancedBonus` (score minus the same card not
+enhanced, carried as `OverlayAdviceCard.enhancedBonus`, `bonusesFromAdvice`), and the tooltip Enhanced row equals it (`breakdownRows`). Geometry
+is shared in `plateGeometry` (`draw.ts`); the `Reading` sign sits above the middle plate by max(6 px, 0.35 plate height), below it if clamped.
+A re-roll call is a filled teal `RE-ROLL` plate (card-plate size) centred above the button plus a 4 px teal outline, and all cards go grey and veiled.
+`scripts/render-ux.ts` (with `scripts/lib/svgCtx.ts`) renders before/after pictures into `plans/eval-artifacts/ux-pass/`; it needs the old
+drawing as `src/brawl/draw.before.ts` (`git show b4c0e95:src/brawl/draw.ts`, not committed). The wiki page was not updated: do it by hand.
+The e2e debug checks follow `debugDefault`: off at start in a final version, on in dev or `-rc`; the harness then turns it on to reach test mode.
 
 ## Window and overlay look
 
@@ -175,6 +219,24 @@ in `win:e2e`/`win:demo` drives the actual game:
   `startCapture()` every 2 s whenever a game rect is known and `capture === 'off'`, regardless of `denied`;
   don't gate that retry on `denied` (it once left capture dead after a window swap). `desktopCapturer` can
   also lag a newly found window by a moment.
+- When a draft set counts as ready is decided by `src/brawl/draftGate.ts` (pure, stepped by the worker): the same
+  three cards and the same ROUND/CHOICE labels must hold for 300 ms; the same cards under new labels (or labels
+  going backwards) need 1.2 s; a set the player picked from (the pick shows up in the inventory grid; only readable
+  at ~2000 px wide and up) is "spent" and never advised again. `FrameResult.live/picked/spent` carry this to the page,
+  which drops its cards whenever `live` is false. The game swaps label, cards and grid a beat apart; the old
+  two-frame accept advised old cards under the new label, half-swapped sets, and new cards under the stale label
+  (`scripts/__tests__/worker-transitions.test.ts` replays those on real frames).
+- The worker does no icon search on the cards any more (`squareReads` in `worker.ts`): the item is whatever the name lock says, and a slot whose name will not read becomes a grey `?` at 2.5 s. A name line that changes by more than 6 grid cells (a re-roll) makes the slot unsettled at once (`changed` on `GateFrame`). Before the names land, the gate gets the set with a `?` per unread slot so the 300 ms settle runs alongside the OCR. `readDraftScreen`/`matchIcon` remain for the CLI, fixtures, inventory and hero reads (`matchIcon` tries a narrow search first). Older text below about icon guesses describes the icon-based design.
+- Cards sit at fixed screen positions and print their exact item name: the worker pins every card read to
+  `cardSquares` (`recognise.ts`, anchors x 0.95 icon edge, matches the hand-labelled circles) so the overlay never follows
+  the icon search's step/scale wobble, and each slot's item comes from a **name lock** (`applyNames` in `worker.ts`): the
+  item its name line (`cardNameCrop`, OCR in `ocr.ts`, fuzzy match in `names.ts`) last read as, plus a pixel fingerprint
+  of that line. While the line looks the same the slot is that item whatever the icon says; a changed line is re-read
+  (~30 ms) and only a clear read of another item moves the lock; an icon that surely shows another item (re-roll) makes
+  the slot unsettled at once. No set is accepted until every slot has its lock (`GateFrame.ready`), a shaky icon keeps
+  its set out of the gate entirely, and after 1.5 s of failed reads the icon guess stands. The re-roll caption is also
+  read before accept (and a later change needs two agreeing re-reads); the owned list reaches the page with the accepted
+  set and not again while it stays up. Logs: `card.name` per read. `draftRegions` copies the name lines' ends as the last 6 boxes.
 - Changing the Round/Choice selects clears the accepted cards, and the worker never re-sends a set it already
   accepted: set hero/round/choice before capture starts, or advice stays null for that frame.
 - `drawReads` (`src/brawl/draw.ts`) returns the rects it stroked (`DrawnRect[]`, frame px, tagged

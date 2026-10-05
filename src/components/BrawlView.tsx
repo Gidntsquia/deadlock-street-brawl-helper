@@ -1,7 +1,7 @@
 import { DraftFrameGate } from '../local/draftFrameGate';
 import { availableReroll, DEFAULT_OVERLAY_SETTINGS, type OverlaySettings } from '../local/overlaySettings';
-import { AbilityPointsReader, abilityPointsRect } from '../local/abilityPointsReader';
-import { stopItemNameOCR } from '../local/cardNameOcr';
+import { AbilityPointsReader, abilityPointsRect, readAbilityPoints } from '../local/abilityPointsReader';
+import { AbilityPointsBridge } from '../local/abilityPointsBridge';
 import { AbilityTipPolicy } from '../local/abilityTipPolicy';
 import { MatchMemory } from '../local/matchMemory';
 import { LocalOfferJournal, offerPatch, journalCards, type OfferContext } from '../local/offerJournal';
@@ -11,7 +11,7 @@ import { FirstRoundPreparation } from '../local/firstRoundPreparation';
 import { cardSlotSelection } from '../local/cardSlotSelection';
 import { itemReadStatusText, type ItemReadStatus } from '../local/itemReadStatus';
 import type { OfferObservation } from '../local/dropDistribution';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { emptyStable, stabilise, type StableState } from '../brawl/stabilise';
 import { createPortal } from 'react-dom';
 import type { Ability, Hero, Item } from '../types';
@@ -46,13 +46,20 @@ import { createPerf } from '../perf';
 import type { FrameRegion, WorkerIn, WorkerOut } from '../brawl/worker';
 import {
   BLANK_OVERLAY,
+  bonusesFromAdvice,
   drawReads,
   gradesFromAdvice,
   scoresFromAdvice,
   type OverlayAdvice,
   type OverlayState,
 } from '../brawl/draw';
+import { FirstRun } from './FirstRun';
+import { SessionReport } from './SessionReport';
+import { PROBLEM_TEXT, type Env, type Problem } from '../brawl/problems';
 import { breakdownRows } from '../brawl/breakdown';
+import { HeroEvidence } from '../local/heroEvidence';
+import { DraftLog } from '../brawl/draftLog';
+import type { DraftRecord, RegionShot } from '../../electron/sessionStore';
 import { itemTiers, type BrawlTierListData } from '../brawl/tierlist';
 import { AbilityPanel } from './AbilityPanel';
 import { AdvicePanel } from './AdvicePanel';
@@ -73,6 +80,8 @@ const DETECT_MISSES = 3; // non-draft results in a row before Detect now says "N
 const DETECT_TIMEOUT_MS = 4000; // a try that gets no frame at all in this long counts as failed
 const CAPTURE_IDLE_MS = 4000; // no draft screen or tip for this long: stop capturing (real game only)
 const IDLE_FPS = 4;
+const SLOW_DRAFT_FPS = 8; // when the worker reports slow reads
+const PREVIEW_MS = 200; // the debug preview redraws at most 5 times a second
 const ENEMY_SLOTS = 4;
 const isElectron = typeof window !== 'undefined' && !!window.brawlAPI;
 
@@ -83,6 +92,7 @@ interface Props {
   abilities: Ability[];
   onHero: (id: number, source?: 'detected' | 'manual') => void;
   onNewMatch?: (heroId: number) => void;
+  pinned?: boolean;
   /** The hidden Debug panel (Ctrl+Shift+D) is open: shows the manual controls and the full advice list. */
   debug?: boolean;
   overlaySettings?: OverlaySettings;
@@ -96,6 +106,7 @@ export function BrawlView({
   abilities,
   onHero,
   onNewMatch,
+  pinned = false,
   debug = false,
   overlaySettings = DEFAULT_OVERLAY_SETTINGS,
 }: Props) {
@@ -135,6 +146,20 @@ export function BrawlView({
   const nextRerollLabelRef = useRef('');
   const [owned, setOwned] = useState<number[]>([]);
   const [cards, setCards] = useState<Offer[]>([]);
+  const [heroNotRead, setHeroNotRead] = useState(false);
+  const heroEvidenceRef = useRef(new HeroEvidence());
+  const loadingRequestRef = useRef<{ id: number; generation: number } | null>(null);
+  const loadingSequenceRef = useRef(0);
+  const loadingResultRef = useRef<(result: WorkerOut) => void>(() => {});
+  // Debug-mode recording: the page keeps the log of the draft on screen and hands crops and the record to main.
+  const debugRef = useRef(debug);
+  const draftLogRef = useRef(new DraftLog());
+  const heroUsedRef = useRef<DraftRecord['hero']>({ id: 0, source: 'none' });
+  const shownRef = useRef<DraftRecord['shown']>({ plates: [], takeId: null, reroll: false });
+  useEffect(() => {
+    debugRef.current = debug;
+    window.brawlAPI?.setDebugState?.(debug);
+  }, [debug]);
   const [capture, setCapture] = useState<'off' | 'starting' | 'on'>('off');
   const captureStateRef = useRef<'off' | 'starting' | 'on'>('off');
   captureStateRef.current = capture;
@@ -154,16 +179,25 @@ export function BrawlView({
   const [manualStop, setManualStop] = useState(false);
   const manualStopRef = useRef(false);
   const [platformWarning, setPlatformWarning] = useState<string | null>(null);
-  const [draftSeen, setDraftSeen] = useState(false);
+  const [, setDraftSeen] = useState(false);
   const [f8InUse, setF8InUse] = useState(false);
+  const [problem, setProblem] = useState<Problem | null>(null);
+  const [env, setEnv] = useState<Env | null>(null);
+  const [firstRunDone, setFirstRunDone] = usePersisted<boolean>(
+    'firstRunDone',
+    (v): v is boolean => typeof v === 'boolean',
+    false,
+  );
+  const [firstRunOpen, setFirstRunOpen] = useState(false);
   // A running Detect now try: pressed-at time; the first frame result decides hit or miss.
   const detectMissesRef = useRef(0);
   const lastReadSigRef = useRef('');
-  const unreadFramesRef = useRef(0);
   const fullCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const detectRef = useRef<{ at: number; timer: ReturnType<typeof setTimeout> } | null>(null);
   const [took_, setTook] = useState<string>('');
+  const workerDisposedRef = useRef(false);
   const workerRef = useRef<Worker | null>(null);
+  const loadingWorkerListenerRef = useRef<((event: MessageEvent<WorkerOut>) => void) | null>(null);
   const workerStartedRef = useRef(false); // the worker has been sent 'init' (capture loop running or resettable)
   const workerIndexRef = useRef<IconIndex | null>(null);
   const workerTiers = () => {
@@ -171,17 +205,32 @@ export function BrawlView({
     for (const i of items) tiers[i.id] = i.item_tier;
     return tiers;
   };
+  const workerNames = () => {
+    const names: Record<number, string> = {};
+    for (const i of items) names[i.id] = i.name;
+    return names;
+  };
   /** Creates the recogniser worker and has it decode the icon index and warm its readers. Called when the app
    *  opens (so the first draft frame is not the one that pays for it) and again from startCapture if needed. */
   const makeWorker = async (): Promise<Worker | null> => {
+    if (workerDisposedRef.current) return null;
     if (workerRef.current) return workerRef.current;
     workerIndexRef.current ??= await j<IconIndex>('brawl-icons.json');
+    if (workerDisposedRef.current) return null;
     workerIndexRef.current.names ??= Object.fromEntries(
       items.filter((i) => !i.disabled && i.item_tier >= 1).map((i) => [i.id, i.name]),
     );
     if (workerRef.current) return workerRef.current;
     const w = new Worker(new URL('../brawl/worker.ts', import.meta.url), { type: 'module' });
-    w.postMessage({ type: 'warm', index: workerIndexRef.current, tiers: workerTiers() } satisfies WorkerIn);
+    w.postMessage({
+      type: 'warm',
+      index: workerIndexRef.current,
+      tiers: workerTiers(),
+      names: workerNames(),
+    } satisfies WorkerIn);
+    const loadingListener = (event: MessageEvent<WorkerOut>) => loadingResultRef.current(event.data);
+    loadingWorkerListenerRef.current = loadingListener;
+    w.addEventListener('message', loadingListener);
     workerRef.current = w;
     return w;
   };
@@ -233,6 +282,7 @@ export function BrawlView({
   const tipStateRef = useRef<TipState<AbilityPanelData>>(initialTip());
   const abilityTargetRef = useRef<AbilityPanelData | null>(null);
   const draftRef = useRef(false);
+  const itemDraftRef = useRef(false);
   const tipRef = useRef<AbilityPanelData | null>(null);
   const frameDimsRef = useRef({ w: 0, h: 0 });
   const rerollRectRef = useRef<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
@@ -295,7 +345,8 @@ export function BrawlView({
   const enemyIds = useMemo(() => enemies.filter(Boolean), [enemies]);
   const heroId = hero.id;
   const advice = useMemo(() => {
-    if (!input || cards.length < 3) return null; // advise only once all 3 cards are read
+    // advise only once all 3 cards are read, or (fallback) the sure ones with the others shown as `?`
+    if (!input || cards.length !== 3) return null;
     const sets: Offer[][] = [[], [], []];
     sets[choice - 1] = cards;
     return adviseDraft(input, { round, choice, rerollsRemaining: rerollsLeft, owned, enemies: enemyIds, sets });
@@ -329,24 +380,48 @@ export function BrawlView({
   const pushOverlay = () => {
     const api = window.brawlAPI;
     if (!api) return;
-    const draft = draftRef.current,
+    const draft = draftRef.current || itemDraftRef.current,
       tipNow = tipRef.current;
     const teamVisible = preparationRef.current.visible && settingsRef.current.showTeamWinRates !== false;
     let state: OverlayState = BLANK_OVERLAY;
     if (draft || tipNow || teamVisible) {
       const rerollNow = !!rerollRef.current;
+      const hasReads = draft && readsRef.current.length === 3 && readsRef.current.every((r) => r.present);
+      const plates = hasReads && !!overlayAdviceRef.current;
       state = {
-        reads: draft ? readsRef.current : [],
-        bestId: draft && !rerollNow ? (rankedRef.current[0]?.item.id ?? null) : null,
-        reroll: rerollNow && draft,
-        rerollRect: rerollNow && draft ? rerollRectRef.current : null,
+        reads: plates ? readsRef.current : [],
+        bestId: plates && !rerollNow ? (rankedRef.current[0]?.item.id ?? null) : null,
+        reroll: rerollNow && plates,
+        rerollRect: rerollNow && plates ? rerollRectRef.current : null,
         frameW: frameDimsRef.current.w,
         frameH: frameDimsRef.current.h,
-        advice: draft ? overlayAdviceRef.current : null,
+        advice: plates
+          ? overlayAdviceRef.current
+          : itemDraftRef.current
+            ? {
+                hero: loopCtxRef.current.hero.name,
+                detail: settingsRef.current.detail,
+                round: roundRef.current,
+                choice: choiceRef.current,
+                reroll: null,
+                ranked: [],
+                rerollsRemaining: null,
+                status: 'Reading',
+              }
+            : null,
+        reading: itemDraftRef.current && !plates,
         draft,
         panel: tipNow,
         teamVisible,
         teamEdge: teamVisible ? teamEdgeRef.current : null,
+      };
+    }
+    if (state.draft && state.reads.length === 3) {
+      const score = (id: number) => state.advice?.ranked.find((x) => x.itemId === id)?.score ?? null;
+      shownRef.current = {
+        plates: state.reads.map((r) => ({ itemId: r.itemId, tier: r.tier, score: score(r.itemId) })),
+        takeId: state.bestId,
+        reroll: state.reroll,
       };
     }
     const json = JSON.stringify(state);
@@ -373,10 +448,11 @@ export function BrawlView({
               name: r.item.name,
               score: r.score,
               enhanced: r.enhanced,
+              enhancedBonus: r.enhancedBonus,
               usage: r.usage,
               winRate: r.winRate,
               grade: gradeById.get(r.item.id) ?? '-',
-              rows: breakdownRows(r.parts, r.score, r.known),
+              rows: breakdownRows(r.parts, r.score, r.known, r.enhancedBonus),
             })),
             status,
             confidence,
@@ -437,7 +513,6 @@ export function BrawlView({
     setItemReadStatus(null);
     acceptedKeyRef.current = '';
     setRerollsLeft(null);
-    unreadFramesRef.current = 0;
     lastReadSigRef.current = '';
     setCards([]);
     rankedRef.current = [];
@@ -480,6 +555,7 @@ export function BrawlView({
     workerRef.current?.postMessage({ type: 'stop' } satisfies WorkerIn);
     tipStateRef.current = initialTip();
     preparationRef.current.reset();
+    itemDraftRef.current = false;
     setDraftPresent(false);
     setItemReadStatus(null);
     setPreparationOpen(false);
@@ -548,17 +624,20 @@ export function BrawlView({
           type: 'init',
           index: workerIndexRef.current!,
           tiers: workerTiers(),
+          names: workerNames(),
           intervalMs: CAPTURE_MS,
           captureEpoch: gen,
         } satisfies WorkerIn);
         workerStartedRef.current = true;
       }
       // Logged before the call, unlike capture.start below, so a denied/failed attempt still leaves a
-      // trace — the e2e harness's retry-loop checks count this line, not capture.start, since a denial
+      // trace: the e2e harness's retry-loop checks count this line, not capture.start, since a denial
       // never reaches capture.start at all.
       log('brawl-view', 'info', 'capture.attempt');
       {
-        const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: IDLE_FPS }, audio: false });
+        // Start at the draft rate: capture is mostly started because the probe just saw the draft screen, and the
+        // first non-draft result lowers it to IDLE_FPS (setFps in the frame loop).
+        const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: DRAFT_FPS }, audio: false });
         if (gen !== captureGenRef.current) {
           // superseded while this real getDisplayMedia() request was pending -- drop it
           // instead of adopting a stream nothing asked for, and don't touch state a newer attempt now owns.
@@ -586,10 +665,10 @@ export function BrawlView({
         }
       } // getDisplayMedia already consumed this click's activation, so requestWindow may need a second click here; that's fine since capture already started
     } catch (e) {
-      if (gen !== captureGenRef.current) return; // superseded — a newer attempt owns state now, don't clobber it
+      if (gen !== captureGenRef.current) return; // superseded: a newer attempt owns state now, don't clobber it
       window.brawlAPI?.captureResult?.(false);
       finishDetect('failed');
-      stopCapture(); // clears status to '' — always re-set it below, never leave it blank
+      stopCapture(); // clears status to '': always re-set it below, never leave it blank
       const err = e as Error;
       // Only treat this as "Deadlock window not found" when main.ts's capture-denied IPC actually arrived
       // for this attempt (see deniedIpcRef above); any other failure shows the real error message instead
@@ -605,15 +684,20 @@ export function BrawlView({
       }
     }
   };
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    workerDisposedRef.current = false;
+    return () => {
+      workerDisposedRef.current = true;
       stopCapture();
+      if (workerRef.current && loadingWorkerListenerRef.current)
+        workerRef.current.removeEventListener('message', loadingWorkerListenerRef.current);
+      loadingWorkerListenerRef.current = null;
+      loadingRequestRef.current = null;
       workerRef.current?.terminate();
       workerRef.current = null;
       workerStartedRef.current = false;
-    },
-    [stopCapture],
-  );
+    };
+  }, [stopCapture]);
   // Pre-bake: build and warm the recogniser worker as soon as the app opens (Electron only: the browser path
   // starts from a click), so the first draft frame does not wait for icon decoding and JIT warm-up.
   useEffect(() => {
@@ -635,13 +719,14 @@ export function BrawlView({
   });
 
   // Electron: no picker to click through (main.ts serves the Deadlock window via setDisplayMediaRequestHandler,
-  // or denies the request if Deadlock isn't open) — attempt capture once on mount rather than waiting for the
+  // or denies the request if Deadlock isn't open): attempt capture once on mount rather than waiting for the
   // game window to be found first; main.ts's own handler is what decides allow vs. deny.
   useEffect(() => {
     if (!isElectron) return;
     void window.brawlAPI!.getCaptureState().then((st) => {
       captureWantedRef.current = st.wanted;
       probeModeRef.current = st.probe;
+      setProbing(st.probe);
       if (!st.probe || st.wanted) void startCapture();
       else setStatus(WAITING_STATUS);
     });
@@ -660,6 +745,11 @@ export function BrawlView({
     });
   }, []);
 
+  const makeWorkerRef = useRef(makeWorker);
+  makeWorkerRef.current = makeWorker;
+  const startCaptureRef = useRef(startCapture);
+  startCaptureRef.current = startCapture;
+
   // Retry whenever the game window is present but capture isn't running -- covers both a denial (game
   // window wasn't found yet, `denied` set) and the window's capture handle going stale while the window
   // itself stays open (e.g. Windows Graphics Capture invalidates the session on certain window changes;
@@ -672,27 +762,57 @@ export function BrawlView({
   // whole session; under test mode / the harness (`probe: false`) it simply follows the game window.
   const captureWantedRef = useRef(false);
   const probeModeRef = useRef(false);
+  // Mirrors probeModeRef for rendering: with a real game, capture being off is the normal "watching" state.
+  const [, setProbing] = useState(false);
   useEffect(() => {
     if (!isElectron) return;
     return window.brawlAPI!.onCaptureState((st) => {
       captureWantedRef.current = st.wanted;
       probeModeRef.current = st.probe;
-      if (st.wanted && capture === 'off' && !manualStopRef.current) {
+      setProbing(st.probe);
+      if (st.wanted && captureStateRef.current === 'off' && !manualStopRef.current) {
         setDenied(false);
-        void startCapture();
-      } else if (!st.wanted && capture !== 'off') {
+        void startCaptureRef.current();
+      } else if (!st.wanted && captureStateRef.current !== 'off') {
         stopCapture();
         if (st.probe) setStatus(WAITING_STATUS);
       }
     });
-  }, [capture, denied]);
+  }, [stopCapture]);
+  useEffect(() => {
+    if (!isElectron) return;
+    return window.brawlAPI!.onLoadingName?.((crop) => {
+      const generation = heroEvidenceRef.current.generation;
+      const id = ++loadingSequenceRef.current;
+      loadingRequestRef.current = { id, generation };
+      void makeWorkerRef
+        .current()
+        .then((worker) => {
+          if (!worker || loadingRequestRef.current?.id !== id || heroEvidenceRef.current.generation !== generation)
+            return;
+          const buffer = crop.buffer.slice(0);
+          worker.postMessage(
+            {
+              type: 'loadingName',
+              requestId: id,
+              width: crop.width,
+              height: crop.height,
+              buffer,
+              names: Object.fromEntries(loopCtxRef.current.heroes.map((h) => [h.id, h.name])),
+            } satisfies WorkerIn,
+            [buffer],
+          );
+        })
+        .catch((error) => log('brawl-view', 'warn', 'hero.loading.failed', { error: String(error) }));
+    });
+  }, []);
   // A window that was found a moment ago is sometimes not yet offered by desktopCapturer, so the first attempt
   // is denied and no further state change follows. While capture is wanted and off, retry every 2 s (never
   // otherwise: that would be a busy loop against a denial that cannot succeed).
   useEffect(() => {
     if (!isElectron || capture !== 'off') return;
     const t = setInterval(() => {
-      if (captureWantedRef.current && !manualStopRef.current) void startCapture();
+      if (captureWantedRef.current && !manualStopRef.current) void startCaptureRef.current();
     }, 2000);
     return () => clearInterval(t);
   }, [capture]);
@@ -721,9 +841,17 @@ export function BrawlView({
     const api = window.brawlAPI!;
     void api.getDetectKeyInUse?.().then(setF8InUse);
     const offKey = api.onDetectKeyState?.(setF8InUse);
+    void api.getProblem?.().then(setProblem);
+    void api.getEnv?.().then(setEnv);
+    const offEnv = api.onEnv?.(setEnv);
+    const offFirst = api.onFirstRunOpen?.(() => setFirstRunOpen(true));
+    const offProblem = api.onProblem?.(setProblem);
     const offRun = api.onDetectRun?.(() => runDetectRef.current());
     return () => {
       offKey?.();
+      offProblem?.();
+      offEnv?.();
+      offFirst?.();
       offRun?.();
     };
   }, []);
@@ -765,6 +893,22 @@ export function BrawlView({
     });
   }, []);
 
+  const loopCtxRef = useRef({ byId, heroId, heroes, onHero, onNewMatch, hero, pinned, items });
+  useLayoutEffect(() => {
+    loopCtxRef.current = { byId, heroId, heroes, onHero, onNewMatch, hero, pinned, items };
+  });
+  loadingResultRef.current = (result) => {
+    if (result.type !== 'loadingHero') return;
+    const request = loadingRequestRef.current;
+    if (!request || request.id !== result.requestId || request.generation !== heroEvidenceRef.current.generation)
+      return;
+    loadingRequestRef.current = null;
+    const ctx = loopCtxRef.current;
+    if (!result.heroId || !ctx.heroes.some((h) => h.id === result.heroId)) return;
+    const current = heroEvidenceRef.current.observeLoading(result.heroId, Date.now());
+    if (current) ctx.onHero(current, 'detected');
+    log('brawl-view', 'info', 'hero.loading', { text: result.text, hero: result.heroId });
+  };
   // frame loop: the worker asks for a frame ('tick'), the page draws the video to a canvas and sends the pixels,
   // the worker answers with what it read and asks again after CAPTURE_MS. Nothing here depends on page timers.
   useEffect(() => {
@@ -801,17 +945,29 @@ export function BrawlView({
       vfcId = vid.requestVideoFrameCallback(loop);
     }
     let lastLoggedSource = '';
-    let fpsForShop: boolean | null = null;
+    let lastPreviewAt = 0;
+    let fpsApplied = 0;
+    let slowLoad = false;
+    let lastShop = false;
     const setFps = (shop: boolean) => {
-      if (fpsForShop === shop) return;
-      fpsForShop = shop;
+      lastShop = shop;
+      const fps = shop ? (slowLoad ? SLOW_DRAFT_FPS : DRAFT_FPS) : IDLE_FPS;
+      if (fpsApplied === fps) return;
+      fpsApplied = fps;
       void streamRef.current
         ?.getVideoTracks()[0]
-        ?.applyConstraints({ frameRate: shop ? DRAFT_FPS : IDLE_FPS })
+        ?.applyConstraints({ frameRate: fps })
         .catch(() => {});
     };
     let tipTimer: ReturnType<typeof setTimeout> | undefined;
-    const pointsReader = new AbilityPointsReader();
+    let pointsFrameSeen = -1;
+    let pointsTipActive = false;
+    const pointsBridge = new AbilityPointsBridge(
+      (message, transfer) => w.postMessage(message, transfer),
+      captureGenRef.current,
+    );
+    const pointsReader = new AbilityPointsReader((image) => readAbilityPoints(image, pointsBridge.request));
+
     const pointPolicy = pointPolicyRef.current;
     let disposed = false;
     let hudCanvas: HTMLCanvasElement | null = null;
@@ -833,11 +989,20 @@ export function BrawlView({
       const previous = tipStateRef.current;
       const next = stepTip(previous, shop, now, abilityTargetRef.current, tipMs);
       if (next.tip && !previous.tip) {
+        pointsBridge.reset();
+        pointsTipActive = true;
         pointsReader.reset();
         tipModeRef.current = settingsRef.current.abilityTipMode;
+        if (tipModeRef.current === 'points') next.tip.value = { ...next.tip.value, availablePoints: null };
         pointPolicy.begin(now, testMs ?? settingsRef.current.pointLimitSeconds * 1000, allocatedRef.current);
       }
-      if (shop) pointsReader.reset();
+      if ((previous.tip && !next.tip) || shop) {
+        if (pointsTipActive) {
+          pointsBridge.reset();
+          pointsTipActive = false;
+        }
+        pointsReader.reset();
+      }
       tipStateRef.current = next;
       draftRef.current = next.draft;
       setDraftOpen(next.draft);
@@ -859,7 +1024,8 @@ export function BrawlView({
         return;
       }
       frameDimsRef.current = { w: srcW, h: srcH };
-      if (usesPoints() && tipStateRef.current.tip) {
+      if (usesPoints() && tipStateRef.current.tip && (!frames.supported || frames.seen !== pointsFrameSeen)) {
+        pointsFrameSeen = frames.seen;
         const rect = abilityPointsRect(srcW, srcH);
         hudCanvas ??= document.createElement('canvas');
         if (hudCanvas.width !== rect.width) hudCanvas.width = rect.width;
@@ -884,6 +1050,11 @@ export function BrawlView({
                       value: { ...tip.value, availablePoints: typeof points === 'number' ? points : null },
                     },
             };
+            if (end === null) {
+              pointsBridge.reset();
+              pointsTipActive = false;
+              pointsReader.reset();
+            }
             log('brawl-view', 'info', 'ability.points', { points, visible: end !== null });
             armTip();
           },
@@ -948,13 +1119,28 @@ export function BrawlView({
         }
       }
       const prefer = [...offeredRef.current, ...ownedRef.current];
+      if (debugRef.current && window.brawlAPI?.sessionFrame) {
+        const now = performance.now();
+        if (draftLogRef.current.wantFrame(now)) {
+          const shots: RegionShot[] = regions.map((r, index) => ({
+            index,
+            x: r.x,
+            y: r.y,
+            width: r.width,
+            height: r.height,
+            rgba: new Uint8Array(r.buffer.slice(0)),
+          }));
+          window.brawlAPI.sessionFrame({ t: now, regions: shots });
+        }
+      }
       w.postMessage(
         { type: 'frame', captureEpoch: frameEpoch, width: srcW, height: srcH, regions, prefer } satisfies WorkerIn,
         [...regions.map((r) => r.buffer)],
       );
       const pv = previewRef.current;
       // the preview only matters while the control window can be seen: skip its full-frame scale-draw otherwise
-      if (pv && !document.hidden) {
+      if (pv && !document.hidden && performance.now() - lastPreviewAt >= (slowLoad ? PREVIEW_MS * 3 : PREVIEW_MS)) {
+        lastPreviewAt = performance.now();
         const rerollNow = !!rerollRef.current;
         const bestId = rerollNow ? null : (rankedRef.current[0]?.item.id ?? null);
         const pctx = pv.getContext('2d');
@@ -975,11 +1161,23 @@ export function BrawlView({
             gradesFromAdvice(overlayAdviceRef.current),
             undefined,
             cardSlotSelection(readsRef.current, bestId, overlayAdviceRef.current, rerollNow),
+            bonusesFromAdvice(overlayAdviceRef.current),
           );
         }
       }
     };
     const onMessage = (ev: MessageEvent<WorkerOut>) => {
+      const { byId, heroId, heroes, onHero, onNewMatch, hero, pinned, items } = loopCtxRef.current;
+      if (ev.data.type === 'loadingHero') return;
+      if (ev.data.type === 'abilityPoints') {
+        pointsBridge.receive(ev.data);
+        return;
+      }
+      if (ev.data.type === 'load') {
+        slowLoad = ev.data.slow;
+        setFps(lastShop);
+        return;
+      }
       if (ev.data.captureEpoch !== undefined && ev.data.captureEpoch !== captureGenRef.current) return;
       if (ev.data.type === 'tick') {
         if (ev.data.full) setFps(true); // the probe saw a draft screen: raise the frame rate before the first full read
@@ -994,6 +1192,11 @@ export function BrawlView({
           frames.copied = frames.seen;
           sendFrame(full);
         }
+        return;
+      }
+      if (ev.data.type === 'seen') {
+        itemDraftRef.current = true;
+        stepTracker(true); // the draft screen is up: the overlay shows its `Reading` sign now
         return;
       }
       if (ev.data.type === 'rerolls') {
@@ -1043,7 +1246,21 @@ export function BrawlView({
         }
         return;
       }
+      if (ev.data.type === 'name') {
+        const { slot, icon, text, itemId, ms } = ev.data;
+        log('brawl-view', 'info', 'card.name', {
+          slot,
+          icon,
+          text,
+          itemId,
+          fixed: itemId !== 0 && itemId !== icon,
+          ms,
+        });
+        return;
+      }
+      let pinForFrame = pinned;
       const r = ev.data;
+      itemDraftRef.current = r.shop;
       setDraftPresent(r.shop);
       if (!r.shop || r.accepted) setItemReadStatus(null);
       else if (r.itemReadStatus) setItemReadStatus(r.itemReadStatus);
@@ -1077,6 +1294,8 @@ export function BrawlView({
           teamEdgeRef.current = null;
         }
         if (observed.newMatch) {
+          heroEvidenceRef.current.confirmNewMatch(Date.now());
+          loadingRequestRef.current = null;
           preparationRef.current.reset();
           teamRosterRef.current = null;
           teamEdgeRef.current = null;
@@ -1088,7 +1307,9 @@ export function BrawlView({
           prevCardsRef.current = [];
           setTook('');
           if (established) {
-            onNewMatch?.(r.meta.self);
+            pinForFrame = false;
+            const nextHero = heroEvidenceRef.current.resolve(r.meta.self, heroId, false, Date.now()).heroId;
+            onNewMatch?.(nextHero);
             journalRef.current?.startSession();
             lastOfferLabelRef.current = '';
             nextRerollLabelRef.current = '';
@@ -1121,8 +1342,47 @@ export function BrawlView({
       }
       if (r.identityOnly) {
         // Keep manual hero overrides and item/session transitions independent of preparation evidence.
-        if (r.meta?.self && heroes.some((h) => h.id === r.meta!.self)) onHero(r.meta.self, 'detected');
+        if (r.meta?.self && heroes.some((h) => h.id === r.meta!.self)) {
+          const automatic = heroEvidenceRef.current.resolve(r.meta.self, 0, false, Date.now());
+          if (automatic.source !== 'selected') onHero(automatic.heroId, 'detected');
+        }
         return;
+      }
+      if (debugRef.current && window.brawlAPI?.sessionDraft) {
+        const now = performance.now();
+        const end = draftLogRef.current.push(
+          {
+            t: now,
+            shop: r.shop,
+            live: r.live ?? !!r.key,
+            accepted: r.accepted,
+            picked: r.picked !== null && r.picked !== undefined,
+            spent: r.spent ?? false,
+            round: r.round,
+            choice: r.choice,
+            items: r.reads.map((x) => (x.present && !x.unsure ? x.itemId : 0)),
+            unsure: r.reads.filter((x) => x.unsure).length,
+            tiers: r.reads.map((x) => x.tier),
+          },
+          r.key,
+          now,
+        );
+        if (end)
+          window.brawlAPI.sessionDraft({
+            round: end.round,
+            choice: end.choice,
+            startedAt: end.startedAt,
+            frameW: frameDimsRef.current.w,
+            frameH: frameDimsRef.current.h,
+            items: end.stats.items,
+            unsure: end.stats.unsure,
+            hero: heroUsedRef.current,
+            shown: shownRef.current,
+            adviceMs: end.stats.adviceMs === null ? null : Math.round(end.stats.adviceMs),
+            changes: end.stats.changes,
+            dropouts: end.stats.dropouts,
+            fallback: end.stats.fallback,
+          });
       }
       if (r.inventory !== null) {
         const before = ownedRef.current;
@@ -1167,14 +1427,16 @@ export function BrawlView({
         perf.record(r.shop ? 'worker.draft' : 'worker.probe', r.ms);
         for (const [k, v] of Object.entries(r.stages ?? {})) perf.record(`worker.${k}`, v);
       }
-      stableRef.current = r.shop ? stabilise(stableRef.current, r.reads) : emptyStable();
-      readsRef.current = stableRef.current.reads;
+      stableRef.current = r.shop ? stabilise(stableRef.current, r.reads, r.live ?? !!r.key) : emptyStable();
+      // Cards are only drawn on while their set is accepted: nothing over a screen that is still changing or over
+      // cards the player already picked from (see draftGate.ts).
+      readsRef.current = (r.live ?? !!r.key) ? stableRef.current.reads : [];
       const seen = r.reads.filter((x) => x.present).length;
       if (r.accepted) {
         const previousRound = roundRef.current;
         const offers = r.reads.map(toOffer);
         for (const o of offers) offeredRef.current.add(o.itemId);
-        prevCardsRef.current = cardsRef.current;
+        if (cardsRef.current.length) prevCardsRef.current = cardsRef.current;
         cardsRef.current = offers;
         setCards(offers);
         const meta = r.meta!;
@@ -1245,12 +1507,17 @@ export function BrawlView({
         if (!meta.self) {
           log('brawl-view', 'debug', 'hero.detect.miss', { bar: meta.bar });
         }
-        const me = meta.self && heroes.some((h) => h.id === meta.self) ? meta.self : heroId;
+        const portrait = meta.self && heroes.some((h) => h.id === meta.self) ? meta.self : 0;
+        const pick = heroEvidenceRef.current.resolve(portrait, heroId, pinForFrame, Date.now());
+        heroUsedRef.current = { id: pick.heroId, source: pick.source };
+        setHeroNotRead(!pinForFrame && pick.source === 'selected');
+        const me = pick.heroId;
         if (me !== heroId) {
           const score = [...meta.bar.left, ...meta.bar.right].find((m) => m.heroId === me)?.score;
           log('brawl-view', 'info', 'hero.detect', { from: heroId, to: me, score });
         }
-        if (meta.self && heroes.some((h) => h.id === meta.self)) onHero(meta.self, 'detected');
+        const automatic = heroEvidenceRef.current.resolve(portrait, 0, false, Date.now());
+        if (automatic.source !== 'selected') onHero(automatic.heroId, 'detected');
       }
       flushJournal();
       if (!r.shop) {
@@ -1277,20 +1544,19 @@ export function BrawlView({
         else if (++detectMissesRef.current < DETECT_MISSES) {
           return;
         } else {
-          // report it, but keep watching: the draft may simply not be open yet
           finishDetect('miss');
           setStatus(NO_DRAFT_STATUS);
           return;
         }
       }
       const heroDetected = r.accepted && r.meta!.self && r.meta!.self === heroId;
-      const hidden = r.shop && seen < 3 ? ' · move the mouse off the cards' : '';
+      const hidden = r.shop && seen < 3 ? ', move the mouse off the cards' : '';
       const names = !r.shop
         ? 'waiting for the shop'
         : seen === 3
           ? r.reads.map((x) => byId.get(x.itemId)?.name ?? '?').join(' / ')
           : heroDetected
-            ? `hero: ${hero.name} · ${seen}/3 cards found${hidden}`
+            ? `hero: ${hero.name}, ${seen}/3 cards found${hidden}`
             : `${seen}/3 cards found${hidden}`;
       setStatus((previous) => (!r.shop && previous === NO_DRAFT_STATUS ? previous : names));
     };
@@ -1298,14 +1564,14 @@ export function BrawlView({
     sendFrame(true); // also read preparation when F8 is pressed after the item draft has closed
     return () => {
       disposed = true;
+      pointsBridge.dispose();
       pointsReader.reset();
-      void stopItemNameOCR();
       clearTimeout(tipTimer);
       clearTimeout(frames.timer);
       if (vid && frames.supported) vid.cancelVideoFrameCallback(vfcId);
       w.removeEventListener('message', onMessage);
     };
-  }, [capture, byId, heroId, heroes, onHero, onNewMatch, hero, items, setRound, setEnemies]);
+  }, [capture, setRound, setEnemies]);
 
   const took = (r: RankedOffer) => {
     const acquired = matchMemoryRef.current.observeInventory([r.item.id], items, Date.now()).owned;
@@ -1354,18 +1620,18 @@ export function BrawlView({
     if (capture === 'starting') return 'Capture starting…';
     if (capture === 'on') {
       if (draftPresent && itemReadStatus) return itemReadStatusText(itemReadStatus);
-      if (draftOpen) return `Draft — round ${round}, choice ${choice}`;
-      if (draftPresent) return 'Draft — reading items…';
-      return testMode.on ? 'Test mode on' : 'Capturing — no draft on screen';
+      if (draftOpen) return `Draft: round ${round}, choice ${choice}`;
+      if (draftPresent) return 'Draft: reading items…';
+      return testMode.on ? 'Test mode on' : 'Capturing: no draft on screen';
     }
     if (testMode.on) return 'Test mode on';
     if (status.startsWith('capture failed')) return status;
     if (denied)
-      return gameFound ? 'Capture denied — press Start to retry' : 'Deadlock window not found — press Start to retry';
-    if (!isElectron) return status || 'Capture off — press Start';
+      return gameFound ? 'Capture denied: press Start to retry' : 'Deadlock window not found: press Start to retry';
+    if (!isElectron) return status || 'Capture off: press Start';
     if (gameFound && f8InUse) return 'F8 is in use by another program';
     if (!gameFound) return 'Deadlock window not found';
-    return manualStop ? 'Capture stopped — press Start' : 'Deadlock found, capture off';
+    return manualStop ? 'Capture stopped: press Start' : 'Deadlock found, capture off';
   })();
   const advicePanel = (
     <AdvicePanel
@@ -1389,6 +1655,23 @@ export function BrawlView({
   return (
     <div className="brawl">
       <video ref={videoRef} muted playsInline style={{ display: 'none' }} />
+      {isElectron && (!firstRunDone || firstRunOpen) && (
+        <FirstRun
+          env={env}
+          onShow={() => {
+            void window.brawlAPI!.setTestMode(true).then((st) => {
+              setTestMode(st);
+              void window.brawlAPI!.setTestFrame('choice1').then(setTestMode);
+            });
+            setFirstRunDone(true);
+            setFirstRunOpen(false);
+          }}
+          onDismiss={() => {
+            setFirstRunDone(true);
+            setFirstRunOpen(false);
+          }}
+        />
+      )}
       <div className="panel brawl-controls">
         <div className="brawl-buttons">
           <button
@@ -1396,28 +1679,28 @@ export function BrawlView({
             onClick={capture === 'on' ? onStop : onStart}
             disabled={capture === 'starting'}
           >
-            {capture === 'on' ? 'Stop capture' : capture === 'starting' ? 'Starting…' : 'Start capture'}
+            {capture === 'on' ? 'Stop capture' : capture === 'starting' ? 'Starting' : 'Start capture'}
           </button>
           {isElectron && (
             <button
               className="btn brawl-detect"
               onClick={() => void window.brawlAPI!.detectNow()}
               disabled={!gameFound || status === 'Detecting…'}
-              title={gameFound ? 'Read the game once, now (F8)' : 'Deadlock not found'}
             >
-              {status === 'Detecting…' ? 'Detecting…' : 'Detect now (F8)'}
+              Detect now (F8)
             </button>
           )}
         </div>
-        {isElectron && !gameFound && <div className="muted brawl-status">Deadlock not found</div>}
-        <div className="muted brawl-status" role="status" aria-live="polite">
+        {isElectron && !gameFound && <div className="muted">Deadlock not found</div>}
+        <div className="brawl-status" role="status" aria-live="polite">
           {statusLine}
         </div>
-        {!draftSeen && (
-          <div className="muted brawl-howto">
-            In Deadlock, set Video → Display Mode to Borderless Windowed. Advice appears over the draft screen.
+        {problem && (
+          <div className="brawl-problem" role="alert">
+            {PROBLEM_TEXT[problem]}
           </div>
         )}
+        {heroNotRead && draftOpen && <div className="muted brawl-hero-note">{`Hero not read. Using ${hero.name}`}</div>}
       </div>
 
       <HeroReference
@@ -1456,6 +1739,7 @@ export function BrawlView({
                   </select>
                 </label>
               )}
+              {isElectron && <SessionReport items={items} />}
               {testMode.message && (
                 <span className="brawl-testmode-message" role="alert">
                   {testMode.message}
@@ -1494,7 +1778,7 @@ export function BrawlView({
               >
                 {[1, 2, 3].map((c) => (
                   <option key={c} value={c}>
-                    {c} of 3{tiers[c - 1] ? ` · tier ${tiers[c - 1].normal} (rare ${tiers[c - 1].rare})` : ''}
+                    {c} of 3{tiers[c - 1] ? `, tier ${tiers[c - 1].normal} (rare ${tiers[c - 1].rare})` : ''}
                   </option>
                 ))}
               </select>
@@ -1543,11 +1827,11 @@ export function BrawlView({
             createPortal(
               <div className="pip">
                 <h2>
-                  {hero.name} · round {round}, choice {choice}
+                  {hero.name}, round {round}, choice {choice}
                 </h2>
                 {reroll && (
                   <div className="brawl-reroll-banner">
-                    RE-ROLL this set — expected best {reroll.expectedBest.toFixed(2)} vs {reroll.currentBest.toFixed(2)}{' '}
+                    Re-roll this set: expected best {reroll.expectedBest.toFixed(2)} vs {reroll.currentBest.toFixed(2)}{' '}
                     on screen
                     <button className="btn" onClick={rerolled}>
                       I re-rolled

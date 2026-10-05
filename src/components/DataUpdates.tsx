@@ -144,7 +144,7 @@ export function DataUpdates({ manifest, onApply }: { manifest: Manifest | null; 
             <a href={patch.url} target="_blank" rel="noreferrer">
               {patch.title}
             </a>{' '}
-            · {new Date(patch.timestamp * 1000).toISOString().slice(0, 16).replace('T', ' ')} UTC
+            , {new Date(patch.timestamp * 1000).toISOString().slice(0, 16).replace('T', ' ')} UTC
           </p>
         )}
         <p className="muted">
@@ -169,12 +169,12 @@ export function DataUpdates({ manifest, onApply }: { manifest: Manifest | null; 
         {progress && (
           <div className="data-update-progress" aria-live="polite">
             <strong>
-              {progress.stage} · {progress.percent}%
+              {progress.stage} , {progress.percent}%
             </strong>
             <progress max={100} value={progress.percent} />
             <div>
-              {progress.completed}/{progress.total} in this stage · elapsed {progress.elapsedSeconds}s
-              {progress.etaSeconds !== null ? ` · stage ETA ~${progress.etaSeconds}s` : ''}
+              {progress.completed}/{progress.total} in this stage , elapsed {progress.elapsedSeconds}s
+              {progress.etaSeconds !== null ? ` , stage ETA ~${progress.etaSeconds}s` : ''}
             </div>
             <p>{progress.message}</p>
             <ol className="data-update-log">

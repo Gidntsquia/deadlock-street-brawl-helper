@@ -4,7 +4,7 @@ import type { Ability, Hero, Item } from '../types';
 let base = `${(import.meta as { env?: { BASE_URL?: string } }).env?.BASE_URL ?? '/'}data/`;
 export async function j<T>(rel: string): Promise<T> {
   const r = await fetch(base + rel);
-  if (!r.ok) throw new Error(`Missing snapshot ${rel} – run \`npm run fetch-data\``);
+  if (!r.ok) throw new Error(`Missing snapshot ${rel}: run \`npm run fetch-data\``);
   return r.json();
 }
 /** `brawl` is absent until a `--brawl` run has written a Street Brawl snapshot; it carries its own window. */

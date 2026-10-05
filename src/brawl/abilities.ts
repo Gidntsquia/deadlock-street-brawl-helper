@@ -1,11 +1,11 @@
 import type { Ability, AbilityOrderStat, AbilityStep, Hero } from '../types';
 import type { BrawlInput } from './types';
 
-const TOP_N = 10; // candidates considered for "prefer the longest sequence" among near-equally-good scores
-
 export interface BrawlAbilityOrder {
   steps: AbilityStep[];
   support: { matches: number; winRate: number } | null;
+  /** Number of steps supported by the observed prefix; remaining steps are deterministic fallback. */
+  supportedSteps?: number;
   alternatives: { steps: AbilityStep[]; matches: number; winRate: number }[];
 }
 
@@ -25,45 +25,73 @@ const stepsFor = (seq: number[], byId: Map<number, AbilityStep['ability']>): Abi
   return steps;
 };
 
-/** Suggests a full-game ability level-up order from Street Brawl ability-order-stats, ranked by shrunk win
- *  rate x log(matches) with no minimum length (Street Brawl sequences run 7-12 long), preferring the longest sequence among the top-scoring
- *  ones, so the suggestion covers the whole game instead of stopping early. */
+/** Fewest matches that must back the chosen order; below this the panel says there is no reliable order. */
+export const MIN_ORDER_MATCHES = 100;
+
+const shrunk = (wins: number, matches: number, mean: number, k: number) =>
+  ((wins + k * mean) / (matches + k)) * Math.log(1 + matches);
+
+/** Builds the standard order one step at a time from every recorded sequence. Each step keeps only the sequences
+ *  that start with the steps already chosen, so a short sequence counts toward the early steps it covers and a long
+ *  one toward all of its steps. The next ability is the one whose continuations have the best shrunk win rate x
+ *  log(matches). It stops when fewer than MIN_ORDER_MATCHES back the next step; `support` is the matches and win
+ *  rate of every sequence that starts with the whole chosen order. */
 export function brawlAbilityOrder(input: BrawlInput): BrawlAbilityOrder {
   const stats: AbilityOrderStat[] = input.analytics.ability_order_stats ?? [];
-  const byId = new Map(input.abilities.map((a) => [a.id, a]));
-  const sig = input.abilities.filter((a) => input.hero.abilities.includes(a.class_name));
+  const sig = heroBarAbilities(input.hero, input.abilities);
+  const byId = new Map(sig.map((a) => [a.id, a]));
   const sigIds = new Set(sig.map((a) => a.id));
-  const totalW = stats.reduce((a, s) => a + s.wins, 0);
-  const totalM = stats.reduce((a, s) => a + s.matches, 0);
+  const usable = stats.filter((s) => s.abilities.length > 0 && s.abilities.every((id) => sigIds.has(id)));
+  const totalW = usable.reduce((a, s) => a + s.wins, 0);
+  const totalM = usable.reduce((a, s) => a + s.matches, 0);
   const mean = totalM ? totalW / totalM : 0.5;
-  const K = Math.max(50, 0.05 * Math.max(1, ...stats.map((s) => s.matches)));
-  const ranked = stats
-    .filter((s) => s.abilities.length > 0 && s.abilities.every((id) => sigIds.has(id)))
-    .map((s) => ({ s, score: ((s.wins + K * mean) / (s.matches + K)) * Math.log(1 + s.matches) }))
-    .sort((a, b) => b.score - a.score || a.s.abilities.join().localeCompare(b.s.abilities.join()));
+  const K = Math.max(50, 0.05 * Math.max(1, ...usable.map((s) => s.matches)));
 
-  if (!ranked.length) {
-    const ids = input.hero.abilities
-      .map((c) => sig.find((a) => a.class_name === c)?.id)
-      .filter((x): x is number => !!x);
-    const seq = [...ids];
-    for (let t = 0; t < 3; t++) for (const id of ids) seq.push(id);
-    return { steps: stepsFor(seq, byId), support: null, alternatives: [] };
+  const chosen: number[] = [];
+  let pool = usable;
+  let support: { matches: number; winRate: number } | null = null;
+  const count = (id: number) => ({ id, uses: chosen.filter((c) => c === id).length });
+  for (let step = 0; step < 12; step++) {
+    const groups = new Map<number, { wins: number; matches: number }>();
+    for (const s of pool) {
+      const id = s.abilities[step];
+      if (id === undefined || count(id).uses >= 3) continue;
+      const g = groups.get(id) ?? { wins: 0, matches: 0 };
+      g.wins += s.wins;
+      g.matches += s.matches;
+      groups.set(id, g);
+    }
+    const best = [...groups.entries()]
+      .filter(([, g]) => g.matches >= MIN_ORDER_MATCHES)
+      .map(([id, g]) => ({ id, g, score: shrunk(g.wins, g.matches, mean, K) }))
+      .sort((a, b) => b.score - a.score || a.id - b.id)[0];
+    if (!best) break;
+    chosen.push(best.id);
+    pool = pool.filter((s) => s.abilities[step] === best.id);
+    support = { matches: best.g.matches, winRate: best.g.wins / best.g.matches };
   }
 
-  const top = ranked.slice(0, TOP_N);
-  const best = [...top].sort((a, b) => b.s.abilities.length - a.s.abilities.length || b.score - a.score)[0];
-  const rest = ranked.filter((r) => r !== best).slice(0, 3);
+  const supportedSteps = chosen.length;
+  // Finish the legal prefix in bar order, tier by tier. Evidence applies only to the prefix above.
+  for (const tier of [1, 2, 3])
+    for (const ability of sig) if (chosen.filter((id) => id === ability.id).length < tier) chosen.push(ability.id);
+  return { steps: stepsFor(chosen, byId), support, supportedSteps, alternatives: [] };
+}
 
-  return {
-    steps: stepsFor(best.s.abilities, byId),
-    support: { matches: best.s.matches, winRate: best.s.wins / best.s.matches },
-    alternatives: rest.map((r) => ({
-      steps: stepsFor(r.s.abilities, byId),
-      matches: r.s.matches,
-      winRate: r.s.wins / r.s.matches,
-    })),
-  };
+/** Shared deterministic bar order for both the reference list and the round panel. */
+export function heroBarAbilities(hero: Hero, abilities: Ability[]): Ability[] {
+  return hero.abilities
+    .slice(0, 4)
+    .map((className) => abilities.find((ability) => ability.class_name === className))
+    .filter((ability): ability is Ability => !!ability);
+}
+
+export function abilityOrderEvidence(order: BrawlAbilityOrder): string {
+  const evidence = evidenceLine(order.support);
+  const supported = order.supportedSteps ?? order.steps.length;
+  return order.support && supported < order.steps.length
+    ? `${evidence}; first ${supported} upgrades supported, remaining upgrades use fallback order`
+    : evidence;
 }
 
 /** Index of the order step nearest this draft choice, for highlighting the ability-order list. */
@@ -93,7 +121,15 @@ export interface AbilityPanelData {
   /** Ability points this round hands out (6/6/5/5/10). */
   points: number;
   slots: PanelSlot[];
+  /** `<n> matches, <w>% win rate`, or `No reliable order` (then nothing is highlighted). */
+  evidence: string;
 }
+
+/** The one evidence line under the panel title. */
+export const evidenceLine = (support: BrawlAbilityOrder['support']): string =>
+  support && support.matches >= MIN_ORDER_MATCHES
+    ? `${support.matches} matches, ${Math.round(support.winRate * 100)}% win rate`
+    : 'No reliable order';
 
 /** Key caps under the four abilities, left to right (the third is a guess: the reference shot hides it). */
 const ABILITY_KEYS = ['Q', 'E', 'R', 'F'] as const;
@@ -135,13 +171,14 @@ export function abilityPanelFor(
   abilities: Ability[],
   round: number,
 ): AbilityPanelData {
-  const rounds = pillRounds(order, hero);
-  const slots = hero.abilities.slice(0, 4).map((cls, i): PanelSlot => {
+  const reliable = !!order.support && order.support.matches >= MIN_ORDER_MATCHES;
+  const rounds = reliable ? pillRounds(order, hero) : new Map<string, number>();
+  const slots = heroBarAbilities(hero, abilities).map((ability, i): PanelSlot => {
+    const cls = ability.class_name;
     const at = (tier: number): PointState => {
       const r = rounds.get(`${cls}:${tier}`);
       return r === undefined || r > round ? 'later' : r === round ? 'now' : 'done';
     };
-    const ability = abilities.find((a) => a.class_name === cls);
     return {
       name: ability?.name ?? cls,
       icon: ability?.image_webp ?? '',
@@ -149,5 +186,5 @@ export function abilityPanelFor(
       tiers: [at(3), at(2), at(1)],
     };
   });
-  return { round, points: AP_PER_ROUND[round - 1] ?? 0, slots };
+  return { round, points: AP_PER_ROUND[round - 1] ?? 0, slots, evidence: abilityOrderEvidence(order) };
 }

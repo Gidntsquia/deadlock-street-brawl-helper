@@ -2,11 +2,13 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { OverlaySettingsPanel } from '../../local/OverlaySettingsPanel';
-import { DEFAULT_OVERLAY_SETTINGS, isOverlaySettings } from '../../local/overlaySettings';
+import { isOverlaySettings, readMigratedOverlaySettings } from '../../local/overlaySettings';
+import { useState } from 'react';
 import { usePersisted } from '../../hooks/usePersisted';
 
 function Settings() {
-  const [settings, onChange] = usePersisted('overlaySettings', isOverlaySettings, DEFAULT_OVERLAY_SETTINGS);
+  const [initial] = useState(readMigratedOverlaySettings);
+  const [settings, onChange] = usePersisted('overlaySettings', isOverlaySettings, initial);
   return <OverlaySettingsPanel settings={settings} onChange={onChange} />;
 }
 
@@ -41,20 +43,25 @@ describe('team win-rate display checkbox', () => {
     expect(JSON.parse(localStorage.getItem('brawl.overlaySettings')!).showTeamWinRates).toBe(true);
   });
 
-  it('preserves legacy advice and timing preferences when the new checkbox is toggled', () => {
+  it('migrates compact advice to Off and preserves timing preferences when the team checkbox is toggled', () => {
     const legacy = { detail: 'compact', abilityTipMode: 'fixed', tipSeconds: 25, pointLimitSeconds: 80 };
     localStorage.setItem('brawl.overlaySettings', JSON.stringify(legacy));
     render(<Settings />);
     fireEvent.click(screen.getByRole('button', { name: 'Overlay settings' }));
     expect(checkbox().checked).toBe(true);
-    expect((screen.getByLabelText('Item advice') as HTMLSelectElement).value).toBe('compact');
+    expect((screen.getByLabelText('Item advice box') as HTMLSelectElement).value).toBe('off');
     fireEvent.click(checkbox());
-    expect(JSON.parse(localStorage.getItem('brawl.overlaySettings')!)).toEqual({ ...legacy, showTeamWinRates: false });
+    expect(JSON.parse(localStorage.getItem('brawl.overlaySettings')!)).toEqual({
+      ...legacy,
+      detail: 'off',
+      showTeamWinRates: false,
+    });
     fireEvent.change(screen.getByLabelText('Fixed time / unreadable HUD fallback (seconds)'), {
       target: { value: '30' },
     });
     expect(JSON.parse(localStorage.getItem('brawl.overlaySettings')!)).toEqual({
       ...legacy,
+      detail: 'off',
       tipSeconds: 30,
       showTeamWinRates: false,
     });

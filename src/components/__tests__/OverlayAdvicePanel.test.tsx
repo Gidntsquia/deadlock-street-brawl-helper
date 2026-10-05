@@ -26,13 +26,14 @@ const advice: OverlayAdvice = {
     name: r.item.name,
     score: r.score,
     enhanced: r.enhanced,
+    enhancedBonus: r.enhancedBonus,
     usage: r.usage,
     winRate: r.winRate,
     grade: '-',
     rows: [],
   })),
   status: 'Identified all three items',
-  confidence: 'Evidence: Close scores · uniform reroll approximation',
+  confidence: 'Evidence: Close scores, uniform reroll approximation',
 };
 
 describe('live overlay advice', () => {
@@ -63,7 +64,7 @@ describe('live overlay advice', () => {
     const { container } = render(<OverlayAdvicePanel advice={advice} />);
     expect(container.textContent).toContain('RE-ROLL');
     expect(container.textContent).toContain('Re-rolls: 1');
-    expect(container.textContent).toContain('Infernus · round 2, choice 1');
+    expect(container.textContent).toContain('Infernus, round 2, choice 1');
     expect(container.querySelectorAll('.overlay-panel-card').length).toBe(3);
     for (const r of advice.ranked) {
       expect(container.textContent).toContain(r.name);
@@ -74,18 +75,31 @@ describe('live overlay advice', () => {
     expect(container.textContent).toContain(advice.status);
     expect(container.textContent).toContain(advice.confidence);
   });
-  it('never offers a reroll with zero or an unknown count; compact mode retains the action and counter', () => {
+  it('shows Reading before advice is ready and keeps the explanation hidden when Off', () => {
+    const { container, rerender } = render(<OverlayAdvicePanel advice={{ ...advice, ranked: [] }} />);
+    expect(container.textContent).toBe('Reading');
+    expect(container.querySelector('.overlay-panel-card')).toBeNull();
+    rerender(<OverlayAdvicePanel advice={{ ...advice, ranked: [], detail: 'off' }} />);
+    expect(container.childElementCount).toBe(0);
+    rerender(<OverlayAdvicePanel advice={advice} />);
+    expect(container.querySelectorAll('.overlay-panel-card')).toHaveLength(3);
+  });
+  it('never offers a reroll with zero or an unknown count; Off hides the whole explanation box', () => {
     for (const count of [0, -1, null, undefined]) {
       expect(availableReroll(draft.reroll, count)).toBeNull();
       const { container, unmount } = render(
-        <OverlayAdvicePanel advice={{ ...advice, rerollsRemaining: count, detail: 'compact' }} />,
+        <OverlayAdvicePanel advice={{ ...advice, rerollsRemaining: count, detail: 'off' }} />,
       );
-      expect(container.textContent).not.toContain('RE-ROLL');
-      expect(container.textContent).toContain('TAKE');
-      expect(container.querySelector('.local-reroll-counter')).not.toBeNull();
-      expect(container.querySelector('.overlay-panel-card')).toBeNull();
-      expect(container.textContent).not.toContain('uniform reroll approximation');
+      expect(container.querySelector('.overlay-panel')).toBeNull();
+      expect(container.textContent).toBe('');
       unmount();
     }
+    const { container } = render(
+      <OverlayAdvicePanel advice={{ ...advice, detail: 'detailed', rerollsRemaining: 0 }} />,
+    );
+    expect(container.textContent).not.toContain('RE-ROLL');
+    expect(container.textContent).toContain('TAKE');
+    expect(container.querySelector('.local-reroll-counter')).not.toBeNull();
+    expect(container.querySelectorAll('.overlay-panel-card')).toHaveLength(3);
   });
 });

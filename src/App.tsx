@@ -3,10 +3,11 @@ import type { Ability, Hero, Item } from './types';
 import { img, loadCore, type Manifest } from './data/load';
 import { BrawlView } from './components/BrawlView';
 import { TierList } from './components/TierList';
+import { debugDefault } from './brawl/debugMode';
 import { TitleBar } from './components/TitleBar';
 import { DataUpdates } from './components/DataUpdates';
 import { OverlaySettingsPanel } from './local/OverlaySettingsPanel';
-import { DEFAULT_OVERLAY_SETTINGS, isOverlaySettings } from './local/overlaySettings';
+import { isOverlaySettings, readMigratedOverlaySettings } from './local/overlaySettings';
 import { usePersisted, isNumber, isString } from './hooks/usePersisted';
 import './local/CompactHeader.css';
 import { useAutoHero } from './hooks/useAutoHero';
@@ -28,11 +29,12 @@ export default function App() {
   const [heroId, setHeroId] = usePersisted('heroId', isNumber, INFERNUS);
   const [tab, setTab] = usePersisted<Tab>('tab', isTab, 'advisor');
   const [error, setError] = useState<string | null>(null);
-  const [debug, setDebug] = useState(false); // hidden Debug panel; never persisted
+  const [debug, setDebug] = useState(() => debugDefault(__APP_VERSION__, import.meta.env.DEV));
+  const [initialOverlaySettings] = useState(readMigratedOverlaySettings);
   const [overlaySettings, setOverlaySettings] = usePersisted(
     'overlaySettings',
     isOverlaySettings,
-    DEFAULT_OVERLAY_SETTINGS,
+    initialOverlaySettings,
   );
   const [now, setNow] = useState(Date.now);
   const [dataRevision, setDataRevision] = useState(0);
@@ -48,13 +50,19 @@ export default function App() {
     await window.brawlAPI?.activateDataSnapshot();
   };
   const [changeHero, setChangeHero] = useState(false);
-  const { source: heroSource, choose: handleHero, newMatch: onNewMatch } = useAutoHero(setHeroId);
+  const {
+    source: heroSource,
+    pinned: heroPinned,
+    choose: handleHero,
+    newMatch: onNewMatch,
+    resumeAuto,
+  } = useAutoHero(setHeroId);
 
   useEffect(() => {
     loadCore()
       .then(([i, h, a, m]) => {
         setItems(i);
-        setHeroes(h);
+        setHeroes([...h].sort((a, b) => a.name.localeCompare(b.name)));
         setAbilities(a);
         setManifest(m);
       })
@@ -82,14 +90,14 @@ export default function App() {
   if (error)
     return (
       <>
-        <TitleBar />
+        <TitleBar debug={debug} />
         <div className="error">{error}</div>
       </>
     );
   if (!hero)
     return (
       <>
-        <TitleBar />
+        <TitleBar debug={debug} />
         <div className="loading">Loading snapshots…</div>
       </>
     );
@@ -101,7 +109,7 @@ export default function App() {
 
   return (
     <>
-      <TitleBar />
+      <TitleBar debug={debug} />
       <header className="app-header">
         {tab === 'advisor' && <img className="hero-portrait" src={img(hero.images.small)} alt="" />}
         <div className="hero-identity">
@@ -119,18 +127,33 @@ export default function App() {
                 change
               </button>
             ) : (
-              <select
-                className="hero-select"
-                value={heroId}
-                onChange={(e) => handleHero(Number(e.target.value), 'manual')}
-                aria-label="Select hero"
-              >
-                {heroes.map((h) => (
-                  <option key={h.id} value={h.id}>
-                    {h.name}
-                  </option>
-                ))}
-              </select>
+              <>
+                <select
+                  className="hero-select"
+                  value={heroId}
+                  onChange={(e) => {
+                    handleHero(Number(e.target.value), 'manual');
+                  }}
+                  aria-label="Select hero"
+                >
+                  {heroes.map((h) => (
+                    <option key={h.id} value={h.id}>
+                      {h.name}
+                    </option>
+                  ))}
+                </select>
+                {heroPinned && (
+                  <button
+                    className="link-btn"
+                    onClick={() => {
+                      resumeAuto();
+                      setChangeHero(false);
+                    }}
+                  >
+                    auto-detect
+                  </button>
+                )}
+              </>
             )
           ) : (
             <div className="sub">
@@ -169,6 +192,7 @@ export default function App() {
       <div hidden={tab !== 'advisor'}>
         <BrawlView
           key={dataRevision}
+          pinned={heroPinned}
           hero={hero}
           heroes={heroes}
           items={items}
@@ -179,7 +203,9 @@ export default function App() {
           overlaySettings={overlaySettings}
         />
       </div>
-      {tab === 'tiers' && <TierList key={dataRevision} heroes={heroes} items={items} />}
+      <div hidden={tab !== 'tiers'}>
+        <TierList key={dataRevision} heroes={heroes} items={items} />
+      </div>
       <footer>
         Data: deadlock-api.com (aggregate analytics, assets). See the{' '}
         <a href="https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Street-Brawl-Advisor">

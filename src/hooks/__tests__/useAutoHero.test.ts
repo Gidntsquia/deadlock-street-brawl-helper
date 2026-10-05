@@ -17,6 +17,18 @@ describe('match-scoped manual hero selection', () => {
     expect(select).toHaveBeenLastCalledWith(64);
     expect(result.current.source).toBe('detected');
   });
+  it('explicit Auto releases the override to the newest confirmed evidence', () => {
+    const select = vi.fn();
+    const { result } = renderHook(() => useAutoHero(select));
+    act(() => result.current.choose(67, 'detected'));
+    act(() => result.current.choose(76, 'manual'));
+    act(() => result.current.choose(64, 'detected'));
+    expect(result.current.pinned).toBe(true);
+    expect(select).toHaveBeenLastCalledWith(76);
+    act(() => result.current.resumeAuto());
+    expect(result.current.pinned).toBe(false);
+    expect(select).toHaveBeenLastCalledWith(64);
+  });
   it('preserves a manual selection made before first recognition and releases to the latest confirmed next-match hero', () => {
     const select = vi.fn();
     const { result } = renderHook(() => useAutoHero(select));

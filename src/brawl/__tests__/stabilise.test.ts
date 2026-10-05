@@ -13,12 +13,26 @@ const card = (x: number, present = true, id = 7): CardRead => ({
 });
 
 describe('stabilise', () => {
-  it('ignores small wobble and follows a real move', () => {
+  it('ignores small wobble and follows a real move once two frames agree', () => {
     let s = stabilise(emptyStable(), [card(500)]);
     s = stabilise(s, [card(503)]);
     expect(s.reads[0]!.match.x).toBe(500);
     s = stabilise(s, [card(600)]);
-    expect(s.reads[0]!.match.x).toBe(600);
+    expect(s.reads[0]!.match.x).toBe(500);
+    s = stabilise(s, [card(601)]);
+    expect(s.reads[0]!.match.x).toBe(601);
+  });
+  it('a matcher flipping between two positions never moves the circle', () => {
+    let s = stabilise(emptyStable(), [card(500)]);
+    for (let i = 0; i < 10; i++) {
+      s = stabilise(s, [card(i % 2 ? 500 : 520)]);
+      expect(s.reads[0]!.match.x).toBe(500);
+    }
+  });
+  it('with hold set, keeps a hidden card for as long as the hover lasts', () => {
+    let s = stabilise(emptyStable(), [card(500)]);
+    for (let i = 0; i < HOLD_FRAMES * 4; i++) s = stabilise(s, [card(0, false)], true);
+    expect(s.reads[0]!.present).toBe(true);
   });
   it('holds a card through a short miss, then drops it', () => {
     let s = stabilise(emptyStable(), [card(500)]);

@@ -3,6 +3,8 @@ import type { Rect } from './gameWindow';
 import type { OverlayState } from '../src/brawl/draw';
 import { CHANNELS } from './channels';
 import type { DataStatus, UpdateProgress, UpdateRequest } from '../src/data/updateTypes';
+import type { DraftRecord, FrameShot, SessionSummary } from './sessionStore';
+import type { Env, Problem } from '../src/brawl/problems';
 
 export interface TestModeState {
   on: boolean;
@@ -63,12 +65,43 @@ const api = {
       ipcRenderer.removeListener(CHANNELS.captureDenied, listener);
     };
   },
+  onProblem: (cb: (p: Problem | null) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, p: Problem | null) => cb(p);
+    ipcRenderer.on(CHANNELS.problem, listener);
+    return () => {
+      ipcRenderer.removeListener(CHANNELS.problem, listener);
+    };
+  },
+  onEnv: (cb: (e: Env) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, e: Env) => cb(e);
+    ipcRenderer.on(CHANNELS.env, listener);
+    return () => {
+      ipcRenderer.removeListener(CHANNELS.env, listener);
+    };
+  },
+  getEnv: (): Promise<Env | null> => ipcRenderer.invoke(CHANNELS.envGet),
+  onFirstRunOpen: (cb: () => void) => {
+    const listener = () => cb();
+    ipcRenderer.on(CHANNELS.firstRunOpen, listener);
+    return () => {
+      ipcRenderer.removeListener(CHANNELS.firstRunOpen, listener);
+    };
+  },
+  getProblem: (): Promise<Problem | null> => ipcRenderer.invoke(CHANNELS.problemGet),
   getCaptureState: (): Promise<CaptureState> => ipcRenderer.invoke(CHANNELS.captureStateGet),
   onCaptureState: (cb: (state: CaptureState) => void) => {
     const listener = (_e: Electron.IpcRendererEvent, state: CaptureState) => cb(state);
     ipcRenderer.on(CHANNELS.captureState, listener);
     return () => {
       ipcRenderer.removeListener(CHANNELS.captureState, listener);
+    };
+  },
+  onLoadingName: (cb: (crop: { width: number; height: number; buffer: ArrayBuffer }) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, crop: { width: number; height: number; buffer: ArrayBuffer }) =>
+      cb(crop);
+    ipcRenderer.on(CHANNELS.loadingName, listener);
+    return () => {
+      ipcRenderer.removeListener(CHANNELS.loadingName, listener);
     };
   },
   detectNow: (): Promise<boolean> => ipcRenderer.invoke(CHANNELS.detectNow),
@@ -98,6 +131,12 @@ const api = {
   getTestMode: (): Promise<TestModeState> => ipcRenderer.invoke(CHANNELS.testModeGet),
   setTestMode: (on: boolean): Promise<TestModeState> => ipcRenderer.invoke(CHANNELS.testModeSet, on),
   setTestFrame: (frame: string): Promise<TestModeState> => ipcRenderer.invoke(CHANNELS.testModeFrame, frame),
+  setDebugState: (on: boolean) => ipcRenderer.send(CHANNELS.debugState, on),
+  sessionFrame: (frame: FrameShot) => ipcRenderer.send(CHANNELS.sessionFrame, frame),
+  sessionDraft: (rec: DraftRecord) => ipcRenderer.send(CHANNELS.sessionDraft, rec),
+  sessionList: (): Promise<SessionSummary[]> => ipcRenderer.invoke(CHANNELS.sessionList),
+  sessionMark: (matchId: string, n: number, wrong: boolean): Promise<void> =>
+    ipcRenderer.invoke(CHANNELS.sessionMark, matchId, n, wrong),
   onDebugToggle: (cb: () => void) => {
     const listener = () => cb();
     ipcRenderer.on(CHANNELS.debugToggle, listener);

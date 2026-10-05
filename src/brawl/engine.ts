@@ -174,7 +174,7 @@ export function baseScores(input: BrawlInput, enemies: number[] = [], round?: nu
   return out;
 }
 
-/** Residual pair association (×10), above both individual smoothed associations. Not causal synergy. */
+/** Residual pair association (x10), above both individual smoothed associations. Not causal synergy. */
 export function pairLifts(input: BrawlInput): Map<string, number> {
   const baseline = heroBaseline(input.analytics);
   const stats = new Map(input.analytics.item_stats.filter(validCounts).map((row) => [row.item_id, row]));
@@ -210,7 +210,7 @@ const synergyWith = (pair: Map<string, number>, id: number, others: number[]) =>
 };
 
 /** Scores one card against the current state (owned items, enemies) without considering the other sets. */
-export function scoreOffer(
+function scoreOfferCore(
   input: BrawlInput,
   bases: Map<number, Base>,
   pair: Map<string, number>,
@@ -298,19 +298,52 @@ export function scoreOffer(
     why.push(
       enhancedProperties
         ? 'enhanced properties supplied by local override'
-        : `enhanced fallback assumption: stat ×${enhancedMult}, bonus ${enhancedBonus}`,
+        : `enhanced fallback assumption: stat x${enhancedMult}, bonus ${enhancedBonus}`,
     );
   if (dup) why.push('you already hold this item');
   return {
     item,
     enhanced,
     score,
+    enhancedBonus: 0,
     parts,
     why,
     usage: b?.pop ?? 0,
     winRate: b?.observedWinRate ?? null,
     known: !!b?.evidence.currentMatches,
   };
+}
+
+/** The Enhanced cell is the difference against the plain offer in the exact same draft context.
+ * Both use the same scoring implementation, including owned-item diminishing returns and local overrides. */
+export function scoreOffer(
+  input: BrawlInput,
+  bases: Map<number, Base>,
+  pair: Map<string, number>,
+  state: DraftState,
+  offer: Offer,
+): RankedOffer {
+  const ranked = scoreOfferCore(input, bases, pair, state, offer);
+  if (ranked.enhanced)
+    ranked.enhancedBonus =
+      ranked.score - scoreOfferCore(input, bases, pair, state, { ...offer, enhanced: false }).score;
+  return ranked;
+}
+
+/** The highest score any single card could have in set `setIndex` of this round (normal or rare tier, enhanced or not).
+ *  When a card could not be read, a sure card is only worth taking over it if it beats this. */
+export function unknownCeiling(input: BrawlInput, state: DraftState, setIndex: number): number {
+  const bases = baseScores(input, state.enemies);
+  const pair = pairLifts(input);
+  const lay = roundTiers(input, state.round)[setIndex];
+  const tiers = new Set<number>(lay ? [lay.normal, lay.rare] : []);
+  let best = -Infinity;
+  for (const i of input.items) {
+    if (!draftable(i) || (tiers.size && !tiers.has(i.item_tier))) continue;
+    for (const enhanced of [false, true])
+      best = Math.max(best, scoreOffer(input, bases, pair, state, { itemId: i.id, enhanced }).score);
+  }
+  return best;
 }
 
 /** Ranks every card, chooses the jointly best pick per set, and says whether a reroll is worth it. */
@@ -371,7 +404,8 @@ export function adviseDraft(input: BrawlInput, state: DraftState): DraftAdvice {
     choiceIndex,
     rerollsRemaining,
     itemTier: (id) => bases.get(id)?.item.item_tier,
-    scoreOffer: (offer) => scoreOffer(input, bases, pair, state, offer).score,
+    // Prospective draws need the full contextual score, not the display-only Enhanced delta.
+    scoreOffer: (offer) => scoreOfferCore(input, bases, pair, state, offer).score,
     distribution:
       input.dropDistribution ??
       createUniformDropDistribution([...bases.values()].map(({ item }) => ({ itemId: item.id, tier: item.item_tier }))),

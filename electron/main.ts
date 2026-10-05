@@ -16,6 +16,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { writeFileSync, readdirSync, readFileSync } from 'node:fs';
 import {
   findGameWindow,
+  gameWindowIsBorderless,
   grabScreenRegion,
   isGameForeground,
   isGameWindowTitle,
@@ -23,10 +24,13 @@ import {
   sendWindowToBottom,
   type Rect,
 } from './gameWindow';
-import { probeShopScreen } from './shopProbe';
+import { probeIsBlack, probeLoadingName, probeShopScreen } from './shopProbe';
+import { PROBLEM_TEXT, problemFor, type Env, type Problem } from '../src/brawl/problems';
 import { CHANNELS } from './channels';
 import { setupDataUpdates } from './update/integration';
 import { installTrayWindowControls } from './trayControls';
+import { SessionStore, type DraftRecord, type FrameShot, type RegionShot } from './sessionStore';
+import { debugDefault } from '../src/brawl/debugMode';
 import { MIN_HEIGHT, MIN_WIDTH, isBounds, validBounds } from './windowBounds';
 import { overlayHasContent } from '../src/brawl/overlayContent';
 import { dotState, initialLobby, lobbyDotVisible, stepLobby, type DotState } from '../src/brawl/lobbyDot';
@@ -66,12 +70,35 @@ const RECT_POLL_MS = 250; // base tick; see the poll's own cadence below
 // Game window lookup cadence (in ticks): once a second while no game is open, twice a second while it is.
 const POLL_TICKS_NO_GAME = 4;
 const POLL_TICKS_GAME = 2;
+// With the game open but in the background and nothing being read, or when a tick itself is slow (a loaded PC), look
+// half as often. The probe only runs while the game is the foreground window, so nothing is missed.
+const POLL_TICKS_QUIET = 4;
+const POLL_TICK_SLOW_MS = 40;
 
 let control: BrowserWindow | null = null;
 let overlay: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let trayMenu: Menu | null = null;
 let lastRect: Rect | null = null;
+
+// Debug-mode recording (see sessionStore.ts): crops as PNG, written by main so the read path never waits on it.
+const encodeRegion = (r: RegionShot): Buffer => {
+  const bgra = Buffer.alloc(r.rgba.length);
+  for (let i = 0; i < r.rgba.length; i += 4) {
+    bgra[i] = r.rgba[i + 2]!;
+    bgra[i + 1] = r.rgba[i + 1]!;
+    bgra[i + 2] = r.rgba[i]!;
+    bgra[i + 3] = 255;
+  }
+  return nativeImage.createFromBitmap(bgra, { width: r.width, height: r.height }).toPNG();
+};
+let sessionStore: SessionStore | null = null;
+const sessions = () =>
+  (sessionStore ??= (() => {
+    const s = new SessionStore(path.join(app.getPath('userData'), 'sessions'), encodeRegion);
+    s.enabled = debugDefault(app.getVersion(), !app.isPackaged);
+    return s;
+  })());
 // Whether the control window should be capturing the game (see CHANNELS.captureState). With a real game this stays
 // false until `probeShopScreen` sees the draft screen, and goes back to false when the control window says the draft
 // and its tip are over. Test mode and the e2e harness (`probe` false) capture whenever the game window exists.
@@ -82,11 +109,25 @@ let lastCaptureStateJson = '';
 let captureHeld = false;
 // The last capture start failed or was denied (grey dot).
 let captureFailed = false;
+/** When the renderer last stopped an idle capture; until a probe miss (or PROBE_REARM_MS) a probe hit is ignored. */
+let idleAt = 0;
+const PROBE_REARM_MS = 30_000;
+/** The loading screen's hero name is sent to the page at most this often, and this many times per screen. */
+const LOADING_SEND_MS = 2_500;
+const LOADING_SEND_MAX = 3;
+let loadingSentAt = 0;
+let loadingSent = 0;
 // Lobby status dot (see src/brawl/lobbyDot.ts) and the F8 hotkey, which exists only while a game window does.
 let lobby = initialLobby();
 let lastDot: DotState | null = null;
 let f8Registered = false;
 let f8InUse = false;
+let problem: Problem | null = null;
+let noticeText: string | null = null;
+let noticeTimer: ReturnType<typeof setTimeout> | null = null;
+let blackTicks = 0;
+let lastEnv: Env | null = null;
+const NOTICE_MS = 5000;
 const DETECT_KEY = 'F8';
 const probeMode = () => process.platform === 'win32' && !process.env.BRAWL_E2E && !alive(testWindow);
 function captureState() {
@@ -227,7 +268,7 @@ function createControlWindow() {
     frame: false, // the page draws its own title strip (src/components/TitleBar.tsx); no Windows title bar or menu
     backgroundColor: WINDOW_BG,
     title: 'Deadlock Street Brawl Helper',
-    icon: path.join(__dirname, '../dist/apple-touch-icon.png'),
+    icon: appIconPath(),
     show: !process.env.BRAWL_E2E,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -342,10 +383,39 @@ function currentDot(): DotState | null {
 }
 /** Sends the overlay the control window's last state plus the dot (which only the main process knows). */
 function relayOverlay() {
-  const state = { ...(lastOverlayState ?? BLANK_OVERLAY), dot: lastDot };
+  const state = { ...(lastOverlayState ?? BLANK_OVERLAY), dot: lastDot, notice: noticeText };
   overlayWanted = overlayHasContent(state);
   syncOverlay();
   if (alive(overlay) && !overlay.webContents.isDestroyed()) overlay.webContents.send(CHANNELS.overlayState, state);
+}
+/** Works out the one problem to show; a new one goes to the window and to the overlay for 5 s. */
+function refreshProblem(found: Rect | null) {
+  const env: Env = {
+    found: !!found,
+    width: found?.width ?? 0,
+    height: found?.height ?? 0,
+    borderless: found ? gameWindowIsBorderless() : null,
+    black: blackTicks >= 3,
+    denied: captureFailed,
+    f8InUse,
+  };
+  if (JSON.stringify(env) !== JSON.stringify(lastEnv)) {
+    lastEnv = env;
+    sendControl(CHANNELS.env, env);
+  }
+  const next = problemFor(env);
+  if (next === problem) return;
+  problem = next;
+  sendControl(CHANNELS.problem, next);
+  if (noticeTimer) clearTimeout(noticeTimer);
+  noticeText = next ? PROBLEM_TEXT[next] : null;
+  if (next) {
+    noticeTimer = setTimeout(() => {
+      noticeText = null;
+      relayOverlay();
+    }, NOTICE_MS);
+  }
+  relayOverlay();
 }
 /** Recomputes the dot; resends the overlay state only when it changed. */
 function refreshDot() {
@@ -431,9 +501,16 @@ function startRectPolling() {
   let tickNo = 0;
   let lastReassert = 0;
   let gameWasForeground = false;
+  let quiet = false;
+  let tickEma = 0;
   pollTimer = setInterval(() => {
     tickNo += 1;
-    if (tickNo % (lastRect ? POLL_TICKS_GAME : POLL_TICKS_NO_GAME) !== 0) return;
+    const every = !lastRect
+      ? POLL_TICKS_NO_GAME
+      : quiet || tickEma > POLL_TICK_SLOW_MS
+        ? POLL_TICKS_QUIET
+        : POLL_TICKS_GAME;
+    if (tickNo % every !== 0) return;
     const t0 = performance.now();
     if (alive(testWindow) && findGameWindow(GAME_WINDOW_TITLE, ownWindowHandles(true))) {
       // A real Deadlock window appeared while test mode was on: hand over to the real game.
@@ -442,6 +519,7 @@ function startRectPolling() {
     const found = findGameWindow(GAME_WINDOW_TITLE, ownWindowHandles());
     let reassert = false;
     if (!rectsEqual(found, lastRect)) {
+      if (!!found !== !!lastRect) sessions().endMatch();
       lastRect = found;
       log('electron-main', 'info', found ? 'window.found' : 'window.lost', found ?? undefined);
       sendControl(CHANNELS.gameRect, found);
@@ -452,6 +530,9 @@ function startRectPolling() {
       captureHeld = false;
     }
     syncDetectKey(!!found);
+    blackTicks =
+      found && !alive(testWindow) && isGameForeground() && probeIsBlack(found, grabScreenRegion) ? blackTicks + 1 : 0;
+    refreshProblem(found);
     lobby = stepLobby(lobby, { type: 'tick', found: !!found, now: Date.now() });
     refreshDot();
     // Real game: capture stays off until the draft screen shows up. Only sample the screen while the game is the
@@ -462,7 +543,22 @@ function startRectPolling() {
     } else if (!probeMode()) captureWanted = !captureHeld;
     else if (!captureWanted && isGameForeground()) {
       const hit = perf.time('probe', () => probeShopScreen(found, grabScreenRegion));
-      if (hit) {
+      if (!hit) {
+        const crop = probeLoadingName(found, grabScreenRegion);
+        if (!crop) loadingSent = 0;
+        else if (loadingSent < LOADING_SEND_MAX && Date.now() - loadingSentAt >= LOADING_SEND_MS) {
+          loadingSent++;
+          loadingSentAt = Date.now();
+          sendControl(CHANNELS.loadingName, crop);
+          log('electron-main', 'info', 'loading.name.sent', { n: loadingSent });
+        }
+      }
+      if (!hit) idleAt = 0;
+      else if (idleAt && Date.now() - idleAt < PROBE_REARM_MS) {
+        // the screen the capture just gave up on (the probe sees a CHOICE glyph the full read does not): do not
+        // start it again at once, or Start/Stop flips every few seconds
+      } else {
+        idleAt = 0;
         captureWanted = true;
         log('electron-main', 'info', 'draft.probe.hit');
       }
@@ -482,7 +578,10 @@ function startRectPolling() {
       }
       gameWasForeground = fg;
     } else gameWasForeground = false;
-    perf.record('poll.tick', performance.now() - t0);
+    quiet = !!found && !captureWanted && probeMode() && !isGameForeground();
+    const took = performance.now() - t0;
+    tickEma = tickEma === 0 ? took : tickEma * 0.8 + took * 0.2;
+    perf.record('poll.tick', took);
   }, RECT_POLL_MS);
 }
 
@@ -744,7 +843,7 @@ function setupDisplayMediaHandler() {
  *  `npm run win:dev` is what actually runs Windows Electron from WSL. */
 function platformWarning(): string | null {
   if (process.platform === 'win32') return null;
-  const msg = `platform.unsupported: process.platform=${process.platform} — run "npm run win:dev" from WSL (or "npm run dev:electron" from a Windows terminal in the synced Windows copy), not dev:electron inside WSL`;
+  const msg = `platform.unsupported: process.platform=${process.platform}: run "npm run win:dev" from WSL (or "npm run dev:electron" from a Windows terminal in the synced Windows copy), not dev:electron inside WSL`;
   log('electron-main', 'warn', 'platform.unsupported', { platform: process.platform });
   return msg;
 }
@@ -760,10 +859,13 @@ function setupIpc() {
   ipcMain.on(CHANNELS.captureIdle, () => {
     if (!probeMode()) return; // test mode / harness: capture just follows the window
     captureWanted = false;
+    idleAt = Date.now();
     emitCaptureState();
   });
   ipcMain.handle(CHANNELS.detectNow, () => detectNow('button'));
   ipcMain.handle(CHANNELS.detectKeyGet, () => f8InUse);
+  ipcMain.handle(CHANNELS.problemGet, () => problem);
+  ipcMain.handle(CHANNELS.envGet, () => lastEnv);
   ipcMain.on(CHANNELS.detectMiss, () => {
     captureWanted = false;
     captureHeld = true;
@@ -779,6 +881,20 @@ function setupIpc() {
       log('electron-main', 'warn', 'detect.frame.failed', { message: String(e) });
     }
   });
+  ipcMain.on(CHANNELS.debugState, (_e, on: boolean) => {
+    sessions().enabled = !!on;
+    if (!on) sessions().discard();
+  });
+  ipcMain.on(CHANNELS.sessionFrame, (_e, frame: FrameShot) => sessions().addFrame(frame));
+  ipcMain.on(CHANNELS.sessionDraft, (_e, rec: DraftRecord) => {
+    sessions()
+      .finishDraft(rec)
+      .catch((e) => log('electron-main', 'warn', 'session.write.failed', { message: String(e) }));
+  });
+  ipcMain.handle(CHANNELS.sessionList, () => sessions().list());
+  ipcMain.handle(CHANNELS.sessionMark, (_e, matchId: string, n: number, wrong: boolean) =>
+    sessions().mark(matchId, n, wrong),
+  );
   ipcMain.on(CHANNELS.captureResult, (_e, ok: boolean) => {
     captureFailed = !ok;
     refreshDot();
@@ -798,17 +914,22 @@ function setupIpc() {
   });
 }
 
-function setupTray() {
-  const iconPath = app.isPackaged
+/** The app logo (public/favicon.svg rendered to PNG): tray and the control window's taskbar entry. */
+function appIconPath(): string {
+  return app.isPackaged
     ? path.join(process.resourcesPath, 'app.asar', 'dist', 'apple-touch-icon.png')
     : path.join(__dirname, '../public/apple-touch-icon.png');
-  const icon = nativeImage.createFromPath(iconPath);
+}
+
+function setupTray() {
+  const icon = nativeImage.createFromPath(appIconPath());
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon.resize({ width: 16, height: 16 }));
   tray.setToolTip('Deadlock Street Brawl Helper');
   trayMenu = installTrayWindowControls(tray, () => control, [
     { label: 'Toggle overlay', click: toggleOverlay },
     { label: 'Detect now (F8)', click: () => detectNow('tray') },
     { label: 'Debug panel', click: toggleDebugPanel },
+    { label: 'First-run check', click: () => sendControl(CHANNELS.firstRunOpen) },
     { label: 'Toggle test mode', click: () => (alive(testWindow) ? stopTestMode() : void startTestMode()) },
     { label: 'Quit', click: () => app.quit() },
   ]);
@@ -879,6 +1000,7 @@ app.whenReady().then(async () => {
   if (process.env.BRAWL_E2E) {
     (globalThis as Record<string, unknown>).__brawlE2E = {
       getControl: () => control,
+      sessionsDir: () => sessions().dir,
       getTray: () => tray,
       getTrayMenu: () => trayMenu,
       setInitialTestFrame: (frame: string) => {

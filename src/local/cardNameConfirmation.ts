@@ -19,6 +19,7 @@ export interface CardNameTextEvidence {
 }
 export interface CardNameSlotOutcome {
   slot: number;
+  source?: 'primary' | 'binary' | 'nearest' | 'icon';
   status: 'strong' | 'exact' | 'corrected' | 'unknown' | 'unavailable';
   itemId: number;
   reason?: 'empty-text' | 'ambiguous-name' | 'non-exact-name' | 'service-failed';

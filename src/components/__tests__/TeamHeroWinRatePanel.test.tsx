@@ -38,10 +38,10 @@ describe('TeamHeroWinRatePanel', () => {
       ),
     };
     const { container, rerender } = render(<TeamHeroWinRatePanel visible edge={partial} />);
-    expect(screen.getByRole('region', { name: 'Ours' }).textContent).toContain('Ours avgUnavailable');
+    expect(screen.getByRole('region', { name: 'Ours' }).textContent).toContain('Ours avgReading');
     expect(screen.getByRole('region', { name: 'Enemy' }).textContent).toContain('Enemy avg51.0%');
     expect(screen.getByRole('complementary').dataset.direction).toBe('neutral');
-    expect(container.textContent).toContain('DifferenceUnavailable');
+    expect(container.textContent).toContain('DifferenceReading');
     rerender(
       <TeamHeroWinRatePanel
         visible
@@ -55,7 +55,7 @@ describe('TeamHeroWinRatePanel', () => {
       />,
     );
     expect(screen.getByRole('region', { name: 'Ours' }).textContent).toContain('Ours avg51.0%');
-    expect(screen.getByRole('region', { name: 'Enemy' }).textContent).toContain('Enemy avgUnavailable');
+    expect(screen.getByRole('region', { name: 'Enemy' }).textContent).toContain('Enemy avgReading');
     for (const invalid of [
       { ...partial, ownWinRate: 0.53 },
       { ...partial, deltaPp: 2 },
@@ -84,9 +84,9 @@ describe('TeamHeroWinRatePanel', () => {
     const panel = screen.getByRole('complementary', { name: 'Team average hero win rates' });
     expect(panel.dataset.direction).toBe('neutral');
     expect(panel.textContent).toContain('Abrams61.0%');
-    expect(panel.textContent).toContain('Reading heroReading…');
+    expect(panel.textContent).toContain('Reading heroReading');
     expect(panel.textContent).toContain('KelvinNo win-rate data');
-    expect(panel.textContent).toContain('DifferenceUnavailable');
+    expect(panel.textContent).toContain('DifferenceReading');
     expect(panel.textContent).not.toContain(' pp');
   });
   it('shows an explicitly confirmed preparation phase without draft advice, and hides immediately when disabled', () => {
@@ -97,7 +97,7 @@ describe('TeamHeroWinRatePanel', () => {
   });
   it('shows every hero and individual Street Brawl rate under the correct team, both means, difference and source', () => {
     const { container } = render(<TeamHeroWinRatePanel draft round={1} edge={edge} />);
-    expect(container.textContent).toContain('Street Brawl · Hero win rates');
+    expect(container.textContent).toContain('Street Brawl, Hero win rates');
     const ownList = screen.getByRole('list', { name: 'Ours hero win rates' });
     const enemyList = screen.getByRole('list', { name: 'Enemy hero win rates' });
     const rows = [...within(ownList).getAllByRole('listitem'), ...within(enemyList).getAllByRole('listitem')];
@@ -136,12 +136,17 @@ describe('TeamHeroWinRatePanel', () => {
     expect(enemy.textContent).toContain('Abrams61.0%');
   });
 
+  it('shows Reading while the first-round roster is unavailable without fabricating means', () => {
+    render(<TeamHeroWinRatePanel visible edge={null} />);
+    expect(screen.getByRole('status').textContent).toBe('Reading');
+    expect(screen.queryByRole('region', { name: 'Ours' })).toBeNull();
+  });
+
   it('disappears for later rounds, outside the draft and incomplete or invalid roster statistics', () => {
     const { container, rerender } = render(<TeamHeroWinRatePanel draft round={1} edge={edge} />);
     for (const props of [
       { draft: true, round: 2, edge },
       { draft: false, round: 1, edge },
-      { draft: true, round: 1, edge: null },
       { draft: true, round: 1, edge: { ...edge, ownWinRate: NaN } },
       { draft: true, round: 1, edge: { ...edge, enemyWinRate: 1.1 } },
       { draft: true, round: 1, edge: { ...edge, ownHeroes: edge.ownHeroes.slice(0, 3) } },

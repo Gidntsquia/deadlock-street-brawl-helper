@@ -1,5 +1,5 @@
 import type { Hero } from '../types';
-import type { BrawlAbilityOrder, AbilityPanelData } from '../brawl/abilities';
+import { abilityOrderEvidence, type BrawlAbilityOrder, type AbilityPanelData } from '../brawl/abilities';
 import type { topItemsByTier } from '../brawl/engine';
 import { AbilityPanel } from '../components/AbilityPanel';
 import { ItemTile } from '../components/ItemTile';
@@ -45,19 +45,19 @@ export function HeroReference({
         <h2>Ability order</h2>
         {abilityOrder?.steps.length ? (
           <>
-            {abilityOrder.support ? (
-              <div className="muted">
-                Seen in {abilityOrder.support.matches} brawls, match wins{' '}
-                {(abilityOrder.support.winRate * 100).toFixed(0)}%.
-              </div>
-            ) : (
-              <div className="muted">No Street Brawl ability data for {hero.name} yet; fallback order shown.</div>
-            )}
+            <div className="muted">
+              {abilityOrderEvidence(abilityOrder)}
+              {!abilityOrder.support && '; fallback order shown'}
+            </div>
             {abilityTarget && <AbilityPanel panel={abilityTarget} className="ap-control" />}
             <ol className="brawl-ability-order">
               {abilityOrder.steps.map((step, k) => (
                 <li key={k} className={k === abilityStepNow ? 'now' : ''}>
-                  {step.ability.name} <small>(tier {step.kind.slice(-1)})</small>
+                  {step.ability.name}{' '}
+                  <small>
+                    (tier {step.kind.slice(-1)}
+                    {k >= (abilityOrder.supportedSteps ?? abilityOrder.steps.length) ? ', fallback' : ''})
+                  </small>
                 </li>
               ))}
             </ol>

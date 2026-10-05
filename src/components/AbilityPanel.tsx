@@ -16,21 +16,27 @@ export function AbilityPanel({ panel, className = '' }: { panel: AbilityPanelDat
     >
       <div className="ap-title">
         Round {panel.round}: {panel.points} points
-        {panel.availablePoints !== undefined && <span> · {panel.availablePoints ?? '?'} available</span>}
+        {panel.availablePoints !== undefined && (
+          <span>, {panel.availablePoints === null ? 'Reading' : `${panel.availablePoints} available`}</span>
+        )}
       </div>
+      <div className="ap-evidence">{panel.evidence}</div>
       {panel.slots.map((s) => (
         <div key={s.key} className="ap-col" data-ability={s.name}>
-          {s.tiers.map((st: PointState, i) => (
-            <div key={i} className={`ap-pill ap-${st}`} data-cost={COSTS[i]} data-state={st}>
-              {st === 'done' ? (
-                <span className="ap-check">✓</span>
-              ) : (
-                <>
-                  <span className="ap-bolt">◆</span> {COSTS[i]}
-                </>
-              )}
-            </div>
-          ))}
+          {s.tiers.map((state: PointState, i) => {
+            const st = panel.availablePoints === null && state === 'now' ? 'later' : state;
+            return (
+              <div key={i} className={`ap-pill ap-${st}`} data-cost={COSTS[i]} data-state={st}>
+                {st === 'done' ? (
+                  <span className="ap-check">{'\u2713'}</span>
+                ) : (
+                  <>
+                    <span className="ap-bolt">{'\u25c6'}</span> {COSTS[i]}
+                  </>
+                )}
+              </div>
+            );
+          })}
           <div className="ap-ability">
             <div className="ap-circle">
               <img src={img(s.icon)} alt={s.name} />

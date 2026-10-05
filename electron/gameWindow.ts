@@ -54,6 +54,7 @@ function loadUser32(koffi: typeof import('koffi')) {
     EnumWindows: lib.func('__stdcall', 'EnumWindows', 'bool', [koffi.pointer(WndEnumProc), 'intptr_t']),
     GetWindowTextW: lib.func('__stdcall', 'GetWindowTextW', 'int', ['void *', 'void *', 'int']),
     IsWindowVisible: lib.func('__stdcall', 'IsWindowVisible', 'bool', ['void *']),
+    GetWindowLongW: lib.func('__stdcall', 'GetWindowLongW', 'int32', ['void *', 'int']),
     GetForegroundWindow: lib.func('__stdcall', 'GetForegroundWindow', 'void *', []),
     GetDC: lib.func('__stdcall', 'GetDC', 'void *', ['void *']),
     ReleaseDC: lib.func('__stdcall', 'ReleaseDC', 'int', ['void *', 'void *']),
@@ -125,6 +126,21 @@ export function findGameWindow(title: string, exclude?: Set<bigint>): Rect | nul
     return { x: r.left, y: r.top, width: r.right - r.left, height: r.bottom - r.top };
   } catch {
     return null; // koffi missing, DLL call failed, or window closed mid-call
+  }
+}
+
+/** Whether the game window found last has no title bar and no frame (a borderless window). Null when there is no window
+ *  or the style cannot be read. A windowed game has a caption; borderless and exclusive fullscreen do not, so this alone
+ *  cannot tell those two apart (the capture being black does, see main.ts). */
+export function gameWindowIsBorderless(): boolean | null {
+  if (process.platform !== 'win32' || !cached) return null;
+  try {
+    user32 ??= loadUser32(koffi);
+    const GWL_STYLE = -16,
+      WS_CAPTION = 0xc00000;
+    return (user32.GetWindowLongW(cached.handle, GWL_STYLE) & WS_CAPTION) !== WS_CAPTION;
+  } catch {
+    return null;
   }
 }
 

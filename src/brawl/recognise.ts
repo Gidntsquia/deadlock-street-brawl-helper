@@ -41,6 +41,17 @@ export const cardAnchors = (width: number, height: number) => {
   }));
 };
 
+/** The game always draws the three cards at the same place, so the overlay and the name reads use this fixed square per
+ *  card rather than wherever the icon search landed (that moves a search step or a scale step from frame to frame).
+ *  The icon on screen is ~0.95 of BRAWL_LAYOUT.icon: measured from the hand-labelled circles in
+ *  scripts/win/frames/labels.json (radius 176 px at 2000 wide) and the live 2560 frames, whose icons centre on the anchors. */
+export const CARD_EDGE = 0.95;
+export const cardSquares = (width: number, height: number) =>
+  cardAnchors(width, height).map((a) => {
+    const edge = a.icon * CARD_EDGE;
+    return { x: a.cx - edge / 2, y: a.cy - edge / 2, edge };
+  });
+
 /** The "Use Re-Roll" pill on the draft screen, measured at 2560x1440 from the user's screenshots
  *  (screenshots/brawl/reroll-choice{1,2}.png, gitignored): a light-bordered pill roughly 1140-1420 x 913-996. */
 const REROLL_BUTTON = { x0: 1140, y0: 913, x1: 1420, y1: 996 } as const;
@@ -404,28 +415,39 @@ export interface CardRead {
   tier: number;
   rare: boolean;
   enhanced: boolean;
+  unsure?: boolean;
 }
 
 /** Reads the three draft cards of a full-screen capture. Items that share an icon are told apart by the tier numeral. */
 export function readDraftScreen(img: RGBImage, index: DecodedIndex, tierOf: (id: number) => number): CardRead[] {
-  return cardAnchors(img.width, img.height).map((a) => {
-    const match = matchIcon(img, index, a.cx, a.cy, a.icon);
-    const tier = match.score >= MIN_ICON_SCORE ? readTier(img, match) : 0;
-    // The numeral only tells twin icons apart: an icon with no twin needs none (a numeral is not always readable, e.g.
-    // when the game shows the card without one or the card is hovered).
-    const unique = match.score >= MIN_ICON_SCORE && !index.twins?.get(match.itemId)?.length;
-    const present = match.score >= SURE_ICON_SCORE || (match.score >= MIN_ICON_SCORE && (tier > 0 || unique));
-    const mk = present ? readMarkers(img, match) : { rare: false, enhanced: false, rareFrac: 0, enhancedFrac: 0 };
-    return {
-      card: a.name,
-      match,
-      present,
-      itemId: present ? resolveTwin(match.itemId, tier, index, tierOf) : 0,
-      tier,
-      rare: mk.rare,
-      enhanced: mk.enhanced,
-    };
-  });
+  return cardAnchors(img.width, img.height).map((_, slot) => readDraftSlot(img, index, tierOf, slot));
+}
+
+/** Only unresolved name slots pay for icon search. */
+export function readDraftSlot(
+  img: RGBImage,
+  index: DecodedIndex,
+  tierOf: (id: number) => number,
+  slot: number,
+): CardRead {
+  const a = cardAnchors(img.width, img.height)[slot]!;
+  let match = matchIcon(img, index, a.cx, a.cy, a.icon, undefined, { search: 12, scales: [0.92, 0.97] });
+  if (match.score < 0.85 || match.margin < 0.1) match = matchIcon(img, index, a.cx, a.cy, a.icon);
+  const tier = match.score >= MIN_ICON_SCORE ? readTier(img, match) : 0;
+  // The numeral only tells twin icons apart: an icon with no twin needs none (a numeral is not always readable, e.g.
+  // when the game shows the card without one or the card is hovered).
+  const unique = match.score >= MIN_ICON_SCORE && !index.twins?.get(match.itemId)?.length;
+  const present = match.score >= SURE_ICON_SCORE || (match.score >= MIN_ICON_SCORE && (tier > 0 || unique));
+  const mk = present ? readMarkers(img, match) : { rare: false, enhanced: false, rareFrac: 0, enhancedFrac: 0 };
+  return {
+    card: a.name,
+    match,
+    present,
+    itemId: present ? resolveTwin(match.itemId, tier, index, tierOf) : 0,
+    tier,
+    rare: mk.rare,
+    enhanced: mk.enhanced,
+  };
 }
 
 /** When several items share the matched icon (Spirit Armor / Spirit Resilience ...), pick the one whose tier matches the numeral. */
@@ -452,6 +474,46 @@ const rgb = (img: RGBImage, x: number, y: number): [number, number, number] => {
   const p = (y * img.width + x) * img.channels;
   return [img.data[p], img.data[p + 1], img.data[p + 2]];
 };
+
+/** The item name printed under a card's icon, in icon edges from the icon square's top-left: centred under the icon,
+ *  the longest names (Transcendent Cooldown, Spirit Shredder Bullets) reach 1.25 edges either side, and the line sits
+ *  1.1-1.48 edges down (the tilted right card lowest), above the ENHANCED box. `text` is how far the letters can reach:
+ *  draftRegions copies only that much, and the crop's wider margin arrives black, which reads as background. */
+export const CARD_NAME = { halfWidth: 1.4, text: 1.3, top: 1.08, bottom: 1.52 } as const;
+
+/** The name line under a card as black text on white (RGBA, with a white margin) for the OCR engine, or null when
+ *  it falls off the frame. The name is white/off-white; everything with colour (the card ring, the blue ENHANCED
+ *  label, the background art) or darkness (the text's own outline) becomes white. `line` is the name line's height
+ *  in frame px (without the margin). */
+export function cardNameCrop(
+  img: RGBImage,
+  m: IconMatch,
+): { data: Uint8Array; width: number; height: number; line: number } | null {
+  const fw = img.origin?.fullWidth ?? img.width,
+    fh = img.origin?.fullHeight ?? img.height;
+  const cx = m.x + m.edge / 2;
+  const x0 = Math.max(0, Math.round(cx - CARD_NAME.halfWidth * m.edge)),
+    x1 = Math.min(fw, Math.round(cx + CARD_NAME.halfWidth * m.edge)),
+    y0 = Math.round(m.y + CARD_NAME.top * m.edge),
+    y1 = Math.min(fh, Math.round(m.y + CARD_NAME.bottom * m.edge));
+  const w = x1 - x0,
+    h = y1 - y0;
+  if (w < 8 || h < 6) return null;
+  const pad = 12,
+    ow = w + 2 * pad,
+    oh = h + 2 * pad;
+  const data = new Uint8Array(ow * oh * 4).fill(255);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const [r, g, b] = rgb(img, x0 + x, y0 + y);
+      const hi = Math.max(r, g, b);
+      if (hi > 170 && hi - Math.min(r, g, b) < 60) {
+        const i = ((y + pad) * ow + x + pad) * 4;
+        data[i] = data[i + 1] = data[i + 2] = 0;
+      }
+    }
+  return { data, width: ow, height: oh, line: h };
+}
 
 /** Tier 1..5 read from the numeral, or 0 when no numeral is found. `m` is the icon square from matchIcon. */
 export function readTier(img: RGBImage, m: IconMatch): number {
@@ -1502,4 +1564,43 @@ export function findRerollButton(
     }
   if (xMax < xMin) return null;
   return { x0: ox + xMin, y0: oy + top, x1: ox + xMax + 1, y1: oy + bottom + 1 };
+}
+/** The big hero name on the loading screen ("JOINING THE FIGHT AS..." and then the name), as fractions of the frame
+ *  (measured on a 2000x1125 frame: the name spans x 150-790, y 425-580). */
+export const LOADING_NAME = { x0: 0.07, y0: 0.37, x1: 0.41, y1: 0.53 } as const;
+
+/** The loading screen's name box in frame px. */
+export function loadingNameRect(width: number, height: number) {
+  const { sx, sy, offsetX } = hudLayout(width, height);
+  const x = Math.floor(offsetX + LOADING_NAME.x0 * BRAWL_LAYOUT.ref.width * sx),
+    y = Math.floor(LOADING_NAME.y0 * BRAWL_LAYOUT.ref.height * sy);
+  return {
+    x,
+    y,
+    width: Math.ceil(offsetX + LOADING_NAME.x1 * BRAWL_LAYOUT.ref.width * sx) - x,
+    height: Math.ceil(LOADING_NAME.y1 * BRAWL_LAYOUT.ref.height * sy) - y,
+  };
+}
+
+/** True when a crop of the name box (RGBA or RGB) is dark with a block of warm off-white lettering, as the loading
+ *  screen's name is: a dark box with 10-55 % cream pixels. Anything else (gameplay, the shop, menus) fails one half. */
+export function looksLikeLoadingName(img: RGBImage): boolean {
+  const n = img.width * img.height;
+  if (n <= 0) return false;
+  let cream = 0,
+    dark = 0;
+  for (let i = 0; i < n; i++) {
+    const o = i * img.channels,
+      r = img.data[o]!,
+      g = img.data[o + 1]!,
+      b = img.data[o + 2]!;
+    if (r > 215 && g > 195 && b > 160 && r - b > 10 && r - b < 80) cream++;
+    else if (r < 60 && g < 60 && b < 60) dark++;
+  }
+  return cream / n > 0.1 && cream / n < 0.55 && dark / n > 0.4;
+}
+
+/** The name crop for OCR, already padded to RGBA, or null when the box is not the loading screen's. */
+export function loadingNameCrop(img: RGBImage): RGBImage | null {
+  return looksLikeLoadingName(img) ? img : null;
 }

@@ -24,14 +24,23 @@ export const NO_DATA_LABEL = 'No Street Brawl data';
 
 /** One row per score part that is not zero at two decimals. The rows sum to `Math.round(score * 100)` exactly: the
  *  rounding remainder goes to the largest row, so the tooltip always adds up to the `Score: <n>` on the plate. */
-export function breakdownRows(parts: ScoreParts, score: number, known: boolean): BreakdownRow[] {
+export function breakdownRows(
+  parts: ScoreParts,
+  score: number,
+  known: boolean,
+  enhancedBonus?: number,
+): BreakdownRow[] {
+  // With a bonus, the Enhanced row is the whole bonus and Hero fit the not-enhanced fit, matching the plate's cell.
+  const pinned = enhancedBonus !== undefined && enhancedBonus !== 0;
+  if (pinned) parts = { ...parts, enhanced: enhancedBonus, kit: parts.kit - (enhancedBonus - parts.enhanced) };
   if (!known) return [{ label: NO_DATA_LABEL, cents: 0 }];
   const rows = LABELS.map(([key, label]) => ({ label, cents: Math.round(parts[key] * 100) })).filter(
     (r) => r.cents !== 0,
   );
   const diff = Math.round(score * 100) - rows.reduce((a, r) => a + r.cents, 0);
   if (diff !== 0 && rows.length) {
-    const big = rows.reduce((a, r) => (Math.abs(r.cents) > Math.abs(a.cents) ? r : a));
+    const pool = rows.filter((r) => !(pinned && r.label === 'Enhanced'));
+    const big = (pool.length ? pool : rows).reduce((a, r) => (Math.abs(r.cents) > Math.abs(a.cents) ? r : a));
     big.cents += diff;
   }
   return rows.filter((r) => r.cents !== 0);

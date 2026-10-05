@@ -147,7 +147,7 @@ it('applies confirmed identity while cards are blocked, preserves manual choice 
   expect(screen.getByLabelText('Selected test hero').textContent).toBe('67');
   expect(screen.getByText(/Owned \(0\)/)).toBeTruthy();
   expect(onNewMatch).toHaveBeenCalledOnce();
-  expect(sent.every((state) => state.advice === null && state.reads.length === 0)).toBe(true);
+  expect(sent.every((state) => !state.advice?.ranked.length && state.reads.length === 0)).toBe(true);
 });
 afterEach(() => {
   cleanup();
@@ -250,7 +250,7 @@ it('clears old item advice after a debounced closed screen and before the abilit
     />,
   );
   await waitFor(() => expect(sent.at(-1)?.teamEdge).toEqual(beforeTeam));
-  await deliver(complete);
+  await deliver({ ...complete, transition: 'round' });
   expect(sent.at(-1)?.teamEdge).toBeNull();
   await deliver({ ...complete, transition: 'metadata', meta: { ...complete.meta!, rerollsRemaining: -1 } });
   expect(sent.at(-1)?.advice?.rerollsRemaining).toBe(1);
@@ -290,14 +290,14 @@ it('clears old item advice after a debounced closed screen and before the abilit
   expect(sent.at(-1)?.advice?.ranked).toHaveLength(3);
   expect(sent.at(-1)?.advice?.choice).toBe(2);
   await deliver({ ...tooltip, choice: 3, pending: true, pendingTransition: true, reads: [], key: '' });
-  expect(sent.at(-1)?.advice).toBeNull();
+  expect(sent.at(-1)?.advice?.ranked ?? []).toHaveLength(0);
   expect(sent.at(-1)?.reads).toEqual([]);
   expect(sent.at(-1)?.bestId).toBeNull();
   await deliver({ ...complete, choice: 3, transition: 'choice', meta: { ...complete.meta!, choice: 3 } });
   expect(sent.at(-1)?.advice?.choice).toBe(3);
   expect(sent.at(-1)?.advice?.rerollsRemaining).toBe(1);
   await deliver({ ...tooltip, choice: 3, pending: true, pendingTransition: true, reads: [], key: '' });
-  expect(sent.at(-1)?.advice).toBeNull();
+  expect(sent.at(-1)?.advice?.ranked ?? []).toHaveLength(0);
   await deliver({
     ...complete,
     choice: 3,
@@ -390,18 +390,18 @@ it('F8 clears current advice immediately, forces independent reset reads, and re
   expect(onNewMatch).not.toHaveBeenCalled();
   expect(screen.getByRole('heading', { name: 'Owned (1)' })).toBeTruthy();
   await act(async () => detectRun!());
-  expect(sent.at(-1)?.advice).toBeNull();
+  expect(sent.at(-1)?.advice?.ranked ?? []).toHaveLength(0);
   expect(sent.at(-1)?.reads).toEqual([]);
   let reset = workerMessages.filter((m): m is Extract<WorkerIn, { type: 'reset' }> => m.type === 'reset').at(-1)!;
   expect(reset.captureEpoch).toBeGreaterThan(initialEpoch);
   await deliver(full);
-  expect(sent.at(-1)?.advice).toBeNull();
+  expect(sent.at(-1)?.advice?.ranked ?? []).toHaveLength(0);
   await act(async () => detectRun!());
   const previousEpoch = reset.captureEpoch;
   reset = workerMessages.filter((m): m is Extract<WorkerIn, { type: 'reset' }> => m.type === 'reset').at(-1)!;
   expect(reset.captureEpoch).toBeGreaterThan(previousEpoch!);
   await deliver({ ...full, captureEpoch: previousEpoch });
-  expect(sent.at(-1)?.advice).toBeNull();
+  expect(sent.at(-1)?.advice?.ranked ?? []).toHaveLength(0);
   await deliver({
     ...full,
     captureEpoch: reset.captureEpoch,
@@ -411,7 +411,7 @@ it('F8 clears current advice immediately, forces independent reset reads, and re
     reads: [],
     meta: null,
   });
-  expect(sent.at(-1)?.advice).toBeNull();
+  expect(sent.at(-1)?.advice?.ranked ?? []).toHaveLength(0);
   await deliver({
     ...full,
     captureEpoch: reset.captureEpoch,
@@ -488,7 +488,7 @@ it('keeps capture alive beyond the idle grace while a draft is pending, then sto
   });
   expect(track.stop).not.toHaveBeenCalled();
   expect(captureIdle).not.toHaveBeenCalled();
-  expect(screen.getByText('Draft — reading items…')).toBeTruthy();
+  expect(screen.getByText('Draft: reading items…')).toBeTruthy();
   await act(async () =>
     listener!({
       data: {
@@ -498,15 +498,15 @@ it('keeps capture alive beyond the idle grace while a draft is pending, then sto
       },
     } as MessageEvent<WorkerOut>),
   );
-  expect(screen.getByText('Draft — top name unread (2/3); reveal the names or press F8')).toBeTruthy();
-  expect(sent.at(-1)?.advice).toBeNull();
+  expect(screen.getByText('Draft - top name unread (2/3); reveal the names or press F8')).toBeTruthy();
+  expect(sent.at(-1)?.advice?.ranked ?? []).toHaveLength(0);
   expect(sent.at(-1)?.reads).toHaveLength(0);
   await act(async () =>
     listener!({
       data: { ...pending, captureEpoch: -1, itemReadStatus: { confirmed: 0, phase: 'reading', unresolved: [0, 1, 2] } },
     } as MessageEvent<WorkerOut>),
   );
-  expect(screen.getByText('Draft — top name unread (2/3); reveal the names or press F8')).toBeTruthy();
+  expect(screen.getByText('Draft - top name unread (2/3); reveal the names or press F8')).toBeTruthy();
   await act(async () => listener!({ data: { ...pending, shop: false, pending: false } } as MessageEvent<WorkerOut>));
   await act(async () => {
     await vi.advanceTimersByTimeAsync(5000);
@@ -552,7 +552,7 @@ it('publishes first preparation and a partial roster before item acceptance, the
   await deliver(pending);
   expect(sent.at(-1)).toMatchObject({
     teamVisible: true,
-    advice: null,
+    advice: expect.objectContaining({ ranked: [] }),
     reads: [],
     teamEdge: { ownWinRate: null, deltaPp: null },
   });
@@ -562,7 +562,7 @@ it('publishes first preparation and a partial roster before item acceptance, the
     winRate: null,
     unavailable: 'loading-data',
   });
-  expect(screen.getByText('Draft — reading items…')).toBeTruthy();
+  expect(screen.getByText('Draft: reading items…')).toBeTruthy();
   await act(async () => load(readJson('analytics/brawl/tier-list.json')));
   await waitFor(() => expect(sent.at(-1)?.teamEdge?.ownHeroes[0]?.winRate).toEqual(expect.any(Number)));
   expect(sent.at(-1)?.teamEdge?.deltaPp).toBeNull();
@@ -582,7 +582,7 @@ it('publishes first preparation and a partial roster before item acceptance, the
   expect(sent.at(-1)?.teamEdge ?? null).toBeNull();
   await deliver(pending);
   expect(sent.at(-1)?.teamEdge ?? null).toBeNull();
-  expect(sent.every((s) => s.advice === null && s.reads.length === 0)).toBe(true);
+  expect(sent.every((s) => !s.advice?.ranked.length && s.reads.length === 0)).toBe(true);
 });
 it('retains the first-round team panel through the real preparation phase while item advice clears independently', async () => {
   const heroes = readJson('heroes.json') as Hero[],

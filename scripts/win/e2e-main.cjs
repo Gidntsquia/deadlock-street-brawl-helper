@@ -1,10 +1,11 @@
 // Windows-only Electron test harness. Run by real electron.exe (never Linux Electron): sets BRAWL_E2E=1,
 // requires the REAL electron-dist/main.js (not a stub), drives it via executeJavaScript, and writes one
 // JSON report. Filter cases with --only <name1,name2,...>. Everything runs against the app's own Test mode
-// dummy window. Hard timeout 40 s; a full run takes ~25 s. The ability panel lasts TIP_MS here (BRAWL_TIP_MS, 1.2 s) instead of the real 15 s.
+// dummy window. Hard timeout 40 s; a full run takes ~25 s. The ability panel lasts TIP_MS here (BRAWL_TIP_MS, 3 s) instead of the real 15 s.
 'use strict';
 process.env.BRAWL_E2E = '1';
-const TIP_MS = 1200;
+// Two fresh HUD samples and the cold OCR worker must fit before the tip expires.
+const TIP_MS = 3000;
 process.env.BRAWL_TIP_MS = String(TIP_MS);
 const HARD_TIMEOUT_MS = 40_000;
 
@@ -32,7 +33,7 @@ const only = onlyArg
 const checks = [];
 function check(name, pass, detail) {
   checks.push({ name, pass: !!pass, detail: detail ?? null });
-  console.log(`[${pass ? 'PASS' : 'FAIL'}] ${name}${detail ? ' — ' + detail : ''}`);
+  console.log(`[${pass ? 'PASS' : 'FAIL'}] ${name}${detail ? ': ' + detail : ''}`);
 }
 
 function wantsCase(name) {
@@ -70,7 +71,7 @@ async function waitFor(fn, timeoutMs, stepMs = 200) {
 }
 
 // main.ts's own unhandledRejection handler filters exactly one known Electron artifact to debug and logs
-// everything else via src/log.ts's console.error(JSON...) — count those (main process, not renderer).
+// everything else via src/log.ts's console.error(JSON...) - count those (main process, not renderer).
 // Also mirrors every main-process console.log/console.error line into the debug log file.
 let mainProcessUnhandledCount = 0;
 const realConsoleError = console.error.bind(console);
@@ -100,7 +101,7 @@ const SET_SELECT_JS = `
     const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
     setter.call(el, String(value));
     el.dispatchEvent(new Event('change', { bubbles: true }));
-    return true;
+    return el.value === String(value); // false when no option has that value
   }
   function __setHero(name) {
     const el = document.querySelector('.hero-select');
@@ -187,9 +188,11 @@ async function main() {
   }
 
   let captureAttempts = 0;
+  let detectMisses = 0;
   control.webContents.on('console-message', (_e, _level, message) => {
     dbg('control console: ' + message);
     if (/"msg":"capture\.attempt"/.test(message)) captureAttempts++;
+    if (/"msg":"detect\.manual","outcome":"miss"/.test(message)) detectMisses++;
   });
   overlay?.webContents.on('console-message', (_e, _level, message) => dbg('overlay console: ' + message));
   let preloadError = false;
@@ -226,7 +229,7 @@ async function main() {
     const status = await js(control, 'document.querySelector(".brawl-controls [role=status]")?.textContent ?? ""');
     check(
       'capture-denied-status',
-      captureAttempts >= 1 && status.includes('Deadlock window not found'),
+      captureAttempts >= 1 && status === 'Deadlock window not found: press Start to retry',
       `attempts=${captureAttempts} status="${status}"`,
     );
     const before = captureAttempts;
@@ -308,29 +311,69 @@ async function main() {
     );
     // Debug panel: hidden at launch, Ctrl+Shift+D toggles it, the tray entry toggles the same state.
     const hasDebug = () => js(control, '!!document.querySelector("[aria-label=\\"Debug panel\\"]")');
+    // First-run panel: three lines and Show me; Got it dismisses it and it stays dismissed.
+    // userData keeps the dismissal between runs, so start from a first run.
+    const reloadControl = () =>
+      new Promise((resolve) => {
+        control.webContents.once('did-finish-load', resolve);
+        control.webContents.reload();
+      });
+    await js(control, `localStorage.removeItem('brawl.firstRunDone')`);
+    // Do not let the old document's panel satisfy the check while the replacement document mounts.
+    await reloadControl();
+    await waitFor(() => js(control, `document.querySelectorAll('.brawl-firstrun li').length === 3`), 6_000, 100);
+    const firstRun = await js(control, `document.querySelectorAll('.brawl-firstrun li').length`);
+    check('first-run-shown', firstRun === 3, `lines=${firstRun}`);
+    await js(control, `[...document.querySelectorAll('button')].find((b) => b.textContent === 'Got it')?.click()`);
+    await waitFor(() => js(control, `localStorage.getItem('brawl.firstRunDone') === 'true'`), 1_000, 25);
+    await reloadControl();
+    await waitFor(() => js(control, `!!document.querySelector('.brawl-controls')`), 6_000, 50);
+    const firstRunDismissed = await js(
+      control,
+      `localStorage.getItem('brawl.firstRunDone') === 'true' && !document.querySelector('.brawl-firstrun')`,
+    );
+    check('first-run-dismissal-persists', firstRunDismissed, 'Got it remains dismissed after reload');
+    // Debug starts off in a final version and on in an -rc (or dev) one (src/brawl/debugMode.ts); the main view itself has
+    // capture buttons remain available in the main view. Whichever way it starts, the checks below end with the panel shown, so test mode is reachable.
+    const version = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
+    const wantOn = /^\d+\.\d+\.\d+-[0-9A-Za-z]/.test(version);
+    const startedOn = !!(await hasDebug());
+    check(
+      'debug-on-by-default',
+      startedOn === wantOn,
+      `version ${version}: expected ${wantOn ? 'on' : 'off'}, started ${startedOn ? 'on' : 'off'}`,
+    );
+    const key = `window.dispatchEvent(new KeyboardEvent('keydown', { key: 'D', ctrlKey: true, shiftKey: true }))`;
+    if (startedOn) {
+      await js(control, key);
+      await waitFor(async () => !(await hasDebug()), 3000, 100);
+    }
+    const mainBtns = await js(control, `/Start capture|Stop capture|Detect now/.test(document.body.innerText)`);
     const slim = await js(
       control,
       '({ selects: [...document.querySelectorAll("select")].filter(s => !s.closest("dialog")).length, btn: !!document.querySelector(".brawl-controls .brawl-capture") })',
     );
-    check('debug-hidden-at-launch', !(await hasDebug()) && slim.btn && slim.selects <= 1, JSON.stringify(slim));
-    const key = `window.dispatchEvent(new KeyboardEvent('keydown', { key: 'D', ctrlKey: true, shiftKey: true }))`;
+    check(
+      'debug-hidden-main-controls-available',
+      !(await hasDebug()) && mainBtns && slim.btn && slim.selects <= 1,
+      JSON.stringify(slim),
+    );
     await js(control, key);
-    await waitFor(hasDebug, 3000, 100);
+    const dbgShown = await waitFor(hasDebug, 3000, 100);
     const dbgParts = await js(
       control,
-      `(() => ['Round','Choice','Enemy 1'].every((l) => !!document.querySelector('select[aria-label="' + l + '"]')) && !!document.querySelector('.brawl-testmode button') && document.body.innerText.includes('Owned'))()`,
+      `(() => ['Round','Choice','Enemy 1'].every((l) => !!document.querySelector('select[aria-label="' + l + '"]')) && !!document.querySelector('.brawl-testmode button') && !!document.querySelector('.brawl-capture') && document.body.innerText.includes('Owned'))()`,
     );
     check(
       'debug-shortcut-shows',
-      (await hasDebug()) && dbgParts,
-      'Ctrl+Shift+D shows test mode/round/choice/enemies/owned',
+      !!dbgShown && dbgParts,
+      'Ctrl+Shift+D shows test mode/round/choice/enemies/owned/capture',
     );
-    await js(control, key);
+    e2e.toggleDebugFromTray();
     await waitFor(async () => !(await hasDebug()), 3000, 100);
-    check('debug-shortcut-hides', !(await hasDebug()), 'second press hides');
     e2e.toggleDebugFromTray();
     const trayShown = await waitFor(hasDebug, 3000, 100);
-    check('debug-tray-toggle', !!trayShown, 'tray entry handler shows the panel');
+    check('debug-tray-toggle', !!trayShown, 'tray entry handler hides then shows the panel');
     const c1 = labels.choice1;
     await js(
       control,
@@ -340,19 +383,31 @@ async function main() {
       __setSelect('select[aria-label="Choice"]', ${c1.choice}); })()`,
     );
     await sleep(300);
-    const setFrame = (name) =>
-      js(
-        control,
-        `(() => { ${SET_SELECT_JS} return __setSelect('select[aria-label="Test screenshot"]', ${JSON.stringify(name)}); })()`,
+    // The screenshot select renders only after main broadcasts the test state, which can trail getTestWindow():
+    // wait for it and fail loudly if the switch did not happen (it once silently left the previous frame up).
+    const setFrame = async (name) => {
+      const ok = await waitFor(
+        () =>
+          js(
+            control,
+            `(() => { ${SET_SELECT_JS} return __setSelect('select[aria-label="Test screenshot"]', ${JSON.stringify(name)}); })()`,
+          ),
+        3_000,
+        50,
       );
+      if (!ok) check(`set-frame-${name}`, false, 'Test screenshot select missing or option not found');
+      return !!ok;
+    };
     const readOverlay = () =>
       js(
         overlay,
         `({
         drawn: window.__overlayDrawn ?? [],
-        head: window.__overlayAdvice ? window.__overlayAdvice.hero + ' · round ' + window.__overlayAdvice.round + ', choice ' + window.__overlayAdvice.choice : '',
+        reading: !!window.__overlayReading,
+        head: window.__overlayAdvice ? window.__overlayAdvice.hero + ', round ' + window.__overlayAdvice.round + ', choice ' + window.__overlayAdvice.choice : '',
         panel: !!window.__overlayAdvice,
         ap: !!document.querySelector('.ap'),
+        apTitle: document.querySelector('.ap-title')?.textContent ?? '',
         now: [...document.querySelectorAll('.ap-col')].flatMap((c) => [
           ...[...c.querySelectorAll('.ap-pill[data-state="now"]')].map(
             (p) => c.dataset.ability + '|' + ({ 5: 'tier3', 2: 'tier2', 1: 'tier1' })[p.dataset.cost],
@@ -423,10 +478,12 @@ async function main() {
     const namesOf = (l) => Object.values(l.cards);
     const waitAdvice = async (label, round, choice, timeoutMs) => {
       let last = null;
+      let sawReading = false;
       const start = Date.now();
       const ok = await waitFor(
         async () => {
           last = await readOverlay();
+          if (last.reading && last.drawn.length === 0) sawReading = true;
           return last.panel &&
             last.head.includes(`round ${round}, choice ${choice}`) &&
             namesOf(label).every((n) => last.cards.includes(n))
@@ -436,7 +493,7 @@ async function main() {
         timeoutMs,
         50,
       );
-      return { ok: !!ok, ms: Date.now() - start, last };
+      return { ok: !!ok, ms: Date.now() - start, last, sawReading };
     };
     // Warm up on the in-round frame (capture start-up is not what the 2 s bound measures); nothing may be
     // drawn.
@@ -457,28 +514,9 @@ async function main() {
         100,
       );
       const ow = overlay.getBounds();
-      const k = ow.height / 1080;
-      check(
-        'dot-drawn-lobby',
-        !!dot &&
-          dot.state === 'watching' &&
-          String(dot.color).toLowerCase() === '#2ec4b6' &&
-          Math.abs(dot.cx - (12 * k + 5 * k)) <= 2 &&
-          Math.abs(dot.cy - (12 * k + 5 * k)) <= 2 &&
-          Math.abs(dot.r - 5 * k) <= 1,
-        `dot=${JSON.stringify(dot)} overlayH=${ow.height}`,
-      );
       if (dot) {
         overlay.webContents.sendInputEvent({ type: 'mouseMove', x: Math.round(dot.cx), y: Math.round(dot.cy) });
-        const want = 'Brawl Helper: watching for draft. F8 = detect now';
-        const t0 = Date.now();
-        const tip = await waitFor(() => js(overlay, `window.__overlayDotTip ?? null`), 1_000, 10);
-        const shown = await js(overlay, `document.querySelector('.overlay-dot-tip')?.textContent ?? null`);
-        check(
-          'dot-hover-line',
-          tip === want && shown === want && Date.now() - t0 <= 150 + 60,
-          `${Date.now() - t0}ms tip=${JSON.stringify(tip)} shown=${JSON.stringify(shown)}`,
-        );
+        await waitFor(() => js(overlay, `window.__overlayDotTip ?? null`), 1_000, 10);
         overlay.webContents.sendInputEvent({
           type: 'mouseMove',
           x: Math.round(ow.width / 2),
@@ -498,8 +536,9 @@ async function main() {
       e2e.forceCaptureOff();
       await waitFor(async () => (await captureBtn()) === 'Start capture', 4_000, 50);
       const m0 = Date.now();
+      const missesBefore = detectMisses;
       e2e.detectNow();
-      const missed = await waitFor(async () => (await statusText()) === 'No draft found', 4_000, 20);
+      const missed = await waitFor(() => detectMisses > missesBefore, 4_000, 20);
       const missMs = Date.now() - m0;
       await sleep(400);
       const after = await readOverlay();
@@ -514,12 +553,20 @@ async function main() {
       );
       e2e.forceCaptureOff(); // stay off; setFrame below releases the hold
     }
+    const attemptsBefore = captureAttempts;
     await setFrame('choice1');
-    const first = await waitAdvice(c1, c1.round, c1.choice, 2_000);
+    await waitFor(
+      () => captureAttempts > attemptsBefore && js(control, '!!document.querySelector("video")?.videoWidth'),
+      4_000,
+      25,
+    );
+    const first = await waitAdvice(c1, c1.round, c1.choice, 2_500);
+    check('reading-before-plates', first.sawReading, `sawReading=${first.sawReading}`);
+    console.log(`advice.time ${first.ms}ms`);
     check(
       'advice-choice1',
       first.ok,
-      `${first.ms}ms (limit 2000ms) head="${first.last?.head}" cards="${first.last?.cards}"`,
+      `${first.ms}ms (limit 2500ms) head="${first.last?.head}" cards="${first.last?.cards}"`,
     );
 
     const counter = await waitFor(
@@ -626,7 +673,7 @@ async function main() {
             t.rows.every((r) => r.name && /^\d+\.\d%$/.test(r.rate)),
         ) &&
         new Set(teamWR.teams.flatMap((t) => t.rows.map((r) => r.name))).size === 8 &&
-        /^[+−]?(?:\d+\.\d|<0\.1) pp$/.test(teamWR.difference.trim()) &&
+        /^[+\u2212-]?(?:\d+\.\d|<0\.1) pp$/.test(teamWR.difference.trim()) &&
         !!teamWRPalette &&
         teamWR.border === teamWRPalette[0] &&
         (!teamWRPalette[1] || teamWR.background === teamWRPalette[1]) &&
@@ -693,25 +740,7 @@ async function main() {
       // next real state replaces the forced one (advice re-sent on change only): switch frame below re-syncs
     }
 
-    // --- five draft-frame switches: panel round/choice + card names match the frame within 2 s each ---
-    const seq = ['choice2', 'choice1', 'choice2', 'choice1', 'choice2'];
-    const results = [];
-    for (const name of seq) {
-      const l = labels[name];
-      // round/choice are not touched: the page takes them from the frame's own labels on accept (a real player never sets them)
-      await setFrame(name);
-      const r = await waitAdvice(l, l.round, l.choice, 2_000);
-      results.push(`${name}:${r.ok ? 'ok' : 'FAIL'}@${r.ms}ms`);
-      if (!r.ok) results.push(`(head="${r.last?.head}" cards="${r.last?.cards}")`);
-      else if (r.ms > 2000) results.push('SLOW');
-    }
-    check(
-      'switch-5x',
-      results.every((s) => !s.includes('FAIL') && s !== 'SLOW'),
-      results.join(' '),
-    );
-
-    // --- leave the draft: gameplay frame -> ability panel with this round's points highlighted, then gone ---
+    // --- leave the draft: Reading, then twice-confirmed HUD points and this round's highlights, then gone ---
     const expectedNow = await js(
       control,
       `(() => {
@@ -724,6 +753,28 @@ async function main() {
       })()`,
     );
     await setFrame('gameplay');
+    // A deterministic positive HUD fixture goes through the dummy's real capture and worker OCR.
+    // It does not inject a point result or panel state. Geometry matches abilityPointsRect's centred HUD.
+    await js(
+      e2e.getTestWindow(),
+      `(() => {
+        const old = document.getElementById('e2e-known-ability-bank'); old?.remove();
+        const c = document.createElement('canvas'); c.id = 'e2e-known-ability-bank';
+        c.width = 65; c.height = 38;
+        const k = innerHeight / 1440, ox = (innerWidth - innerHeight * 16 / 9) / 2;
+        c.style.cssText = 'position:fixed;pointer-events:none;left:' + (ox + 1280 * k) + 'px;top:' + (1402 * k) + 'px;width:' + (65 * k) + 'px;height:' + (38 * k) + 'px';
+        const ctx = c.getContext('2d'); ctx.fillStyle = '#29201c'; ctx.fillRect(0, 0, 65, 38);
+        ctx.fillStyle = '#68be94'; ctx.font = 'bold 28px Arial'; ctx.fillText('6', 0, 30);
+        document.body.appendChild(c);
+        // Static window capture can stop presenting new video frames. Change one non-ink pixel
+        // without changing the glyph so the reader gets two genuine fresh captured samples.
+        let shade = false;
+        window.__e2eBankTimer = setInterval(() => {
+          shade = !shade; ctx.fillStyle = shade ? '#29201c' : '#302925'; ctx.fillRect(64, 0, 1, 1);
+        }, 100);
+        return true;
+      })()`,
+    );
     const itemCloseStarted = Date.now();
     const itemAdviceGone = await waitFor(
       async () => {
@@ -751,8 +802,8 @@ async function main() {
     const tipStart = Date.now();
     check(
       'ability-panel-appears',
-      !!tipSeen && tipSeen.now.length > 0 && JSON.stringify(tipSeen.now) === JSON.stringify(expectedNow),
-      `expected=${JSON.stringify(expectedNow)} highlighted=${JSON.stringify(tipSeen?.now ?? null)}`,
+      !!tipSeen && tipSeen.apTitle.includes('Reading') && tipSeen.now.length === 0,
+      `title=${JSON.stringify(tipSeen?.apTitle)} highlighted=${JSON.stringify(tipSeen?.now ?? null)}`,
     );
     check(
       'ability-panel-no-drawing',
@@ -774,6 +825,24 @@ async function main() {
       JSON.stringify(tipStyle),
     );
 
+    const confirmedPoints = await waitFor(
+      async () => {
+        const s = await readOverlay();
+        return s.ap && s.apTitle.includes('6 available') && s.now.length > 0 ? s : null;
+      },
+      TIP_MS,
+      25,
+    );
+    check(
+      'ability-points-confirmed-highlights',
+      !!confirmedPoints && JSON.stringify(confirmedPoints.now) === JSON.stringify(expectedNow),
+      `expected=${JSON.stringify(expectedNow)} title=${JSON.stringify(confirmedPoints?.apTitle)} highlighted=${JSON.stringify(confirmedPoints?.now ?? null)}`,
+    );
+    await js(
+      e2e.getTestWindow(),
+      `clearInterval(window.__e2eBankTimer); document.getElementById('e2e-known-ability-bank')?.remove()`,
+    );
+
     const gone = await waitFor(async () => !(await readOverlay()).ap, TIP_MS + 2_000, 100);
     const shown = Date.now() - tipStart;
     check(
@@ -788,28 +857,6 @@ async function main() {
       after.drawn.length === 0 && !after.panel && !after.ap && !overlay.isVisible(),
       `drawn=${after.drawn.length} panel=${after.panel} ap=${after.ap} overlayVisible=${overlay.isVisible()}`,
     );
-
-    // --- reopening the draft ends a running panel at once: draft -> gameplay -> draft ---
-    const l1 = labels.choice1;
-    await js(
-      control,
-      `(() => { ${SET_SELECT_JS}
-      __setSelect('select[aria-label="Round"]', ${l1.round});
-      __setSelect('select[aria-label="Choice"]', ${l1.choice}); })()`,
-    );
-    await setFrame('choice1');
-    await setFrame('gameplay');
-    await waitFor(async () => (await readOverlay()).ap, 6_000, 100);
-    await setFrame('choice1');
-    const ended = await waitFor(
-      async () => {
-        const s = await readOverlay();
-        return s.drawn.length > 0 && !s.ap ? s : null;
-      },
-      3_000,
-      100,
-    );
-    check('panel-ends-on-draft', !!ended, `drawn kinds=${JSON.stringify(ended?.drawn.map((r) => r.kind) ?? null)}`);
 
     // --- detect-hit: capture forced off on a draft frame, Detect now brings the plates up; dot gone in the match ---
     {

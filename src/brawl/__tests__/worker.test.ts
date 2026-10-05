@@ -11,6 +11,7 @@ import { cardAnchors } from '../recognise';
 import { stopItemNameOCR } from '../../local/cardNameOcr';
 
 const state = vi.hoisted(() => ({
+  markerSlot: null as number | null,
   self: 1,
   selfSide: 'left' as 'left' | 'right',
   selfSlot: 0,
@@ -31,6 +32,7 @@ const state = vi.hoisted(() => ({
   visible: 3,
   actualNameOcr: false,
   nameReads: vi.fn(),
+  primaryNameReads: vi.fn(),
   inventoryReader: vi.fn(),
   cardReader: vi.fn(),
   metadataReader: vi.fn(),
@@ -40,6 +42,14 @@ vi.mock('../recognise', async (original) => {
   return {
     ...actual,
     decodeIconIndex: actual.decodeIconIndex,
+    readMarkers: (img: import('../recognise').RGBImage, m: import('../recognise').IconMatch) => {
+      const value = actual.readMarkers(img, m);
+      const nearest = actual
+        .cardAnchors(img.width, img.height)
+        .map((a, slot) => ({ slot, distance: Math.abs(a.cx - m.x - m.edge / 2) }))
+        .sort((a, b) => a.distance - b.distance)[0]!.slot;
+      return state.markerSlot === nearest ? { ...value, enhanced: true } : value;
+    },
     readRoundChoice: (img: import('../recognise').RGBImage) =>
       state.actualLabels ? actual.readRoundChoice(img) : { round: state.round, choice: state.choice },
     readPlayerHero: (img: import('../recognise').RGBImage, index: import('../recognise').DecodedIndex) => {
@@ -51,19 +61,21 @@ vi.mock('../recognise', async (original) => {
       state.inventoryReader();
       return state.inventory.map((itemId, slot) => ({ itemId, slot }));
     },
-    readDraftScreen: (
+    readDraftSlot: (
       img: import('../recognise').RGBImage,
       index: import('../recognise').DecodedIndex,
       tierOf: (id: number) => number,
+      slot: number,
     ) => {
       state.cardReader();
-      if (state.actualCards) return actual.readDraftScreen(img, index, tierOf);
-      return state.cards.map((itemId, slot) => ({
+      if (state.actualCards) return actual.readDraftSlot(img, index, tierOf, slot);
+      const itemId = state.cards[slot]!;
+      return {
         itemId,
         present: slot < state.visible,
         enhanced: false,
         match: { itemId, score: state.cardScores[slot] ?? state.cardScore, margin: 0.3 },
-      })) as CardRead[];
+      } as CardRead;
     },
     readDraftMeta: (...args: Parameters<typeof actual.readDraftMeta>) => {
       state.metadataReader();
@@ -78,7 +90,26 @@ vi.mock('../recognise', async (original) => {
     },
   };
 });
-vi.mock('../ocr', () => ({ warmOCR: vi.fn(), terminateOCR: vi.fn() }));
+vi.mock('../ocr', async (original) => {
+  const actual = await original<typeof import('../ocr')>();
+  return {
+    ...actual,
+    warmOCR: vi.fn(),
+    terminateOCR: actual.terminateOCR,
+    readCardName: (...args: Parameters<typeof actual.readCardName>) => {
+      state.primaryNameReads(...args);
+      if (state.actualNameOcr) return actual.readCardName(...args);
+      if (state.actualCards) return Promise.resolve('');
+      const slot = args[1] ?? 0;
+      const id = state.cards[slot]!;
+      return Promise.resolve(
+        slot < state.visible && (state.cardScores[slot] ?? state.cardScore) >= 0.82
+          ? (items.find((item) => item.id === id)?.name ?? `Test Card ${id}`)
+          : '',
+      );
+    },
+  };
+});
 vi.mock('../../local/cardNameOcr', async (original) => {
   const actual = await original<typeof import('../../local/cardNameOcr')>();
   return {
@@ -117,6 +148,7 @@ const frame = async (elapsed = 250) => {
   await handle({
     data: { type: 'frame', width: frameWidth, height: frameHeight, regions, prefer: [] },
   } as unknown as MessageEvent<WorkerIn>);
+  for (let i = 0; i < 10; i++) await Promise.resolve();
   return outputs
     .slice(before)
     .filter((m): m is FrameResult => m.type === 'result')
@@ -171,9 +203,11 @@ const namePixels = (visible: boolean, slot?: number) => {
   }
 };
 const accept = async () => {
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < 100; i++) {
     const r = await frame();
     if (r.accepted) return r;
+    if (state.actualNameOcr)
+      await new Promise((resolve) => import('node:timers').then(({ setTimeout }) => setTimeout(resolve, 200)));
   }
   throw new Error('Offer never settled');
 };
@@ -187,19 +221,35 @@ const rosterPixels = (value: number) => {
   new Uint8Array(region.buffer).fill(value);
 };
 const cardPixels = (value: number) => {
-  for (const region of regions.filter((r) => r.y > 300 && r.height > 100 && r.y < 800))
-    new Uint8Array(region.buffer).fill(value);
+  for (const region of regions.filter((r) => r.y > 300 && r.height > 100 && r.y < 800)) {
+    const pixels = new Uint8Array(region.buffer);
+    pixels.fill(value);
+    if (value > 0)
+      for (let y = 0; y < region.height; y++)
+        for (let x = 0; x < region.width; x++)
+          if (((x >> 3) + (y >> 3)) % 2) {
+            const i = (y * region.width + x) * 4;
+            const other = value < 60 ? value + 60 : value - 60;
+            pixels[i] = pixels[i + 1] = pixels[i + 2] = other;
+            pixels[i + 3] = 255;
+          }
+  }
 };
 const closeDraft = async () => {
   state.choice = 0;
+  namePixels(false);
+  cardPixels(0);
   await frame();
   vi.advanceTimersByTime(300);
   await frame();
   state.choice = 1;
+  namePixels(true);
+  cardPixels(80);
 };
 beforeEach(async () => {
   vi.resetModules();
   vi.useFakeTimers();
+  state.markerSlot = null;
   state.self = 1;
   state.selfSide = 'left';
   state.selfSlot = 0;
@@ -220,6 +270,7 @@ beforeEach(async () => {
   state.visible = 3;
   state.actualNameOcr = false;
   state.nameReads.mockReset();
+  state.primaryNameReads.mockClear();
   state.inventoryReader.mockClear();
   state.cardReader.mockClear();
   state.metadataReader.mockClear();
@@ -227,6 +278,7 @@ beforeEach(async () => {
   frameWidth = 2560;
   frameHeight = 1440;
   regions = draftRegions(2560, 1440).map((r) => ({ ...r, buffer: new ArrayBuffer(r.width * r.height * 4) }));
+  cardPixels(80);
   namePixels(true);
   vi.stubGlobal('self', {
     addEventListener: (_: string, listener: typeof handle) => {
@@ -240,7 +292,10 @@ beforeEach(async () => {
       type: 'init',
       index: {
         ...JSON.parse(readFileSync('public/data/brawl-icons.json', 'utf8')),
-        names: Object.fromEntries(items.map((i) => [i.id, i.name])),
+        names: {
+          ...Object.fromEntries(items.map((i) => [i.id, i.name])),
+          ...Object.fromEntries([101, 102, 103, 201, 202, 203, 301, 302, 303].map((id) => [id, `Test Card ${id}`])),
+        },
       } as IconIndex,
       tiers: Object.fromEntries(items.map((i) => [i.id, i.item_tier])),
       intervalMs: 100,
@@ -248,6 +303,7 @@ beforeEach(async () => {
   } as MessageEvent<WorkerIn>);
 });
 afterEach(async () => {
+  await handle({ data: { type: 'stop' } } as MessageEvent<WorkerIn>);
   await stopItemNameOCR();
   vi.clearAllTimers();
   vi.useRealTimers();
@@ -255,6 +311,29 @@ afterEach(async () => {
 });
 
 describe('worker confirmed state', () => {
+  it('keeps stale readable names pending while every physical card core is blank', async () => {
+    cardPixels(0);
+    namePixels(true);
+    for (let i = 0; i < 8; i++) expect(await frame()).toMatchObject({ accepted: false, key: '', reads: [] });
+    expect(state.primaryNameReads).toHaveBeenCalledTimes(3);
+    expect(state.cardReader).not.toHaveBeenCalled();
+    cardPixels(100);
+    expect(await accept()).toMatchObject({ key: '101,102,103' });
+  });
+  it('updates late modifiers as metadata once, retains them under hover and resets on a new offer', async () => {
+    const first = await accept();
+    state.markerSlot = 1;
+    const late = await frame();
+    expect(late).toMatchObject({ accepted: true, transition: 'metadata', key: first.key });
+    expect(late.reads[1]!.enhanced).toBe(true);
+    state.markerSlot = null;
+    expect((await frame()).reads[1]!.enhanced).toBe(true);
+    state.choice = 2;
+    state.cards = [201, 202, 203];
+    cardPixels(100);
+    const next = await accept();
+    expect(next.reads.every((r) => !r.enhanced)).toBe(true);
+  });
   it('atomically retains exact corrected IDs after an initial name failure on identical pixels', async () => {
     const wrong = itemByName('Extra Spirit').id;
     const correct = itemByName('Quicksilver Reload').id;
@@ -267,16 +346,16 @@ describe('worker confirmed state', () => {
     expect(await frame(1001)).toMatchObject({ accepted: false, key: '', reads: [] });
     const committed = await accept();
     expect(committed.key).toBe(`${state.cards[0]},${correct},${state.cards[2]}`);
-    expect(committed.reads[1]).toMatchObject({ itemId: correct, match: { itemId: correct, score: 0.6 } });
+    expect(committed.reads[1]).toMatchObject({ itemId: correct, match: { itemId: correct, score: 0 } });
     const anchor = { ...committed.reads[1]!.match };
-    expect(state.cardReader).toHaveBeenCalledTimes(1); // all retry frames reuse the original pixel anchor
+    expect(state.cardReader).not.toHaveBeenCalled(); // all retry frames reuse the original pixel anchor
     expect(state.nameReads).toHaveBeenCalledTimes(2);
     for (let i = 0; i < 3; i++) {
       const next = await frame();
       expect(next.key).toBe(committed.key);
       expect(next.reads[1]!.match).toEqual(anchor);
     }
-    expect(state.cardReader).toHaveBeenCalledTimes(1);
+    expect(state.cardReader).not.toHaveBeenCalled();
     expect(state.nameReads).toHaveBeenCalledTimes(2);
   });
   it('confirms real Paige before a weak card can qualify, and publishes only player metadata', async () => {
@@ -342,8 +421,9 @@ describe('worker confirmed state', () => {
     state.self = 76;
     state.selfSlot = 2;
     state.team = [10, 11, 76, 12];
-    expect((await frame()).meta?.self).toBe(0);
-    const confirmed = await accept();
+    const confirming = await frame();
+    expect(confirming.meta?.self).toBe(76);
+    const confirmed = confirming.accepted ? confirming : await accept();
     expect(confirmed).toMatchObject({ accepted: true, transition: 'metadata', key: first.key });
     expect(confirmed.meta?.self).toBe(76);
     expect(confirmed.meta?.rerollsRemaining).toBe(1);
@@ -413,7 +493,8 @@ describe('worker confirmed state', () => {
         if (forceRead) rosterPixels(value % 20 ? 255 : 0);
         expect((await frame(100)).accepted).toBe(false);
       }
-      expect(state.cardReader.mock.calls.length - before).toBeGreaterThan(3);
+      expect(state.primaryNameReads.mock.calls.length).toBeGreaterThan(3);
+      expect(state.cardReader.mock.calls.length).toBe(before);
       const final = await accept();
       expect(final).toMatchObject({ choice: 2, key: '201,202,203', accepted: true });
       expect(final.meta?.rerollsRemaining).toBe(1);
@@ -465,7 +546,11 @@ describe('worker confirmed state', () => {
     ]);
     expect(final).toMatchObject({ round: 2, choice: 3, transition: 'reacquire' });
     expect(final.meta?.rerollsRemaining).toBe(1);
-    expect(state.nameReads).toHaveBeenCalledTimes(2);
+    const calls = state.primaryNameReads.mock.calls.length;
+    expect(calls).toBeGreaterThanOrEqual(3);
+    await frame();
+    expect(state.primaryNameReads).toHaveBeenCalledTimes(calls);
+    expect(state.nameReads).not.toHaveBeenCalled();
   }, 20_000);
   it('corrects actual R4C3 with exact weak-slot text while strong neighbors do not require OCR', async () => {
     state.round = 4;
@@ -485,7 +570,11 @@ describe('worker confirmed state', () => {
     expect(final.reads[0]!.enhanced).toBe(true);
     expect(final).toMatchObject({ transition: 'reacquire', round: 4, choice: 3 });
     expect(final.meta?.rerollsRemaining).toBe(1);
-    expect(state.nameReads).toHaveBeenCalledTimes(1);
+    expect(state.primaryNameReads).toHaveBeenCalled();
+    const readsAtCommit = state.primaryNameReads.mock.calls.length;
+    await frame();
+    expect(state.primaryNameReads).toHaveBeenCalledTimes(readsAtCommit);
+    expect(state.nameReads).not.toHaveBeenCalled();
   }, 20_000);
   it('resolves the actual present but wrong Heroic Aura icon before committing R2C2, including after F8 reset', async () => {
     state.round = 2;
@@ -526,7 +615,11 @@ describe('worker confirmed state', () => {
     expect(final.reads[0]).toMatchObject({ present: true, rare: true, enhanced: true });
     expect(final.reads[0]!.match.score).toBeLessThan(0.82);
     expect(final).toMatchObject({ round: 3, choice: 2, accepted: true, transition: 'initial' });
-    expect(state.nameReads).toHaveBeenCalledTimes(1);
+    expect(state.primaryNameReads).toHaveBeenCalled();
+    const readsAtCommit = state.primaryNameReads.mock.calls.length;
+    await frame();
+    expect(state.primaryNameReads).toHaveBeenCalledTimes(readsAtCommit);
+    expect(state.nameReads).not.toHaveBeenCalled();
   }, 20_000);
   it('confirms the actual R3C3 complete tilted name before offering advice', async () => {
     state.round = 3;
@@ -543,7 +636,11 @@ describe('worker confirmed state', () => {
     expect(final.reads[1]).toMatchObject({ present: true, enhanced: true, rare: false });
     expect(final.reads[1]!.match.score).toBeLessThan(0.82);
     expect(final).toMatchObject({ round: 3, choice: 3, accepted: true, transition: 'initial' });
-    expect(state.nameReads).toHaveBeenCalledTimes(1);
+    expect(state.primaryNameReads).toHaveBeenCalled();
+    const readsAtCommit = state.primaryNameReads.mock.calls.length;
+    await frame();
+    expect(state.primaryNameReads).toHaveBeenCalledTimes(readsAtCommit);
+    expect(state.nameReads).not.toHaveBeenCalled();
   }, 20_000);
   it('keeps the full tilted Escalating Resilience label and confirms the actual R1C3 rare offer', async () => {
     state.round = 1;
@@ -560,7 +657,11 @@ describe('worker confirmed state', () => {
     expect(final.reads[1]!.match.score).toBeLessThan(0.82);
     expect(final.reads[2]!.rare).toBe(true);
     expect(final).toMatchObject({ round: 1, choice: 3, accepted: true, transition: 'initial' });
-    expect(state.nameReads).toHaveBeenCalledTimes(1);
+    expect(state.primaryNameReads).toHaveBeenCalled();
+    const readsAtCommit = state.primaryNameReads.mock.calls.length;
+    await frame();
+    expect(state.primaryNameReads).toHaveBeenCalledTimes(readsAtCommit);
+    expect(state.nameReads).not.toHaveBeenCalled();
   }, 20_000);
   it('publishes no initial recommendation while any card is incomplete, then waits for the complete fresh tuple', async () => {
     state.visible = 2;
@@ -569,14 +670,16 @@ describe('worker confirmed state', () => {
     state.visible = 3;
     expect(await frame()).toMatchObject({ pending: true, reads: [], key: '', accepted: false });
     expect(await frame()).toMatchObject({ pending: true, reads: [], key: '', accepted: false });
-    expect(await frame()).toMatchObject({ accepted: true, key: '101,102,103' });
+    cardPixels(100);
+    expect(await accept()).toMatchObject({ accepted: true, key: '101,102,103' });
   });
   it('leaves weak new candidates pending unless exact text independently validates them', async () => {
     state.cardScores = [0.643, 0.522, 0.818];
     for (let i = 0; i < 5; i++) expect(await frame()).toMatchObject({ accepted: false, reads: [], key: '' });
-    expect(state.nameReads).toHaveBeenCalledTimes(12); // Two bounded preprocessing attempts per weak slot.
+    expect(state.nameReads).toHaveBeenCalledTimes(6); // One two-pass ladder per physical slot.
     state.cardScores = [];
     rosterPixels(255);
+    cardPixels(100);
     expect(await accept()).toMatchObject({ accepted: true, key: '101,102,103' });
     state.choice = 2;
     state.cards = [201, 202, 203];
@@ -585,10 +688,12 @@ describe('worker confirmed state', () => {
     for (let i = 0; i < 5; i++) expect((await frame()).accepted).toBe(false);
     state.cardScores = [];
     rosterPixels(0);
+    cardPixels(100);
     expect(await accept()).toMatchObject({ accepted: true, transition: 'choice', key: '201,202,203' });
   });
   it('reports the unread slot without repeating completed OCR over forty unchanged frames, and F8 permits a fresh attempt', async () => {
     state.cardScores = [0.99, 0.6, 0.99];
+    expect(await frame()).toMatchObject({ accepted: false, reads: [], key: '', itemReadStatus: { phase: 'reading' } });
     for (let i = 0; i < 40; i++) {
       const result = await frame(1100);
       expect(result).toMatchObject({
@@ -599,7 +704,7 @@ describe('worker confirmed state', () => {
       });
     }
     // The first observation establishes a visual epoch; each epoch gets one two-pass ladder.
-    expect(state.nameReads).toHaveBeenCalledTimes(4);
+    expect(state.nameReads).toHaveBeenCalledTimes(2);
     const before = state.nameReads.mock.calls.length;
     await handle({ data: { type: 'reset' } } as MessageEvent<WorkerIn>);
     await frame();
@@ -664,7 +769,7 @@ describe('worker confirmed state', () => {
       expect(await frame()).toMatchObject({ shop: true, accepted: false, key: committed.key, choice: 1 });
       expect(outputs.at(-1)?.type).toBe('result');
     }
-    expect(state.cardReader).toHaveBeenCalledTimes(1);
+    expect(state.cardReader).not.toHaveBeenCalled();
   });
   it('publishes a partial actual first-round roster while items remain blocked and keeps retrying a blanked portrait', async () => {
     state.actualSelf = true;
@@ -697,16 +802,17 @@ describe('worker confirmed state', () => {
   it('publishes the full team only after two independent portrait reads and caches it through tooltip corruption', async () => {
     state.round = 1;
     state.team = [1, 10, 11, 12];
-    expect((await accept()).teamRoster).toBeNull();
-    const confirmed = await frame();
+    expect((await frame()).teamRoster).toBeNull();
+    expect((await frame()).teamRoster).toBeNull();
+    const confirmed = await accept();
     expect(confirmed.teamRoster).toEqual({ self: 1, left: state.team, right: state.foes });
-    expect(state.metadataReader).toHaveBeenCalledTimes(2);
+    expect(state.metadataReader).toHaveBeenCalledTimes(3);
     state.team = [1, 0, 0, 0];
     state.cards = [201, 202, 203];
     state.cardScore = 0.6;
     cardPixels(255);
     for (let i = 0; i < 3; i++) expect((await frame()).teamRoster).toEqual(confirmed.teamRoster);
-    expect(state.metadataReader).toHaveBeenCalledTimes(2);
+    expect(state.metadataReader).toHaveBeenCalledTimes(3);
     await closeDraft();
     await frame();
     expect((await frame()).teamRoster).toEqual(confirmed.teamRoster);
@@ -736,6 +842,7 @@ describe('worker confirmed state', () => {
     state.round = 3;
     state.choice = 2;
     state.cardScore = 0.99;
+    cardPixels(100);
     expect((await frame()).accepted).toBe(false);
     const picked = await accept();
     expect(picked).toMatchObject({ accepted: true, transition: 'choice', round: 3, choice: 2, key: '201,202,203' });
@@ -954,7 +1061,14 @@ describe('worker confirmed state', () => {
     for (let i = 0; i < 5; i++) {
       const result = await frame();
       results.push(result);
-      if (result.meta) memory.observeRoster(result.meta.self, state.foes, result.round);
+      const identity = outputs
+        .filter(
+          (m): m is FrameResult =>
+            m.type === 'result' && !!m.identityOnly && m.metadataSample === result.metadataSample,
+        )
+        .at(-1);
+      const metadata = identity?.meta ?? result.meta;
+      if (metadata) memory.observeRoster(metadata.self, state.foes, metadata.round);
       if (result.inventory) memory.observeInventory(result.inventory, items, i);
     }
     expect(results.map((r) => r.inventory)).toEqual([null, state.inventory, null, null, null]);
@@ -962,7 +1076,7 @@ describe('worker confirmed state', () => {
     expect(memory.owned).toEqual(state.inventory);
     expect(memory.acquisitions).toHaveLength(1);
     expect(state.inventoryReader).toHaveBeenCalledTimes(2);
-    expect(state.cardReader).toHaveBeenCalledTimes(1);
+    expect(state.cardReader).not.toHaveBeenCalled();
     const bought = items.find((i) => i.item_tier > 0 && i.id !== state.inventory[0])!.id;
     state.inventory.push(bought);
     inventoryPixels(255);
@@ -971,13 +1085,20 @@ describe('worker confirmed state', () => {
     expect(updated.inventory).toEqual([...state.inventory].sort((a, b) => a - b));
     memory.observeInventory(updated.inventory!, items, 10);
     expect(memory.owned).toHaveLength(2);
-    expect(state.cardReader).toHaveBeenCalledTimes(1);
+    expect(state.cardReader).not.toHaveBeenCalled();
     expect(state.inventoryReader).toHaveBeenCalledTimes(4);
   });
   it.each(['new roster', 'same roster restart'])('republishes unchanged inventory after %s', async (kind) => {
     const memory = new MatchMemory();
     const consume = (result: FrameResult, now: number) => {
-      if (result.meta) memory.observeRoster(result.meta.self, state.foes, result.round);
+      const identity = outputs
+        .filter(
+          (m): m is FrameResult =>
+            m.type === 'result' && !!m.identityOnly && m.metadataSample === result.metadataSample,
+        )
+        .at(-1);
+      const metadata = identity?.meta ?? result.meta;
+      if (metadata) memory.observeRoster(metadata.self, state.foes, metadata.round);
       if (result.inventory) memory.observeInventory(result.inventory, items, now);
     };
     for (let i = 0; i < 5; i++) consume(await frame(), i);
@@ -988,7 +1109,7 @@ describe('worker confirmed state', () => {
       rosterPixels(255);
     }
     state.round = 1;
-    for (let i = 5; i < 12; i++) consume(await frame(), i);
+    for (let i = 5; i < 20; i++) consume(await frame(), i);
     expect(memory.enemies).toEqual(state.foes);
     expect(memory.owned).toEqual(state.inventory);
     expect(memory.acquisitions).toHaveLength(1);
@@ -997,7 +1118,14 @@ describe('worker confirmed state', () => {
   it('retries an incomplete roster while cards stay settled and republishes its inventory', async () => {
     const memory = new MatchMemory();
     const consume = (result: FrameResult, now: number) => {
-      if (result.meta) memory.observeRoster(result.meta.self, state.foes, result.round);
+      const identity = outputs
+        .filter(
+          (m): m is FrameResult =>
+            m.type === 'result' && !!m.identityOnly && m.metadataSample === result.metadataSample,
+        )
+        .at(-1);
+      const metadata = identity?.meta ?? result.meta;
+      if (metadata) memory.observeRoster(metadata.self, state.foes, metadata.round);
       if (result.inventory) memory.observeInventory(result.inventory, items, now);
     };
     for (let i = 0; i < 5; i++) consume(await frame(), i);
@@ -1011,14 +1139,15 @@ describe('worker confirmed state', () => {
     expect(memory.enemies).toEqual([2, 3, 4, 5]);
     state.foes = [6, 7, 8, 9];
     vi.advanceTimersByTime(500);
-    const recovered = await frame();
+    let recovered = await frame();
+    for (let i = 0; i < 12 && (!recovered.accepted || !recovered.meta?.self); i++) recovered = await frame();
     expect(recovered.accepted).toBe(true);
     expect(recovered.meta?.bar.right).toHaveLength(4);
     consume(recovered, 7);
-    for (let i = 8; i < 12; i++) consume(await frame(), i);
+    for (let i = 8; i < 20; i++) consume(await frame(), i);
     expect(memory.enemies).toEqual(state.foes);
     expect(memory.owned).toEqual(state.inventory);
     expect(memory.acquisitions).toHaveLength(1);
-    expect(state.cardReader).toHaveBeenCalledTimes(2);
+    expect(state.cardReader).not.toHaveBeenCalled();
   });
 });

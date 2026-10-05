@@ -44,6 +44,25 @@ describe('available ability points', () => {
     expect(reader.value).toBeNull();
     expect(emit).not.toHaveBeenCalled();
   });
+  it('does not let a stale completion clear the newer tip read lock', async () => {
+    const resolutions: ((n: number) => void)[] = [];
+    const read = vi.fn(() => new Promise<number>((resolve) => resolutions.push(resolve)));
+    const reader = new AbilityPointsReader(read);
+    const emit = vi.fn();
+    reader.poll(img, 0, emit);
+    reader.reset();
+    reader.poll(img, 1000, emit);
+    resolutions[0]!(6);
+    await flush();
+    reader.poll(img, 2000, emit);
+    expect(read).toHaveBeenCalledTimes(2);
+    resolutions[1]!(6);
+    await flush();
+    reader.poll(img, 3000, emit);
+    resolutions[2]!(6);
+    await flush();
+    expect(emit).toHaveBeenCalledWith(6);
+  });
   it('reads the actual ultrawide HUD zero instead of nearby ability hotkeys', async () => {
     for (const path of ['scripts/win/frames/ultrawide-choice3-zero.png', 'public/demo/inround-r3.png']) {
       const meta = await sharp(path).metadata();
@@ -80,4 +99,12 @@ describe('available ability points', () => {
       else expect(points).toBe(Number(text));
     }
   }, 20_000);
+  it('accepts exact bridge digits when primary confidence is unavailable', async () => {
+    const svg =
+      '<svg width="65" height="38"><rect width="65" height="38" fill="#29201c"/><text x="0" y="30" font-family="Arial" font-weight="bold" font-size="28" fill="#68be94">64</text></svg>';
+    const { data, info } = await sharp(Buffer.from(svg)).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const ocr = vi.fn(async () => ({ text: '64', confidence: NaN }));
+    expect(await readAbilityPoints({ width: info.width, height: info.height, data, channels: 4 }, ocr)).toBe(64);
+    expect(ocr).toHaveBeenCalledTimes(1);
+  });
 });

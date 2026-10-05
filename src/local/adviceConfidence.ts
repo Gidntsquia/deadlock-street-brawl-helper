@@ -34,5 +34,5 @@ export function adviceConfidence(
   notes.push(allRound ? 'purchase-round / match-win stats' : 'match-wide stats');
   if (reroll?.distributionStatus === 'empirical-approximation') notes.push('experimental reroll estimate');
   else notes.push('uniform reroll approximation');
-  return `Evidence: ${notes.join(' · ')}`;
+  return `Evidence: ${notes.join(' , ')}`;
 }

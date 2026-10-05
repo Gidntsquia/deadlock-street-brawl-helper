@@ -137,7 +137,7 @@ function HeroCell({ row }: { row: TierEntry<Hero> }) {
       <img className="tl-portrait" src={img(h.images.card || h.images.small)} alt="" loading="lazy" />
       <span className="tl-name">{h.name}</span>
       <span className="tl-nums">
-        <b>{pct(row.winRate)}</b> · {pct(row.usage)}
+        <b>{pct(row.winRate)}</b>, {pct(row.usage)}
       </span>
     </div>
   );
@@ -152,7 +152,7 @@ function ItemCell({ row }: { row: TierEntry<Item> }) {
     >
       <ItemTile item={i} />
       <span className="tl-nums">
-        <b>{pct(row.winRate)}</b> · {pct(row.usage)}
+        <b>{pct(row.winRate)}</b>, {pct(row.usage)}
       </span>
     </div>
   );

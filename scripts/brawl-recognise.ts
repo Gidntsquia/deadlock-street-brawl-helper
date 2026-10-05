@@ -3,7 +3,7 @@
 //   npm run brawl:see -- --fixtures                       accuracy against scripts/fixtures/brawl-cards/labels.json
 //   npm run brawl:see -- --save-fixture s7 screenshots/brawl/s7.png "Mystic Regeneration,Extended Magazine,Spirit Strike"
 //       crops the three card squares to scripts/fixtures/brawl-cards/<name>-{left,top,right}.png and records the labels
-//   npm run brawl:see -- --save-screen s7 screenshots/brawl/s7.png 1 1 "Drifter,Infernus,Bebop,Holliday" "Pocket,Apollo,Ivy,Calico"
+//   npm run brawl:see -- --save-screen s7 screenshots/brawl/s7.png 1 1 "Drifter,Infernus,Bebop,Holliday" "Pocket,Apollo,Ivy,Calico" [Infernus]
 //       keeps only the hero bar and the ROUND / CHOICE labels of the screen (rest black) in scripts/fixtures/brawl-screens/
 //   npm run brawl:see -- --screens                        accuracy of round, choice, the player's own slot and the eight portraits on those
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -54,7 +54,7 @@ if (args[0] === '--save-fixture') {
   writeFileSync(`${FIX}/labels.json`, JSON.stringify(all, null, 1));
   console.log(`saved ${name}: ${ids.map(nameOf).join(' / ')}`);
 } else if (args[0] === '--save-screen') {
-  const [, name, file, round, choice, left, right] = args;
+  const [, name, file, round, choice, left, right, self] = args;
   const meta = await sharp(file).metadata();
   const sx = meta.width! / 2560,
     sy = meta.height! / 1440;
@@ -87,6 +87,7 @@ if (args[0] === '--save-fixture') {
     choice: Number(choice),
     left: left.split(',').map(heroId),
     right: right.split(',').map(heroId),
+    ...(self ? { self: heroId(self) } : {}),
   };
   writeFileSync(`${SFIX}/labels.json`, JSON.stringify(all, null, 1));
   console.log(`saved ${name}: round ${round} choice ${choice}, ${left} vs ${right}`);

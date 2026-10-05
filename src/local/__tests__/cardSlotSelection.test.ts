@@ -15,6 +15,7 @@ const read = (card: string, enhanced = false, itemId = 7): CardRead => ({
 const ranked = (enhanced = false, score = 2, grade = 'B', itemId = 7): OverlayAdviceCard => ({
   itemId,
   enhanced,
+  enhancedBonus: 0,
   score,
   grade,
   name: 'Item',

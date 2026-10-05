@@ -6,30 +6,32 @@ import {
   cardAnchors,
   enemiesFrom,
   inventoryRegions,
+  roundProbeRect,
   decodeIconIndex,
   isShopScreen,
   readDraftMeta,
   readRoundChoice,
   readPlayerHero,
-  readDraftScreen,
   readInventory,
   type CardRead,
   type DecodedIndex,
   type DraftMeta,
 } from './recognise';
-import { terminateOCR, warmOCR } from './ocr';
+import { readHeroName, terminateOCR, warmOCR } from './ocr';
+import { matchItemName, nameList } from './names';
+import { DraftCardRecognition } from '../local/draftCardRecognition';
+import { refreshCardMarkers } from '../local/settledCardMarkers';
+import { HudOcrFallback, HudTextJobs } from '../local/hudOcrFallback';
 import { RerollCounterReader } from '../local/rerollCounter';
 import { hudLayout } from '../local/hudLayout';
-import { CardNameRecovery, serialFrames } from '../local/cardRecognition';
+import { serialFrames } from '../local/cardRecognition';
 import { stopItemNameOCR } from '../local/cardNameOcr';
 import { InventoryConfirmation } from '../local/inventoryConfirmation';
 import { DraftOfferLock } from '../local/draftOfferLock';
-import { CardNameConfirmation, strongDirectCard } from '../local/cardNameConfirmation';
 import { completedItemStatus, readingItemStatus, type ItemReadStatus } from '../local/itemReadStatus';
-import { cardNameRegions, hasItemNameInk } from '../local/cardNames';
 import { SelfHeroConfirmation } from '../local/selfHeroConfirmation';
 import { TeamRosterConfirmation, type TeamRoster } from '../local/teamWinRate';
-import { FirstRoundPreparation, hasRoundCountdown } from '../local/firstRoundPreparation';
+import { FirstRoundPreparation, hasRoundCountdown, roundCountdownRegion } from '../local/firstRoundPreparation';
 import type { IconIndex } from './types';
 
 export interface FrameRegion {
@@ -41,8 +43,34 @@ export interface FrameRegion {
 }
 
 export type WorkerIn =
-  | { type: 'warm'; index: IconIndex; tiers: Record<number, number> }
-  | { type: 'init'; index: IconIndex; tiers: Record<number, number>; intervalMs: number; captureEpoch?: number }
+  | {
+      type: 'abilityPoints';
+      captureEpoch: number;
+      tipEpoch: number;
+      sample: number;
+      width: number;
+      height: number;
+      buffer: ArrayBuffer;
+    }
+  | { type: 'abilityPointsCancel'; captureEpoch: number; tipEpoch: number }
+  | {
+      type: 'loadingName';
+      names: Record<number, string>;
+      width: number;
+      height: number;
+      buffer: ArrayBuffer;
+      captureEpoch?: number;
+      requestId: number;
+    }
+  | { type: 'warm'; index: IconIndex; tiers: Record<number, number>; names?: Record<number, string> }
+  | {
+      type: 'init';
+      index: IconIndex;
+      tiers: Record<number, number>;
+      names?: Record<number, string>;
+      intervalMs: number;
+      captureEpoch?: number;
+    }
   // A draft frame is only the rectangles the recogniser reads (draftRegions), each with its own pixels: the worker
   // pastes them into a reused frame-sized buffer, so nothing outside them is ever copied out of the video.
   | { type: 'frame'; captureEpoch?: number; width: number; height: number; regions: FrameRegion[]; prefer: number[] }
@@ -67,6 +95,20 @@ export type WorkerIn =
  *  browser tab is hidden; worker timers are not, so the advice keeps updating without alt-tabbing. */
 export type WorkerOut =
   | FrameResult
+  | { type: 'abilityPoints'; captureEpoch: number; tipEpoch: number; sample: number; text: string; confidence: number }
+  | { type: 'loadingHero'; heroId: number; text: string; requestId: number; captureEpoch?: number }
+  | { type: 'load'; slow: boolean; captureEpoch?: number }
+  | { type: 'seen'; captureEpoch?: number }
+  | {
+      type: 'name';
+      slot: number;
+      icon: number;
+      text: string;
+      itemId: number;
+      ms: number;
+      source?: 'primary' | 'binary' | 'nearest' | 'icon';
+      captureEpoch?: number;
+    }
   | { type: 'tick'; full: boolean; captureEpoch?: number } // full: send a whole frame; otherwise just the probe crop
   | {
       type: 'rerolls';
@@ -96,6 +138,9 @@ export interface FrameResult {
   pending?: boolean;
   /** Current candidate progress only; contains no tentative IDs or recommendations. */
   itemReadStatus?: ItemReadStatus;
+  live?: boolean;
+  picked?: number | null;
+  spent?: boolean;
   type: 'result';
   shop: boolean; // visible draft labels or unchanged known card pixels; false skips card/inventory recognition
   round: number; // committed ROUND / CHOICE labels once established (0: unread; 0 on a non-draft frame)
@@ -132,15 +177,14 @@ let closedSince: number | null = null;
 let committedCardSigs: Uint8Array[] = [];
 let pendingCardSigs: Uint8Array[] = [];
 let visualEpoch = 0;
-let pendingDirect = false;
-let pendingNames = false;
-let pendingStrong: boolean[] = [];
 let candidateCardSigs: Uint8Array[] = [];
 let candidateCardKey = '';
 let awaitingNames = false;
 let captureSequence = 0;
 let previousInventory: number[] = [];
 let inventoryPick = false;
+let selectionSpent = false;
+let pendingPicked: number | null = null;
 let settledMeta: DraftMeta | null = null;
 let settledBarSig: Uint8Array | null = null;
 let nextMetaRetryAt = 0;
@@ -149,8 +193,14 @@ const completeRoster = (meta: DraftMeta | null) => !!meta?.self && new Set(enemi
 const completeMetadata = (meta: DraftMeta | null) =>
   completeRoster(meta) && (acceptedRound !== 1 || teamRoster.complete);
 const rerollCounter = new RerollCounterReader();
-const recovery = new CardNameRecovery();
-const nameConfirmation = new CardNameConfirmation();
+const recognition = new DraftCardRecognition();
+let loadingGeneration = 0;
+let pointsGeneration = 0;
+let pointsTipEpoch = -1;
+let pointsSample = -1;
+const pointsJobs = new HudTextJobs();
+const roundOcr = new HudOcrFallback('round');
+const countdownOcr = new HudOcrFallback('caption');
 let names: Record<string, string> = {};
 function pollRerolls(img: Parameters<RerollCounterReader['poll']>[0]) {
   rerollCounter.poll(
@@ -166,13 +216,11 @@ function pollRerolls(img: Parameters<RerollCounterReader['poll']>[0]) {
         offerEpoch++;
         offerLock.armReroll();
         lastKey = '';
-        pendingReads = [];
         pendingCardSigs = [];
-        pendingNames = false;
         candidateCardSigs = [];
         candidateCardKey = '';
         awaitingNames = false;
-        nameConfirmation.reset();
+        recognition.reset();
         settledSig = pendingSig = null;
       }
       post({ type: 'rerolls', forKey: ctx.key, forRound: ctx.round, forChoice: ctx.choice, rerollsRemaining, spent });
@@ -184,7 +232,18 @@ let intervalMs = 250;
 // "CHOICE n OF 3" crop, until the shop reappears.
 const IDLE_INTERVAL_MS = 300;
 // Once the draft screen's cards, round and choice are all settled, only a change matters: look less often.
-const SETTLED_INTERVAL_MS = 100;
+const SETTLED_INTERVAL_MS = 250;
+let readEma = 0;
+let slow = false;
+let frameHadRecognition = false;
+const noteReadMs = (ms: number) => {
+  readEma = readEma === 0 ? ms : readEma * 0.7 + ms * 0.3;
+  const next = slow ? readEma > 90 : readEma > 150;
+  if (next !== slow) {
+    slow = next;
+    post({ type: 'load', slow });
+  }
+};
 // While the cards are settled, a frame that looks the same (coarse pixel grid, same round/choice labels) skips the
 // expensive card and inventory reads and reuses the last result: a change is noticed within one interval and the
 // idle draft screen costs almost nothing.
@@ -194,7 +253,6 @@ let settledSig: Uint8Array | null = null;
 let knownHero: { bar: DraftMeta['bar']; self: number } | null = null;
 let settledReads: CardRead[] = [];
 let pendingSig: Uint8Array | null = null,
-  pendingReads: CardRead[] = [],
   pendingChoice = 0;
 // Samples a coarse grid inside each region (not the whole frame: the rest was never copied).
 const frameSig = (regions: FrameRegion[], inventory: ReturnType<typeof inventoryRegions>): Uint8Array => {
@@ -265,6 +323,10 @@ let previousBarSig: Uint8Array | null = null;
 let previousRound = 0;
 
 const forgetDraft = () => {
+  roundOcr.reset();
+  countdownOcr.reset();
+  pointsGeneration++;
+  pointsJobs.reset();
   preparation.reset();
   frameCountdown = false;
   preparationRound = 0;
@@ -278,14 +340,15 @@ const forgetDraft = () => {
   closedSince = null;
   previousInventory = [];
   inventoryPick = false;
+  selectionSpent = false;
+  pendingPicked = null;
   inventoryConfirmation.reset();
   settledMeta = null;
   settledBarSig = null;
   nextMetaRetryAt = 0;
   rerollCounter.reset();
-  recovery.reset();
-  nameConfirmation.reset();
-  pendingNames = false;
+  recognition.reset();
+  recognition.reset();
   candidateCardSigs = [];
   candidateCardKey = '';
   awaitingNames = false;
@@ -307,6 +370,7 @@ const forgetDraft = () => {
 const DEV = import.meta.env.DEV;
 let stages: Record<string, number> | undefined;
 const stage = <T>(name: string, fn: () => T): T => {
+  if (['meta', 'self', 'team'].includes(name)) frameHadRecognition = true;
   if (!stages) return fn();
   const t = performance.now();
   try {
@@ -356,6 +420,7 @@ const sameBar = (a: Uint8Array, b: Uint8Array) => {
   return true;
 };
 const post = (m: WorkerOut) => {
+  if (m.type === 'result' && !m.identityOnly && frameHadRecognition) noteReadMs(m.ms);
   if (m.type === 'result') {
     if (pendingPreparationCorrection && m.meta?.self === selfHeroConfirmation.value?.heroId) {
       m = { ...m, transition: 'hero' };
@@ -375,14 +440,30 @@ const post = (m: WorkerOut) => {
     );
     if (wasPreparation && !preparation.visible && !preparation.needsFullFrame(performance.now()) && !m.shop)
       teamRoster.reset();
-    m = { ...m, roundCountdown: frameCountdown, preparationRound, preparationSample, metadataSample: captureSequence };
+    m = {
+      ...m,
+      live:
+        !m.identityOnly && m.shop && !!m.key && !!acceptedKey && !m.pending && !m.pendingTransition && !selectionSpent,
+      picked: m.identityOnly ? null : pendingPicked,
+      spent: selectionSpent || offerLock.awaitingReroll,
+      roundCountdown: frameCountdown,
+      preparationRound,
+      preparationSample,
+      metadataSample: captureSequence,
+    };
   }
+  if (m.type === 'result' && !m.identityOnly) pendingPicked = null;
   (self as unknown as { postMessage(m: unknown): void }).postMessage({ ...m, captureEpoch });
 };
 let timer: ReturnType<typeof setTimeout> | undefined;
 const tick = (after: number, full: boolean) => {
   clearTimeout(timer);
-  timer = setTimeout(() => post({ type: 'tick', full: full || preparation.needsFullFrame(performance.now()) }), after);
+  const adaptiveAfter =
+    after === SETTLED_INTERVAL_MS && slow ? after * 2 : slow && after === intervalMs ? Math.max(after, 250) : after;
+  timer = setTimeout(
+    () => post({ type: 'tick', full: full || preparation.needsFullFrame(performance.now()) }),
+    adaptiveAfter,
+  );
 }; // one chain, even if the page sent two frames
 
 self.addEventListener(
@@ -390,8 +471,75 @@ self.addEventListener(
   serialFrames(
     async (ev: MessageEvent<WorkerIn>) => {
       const msg = ev.data;
+      if (msg.type === 'abilityPointsCancel') {
+        if (msg.captureEpoch !== captureEpoch) return;
+        pointsGeneration++;
+        pointsJobs.reset();
+        pointsTipEpoch = msg.tipEpoch;
+        return;
+      }
+      if (msg.type === 'abilityPoints') {
+        if (msg.captureEpoch !== captureEpoch) return;
+        if (pointsTipEpoch !== msg.tipEpoch) {
+          pointsGeneration++;
+          pointsJobs.reset();
+          pointsTipEpoch = msg.tipEpoch;
+        }
+        const generation = pointsGeneration;
+        pointsSample = msg.sample;
+        const current = () =>
+          generation === pointsGeneration && captureEpoch === msg.captureEpoch && pointsSample === msg.sample;
+        const pixels = new Uint8Array(msg.buffer).slice();
+        let hash = 2166136261;
+        for (const pixel of pixels) hash = Math.imul(hash ^ pixel, 16777619);
+        const key = `${msg.captureEpoch}:${msg.tipEpoch}:${msg.width}:${msg.height}:${hash >>> 0}`;
+        void pointsJobs
+          .request({ width: msg.width, height: msg.height, data: pixels }, 'points', key)
+          .then((value) => {
+            if (current())
+              (self as unknown as { postMessage(m: unknown): void }).postMessage({
+                type: 'abilityPoints',
+                captureEpoch: msg.captureEpoch,
+                tipEpoch: msg.tipEpoch,
+                sample: msg.sample,
+                text: value?.text ?? '',
+                confidence: value?.confidence ?? 0,
+              });
+          })
+          .catch(() => {
+            if (current())
+              (self as unknown as { postMessage(m: unknown): void }).postMessage({
+                type: 'abilityPoints',
+                captureEpoch: msg.captureEpoch,
+                tipEpoch: msg.tipEpoch,
+                sample: msg.sample,
+                text: '',
+                confidence: NaN,
+              });
+          });
+        return;
+      }
+      if (msg.type === 'loadingName') {
+        const generation = loadingGeneration;
+        const pixels = new Uint8ClampedArray(msg.buffer).slice();
+        void readHeroName({ width: msg.width, height: msg.height, data: pixels, channels: 4 })
+          .then((text) => {
+            if (generation !== loadingGeneration) return;
+            const heroId = matchItemName(text, nameList(Object.keys(msg.names).map(Number), msg.names))?.itemId ?? 0;
+            (self as unknown as { postMessage(m: unknown): void }).postMessage({
+              type: 'loadingHero',
+              heroId,
+              text,
+              requestId: msg.requestId,
+              captureEpoch: msg.captureEpoch,
+            });
+          })
+          .catch(() => {});
+        return;
+      }
       if (msg.type === 'stop') {
         clearTimeout(timer);
+        loadingGeneration++;
         forgetDraft();
         matchBar = null;
         void terminateOCR();
@@ -402,18 +550,21 @@ self.addEventListener(
         // Sent when the app opens, long before a draft: decode the icon index now so the first frame does not.
         index ??= decodeIconIndex(msg.index);
         tiers = msg.tiers;
-        names = msg.index.names ?? {};
+        names = msg.names ?? msg.index.names ?? {};
         return;
       }
       if (msg.type === 'init' || msg.type === 'reset') {
+        loadingGeneration++;
         captureEpoch = msg.captureEpoch ?? captureEpoch;
         if (msg.type === 'init') {
           index ??= decodeIconIndex(msg.index);
           tiers = msg.tiers;
-          names = msg.index.names ?? {};
+          names = msg.names ?? msg.index.names ?? {};
           intervalMs = msg.intervalMs;
         }
         forgetDraft();
+        void terminateOCR();
+        void stopItemNameOCR();
         warmOCR(); // capture only runs around the draft now: load the OCR engine with it (freed again on 'stop')
         tick(0, true); // F8 may begin after all item picks: read the countdown and ROUND once too.
         return;
@@ -431,6 +582,7 @@ self.addEventListener(
       if (!index) return;
       const idx = index; // narrowed for the stage closures below
       const t0 = performance.now();
+      frameHadRecognition = false;
       if (msg.type === 'probe') {
         frameCountdown = false;
         preparationRound = 0;
@@ -442,6 +594,7 @@ self.addEventListener(
           origin: { x: msg.x, y: msg.y, fullWidth: msg.frameW, fullHeight: msg.frameH },
         };
         if (isShopScreen(crop)) {
+          post({ type: 'seen' });
           tick(0, true); // a draft screen: ask for the whole frame right away
           return;
         }
@@ -462,6 +615,22 @@ self.addEventListener(
       // into the next shop) -- isShopScreen is one small glyph read instead of three full icon searches.
       const labels = readRoundChoice(img);
       frameCountdown = stage('countdown', () => hasRoundCountdown(img));
+      const fallbackRound = roundOcr.observe(
+        img,
+        roundProbeRect(img.width, img.height),
+        preparationSample,
+        t0,
+        !labels.round && (!!labels.choice || frameCountdown || preparation.needsFullFrame(t0)),
+      );
+      if (typeof fallbackRound === 'number') labels.round = fallbackRound;
+      const fallbackCountdown = countdownOcr.observe(
+        img,
+        roundCountdownRegion(img.width, img.height),
+        preparationSample,
+        t0,
+        !labels.choice && !frameCountdown && (labels.round === 1 || preparation.visible) && labels.round <= 1,
+      );
+      frameCountdown ||= fallbackCountdown === true;
       preparationRound = labels.round;
       if (labels.choice === 0) {
         const firstPreparation = preparation.observe(
@@ -563,7 +732,7 @@ self.addEventListener(
         offerLock.observe({ ...labels, key: '' }, performance.now(), false, { frame: captured, labelsOnly: true });
         if (!alreadySettling && offerLock.settling) {
           offerEpoch++;
-          recovery.reset();
+          recognition.reset();
         }
         if (offerLock.settling)
           post({
@@ -724,13 +893,38 @@ self.addEventListener(
             )
           : null;
       if (inventory) {
-        inventoryPick ||= inventory.some(
+        const picked = inventory.find(
           (id) => !previousInventory.includes(id) && settledReads.some((r) => r.itemId === id),
         );
+        if (picked) {
+          inventoryPick = true;
+          selectionSpent = true;
+          pendingPicked = picked;
+        }
+
         previousInventory = inventory;
       }
       const iconSigs = cardSignatures(img);
       const changedSlots = iconSigs.filter((s, i) => !sameSig(committedCardSigs[i] ?? null, s)).length;
+      let recoveredMarkers = false;
+      if (
+        acceptedKey &&
+        !selectionSpent &&
+        !offerLock.settling &&
+        !offerLock.awaitingReroll &&
+        labels.choice === acceptedChoice &&
+        (labels.round === 0 || labels.round === acceptedRound)
+      ) {
+        const markers = stage('markers', () =>
+          refreshCardMarkers(
+            img,
+            settledReads,
+            iconSigs.map((s, i) => sameSig(committedCardSigs[i] ?? null, s)),
+          ),
+        );
+        settledReads = markers.reads;
+        recoveredMarkers = markers.changed;
+      }
       const samePendingIcons =
         pendingCardSigs.length === 3 && iconSigs.every((s, i) => sameSig(pendingCardSigs[i]!, s));
       if (
@@ -744,10 +938,11 @@ self.addEventListener(
         !offerLock.settling &&
         !offerLock.needsRestore &&
         !awaitingNames &&
+        !selectionSpent &&
         changedSlots === 0
       ) {
         offerLock.observe({ key: acceptedKey, round: acceptedRound, choice: acceptedChoice }, performance.now());
-        let recoveredMeta = !!heroTransition;
+        let recoveredMeta = !!heroTransition || recoveredMarkers;
         if (!completeMetadata(settledMeta) && performance.now() >= nextMetaRetryAt) {
           const previouslyKnownSelf = settledMeta?.self ?? 0;
           settledMeta = stage('meta', () => readMetadata(img, idx, acceptedRound));
@@ -796,63 +991,60 @@ self.addEventListener(
       // label) confirms that read without repeating the expensive icon search: a new screen is accepted a frame sooner.
       const confirmed =
         lastKey !== '' && pendingChoice === labels.choice && sameSig(pendingSig, sig) && samePendingIcons;
-      let reads = confirmed ? pendingReads : stage('cards', () => readDraftScreen(img, idx, (id) => tiers[id] ?? 0));
-      const strong = confirmed ? pendingStrong : reads.map(strongDirectCard);
-      const direct = confirmed ? pendingDirect : reads.length === 3 && strong.every(Boolean);
-      let nameCorroborated = confirmed && pendingNames;
-      const readGeneration = recovery.generation;
-      const epoch = offerEpoch;
-      if (reads.some((r) => !r.present)) reads = await recovery.recover(img, reads, names, tiers);
-      if (readGeneration !== recovery.generation || epoch !== offerEpoch) return;
-      const seen = reads.filter((r) => r.present).length;
-      let key = seen === 3 ? reads.map((r) => `${r.itemId}${r.enhanced ? '+' : ''}${r.rare ? 'r' : ''}`).join(',') : '';
-      let freshNames = false;
-      let itemReadStatus: ItemReadStatus | undefined;
-      const namesVisible = cardNameRegions(img.width, img.height, cardAnchors(img.width, img.height)).every((r) =>
-        hasItemNameInk(img, r),
-      );
-      const sameCommittedLabels =
-        labels.choice === acceptedChoice && (labels.round === 0 || labels.round === acceptedRound);
       if (
-        namesVisible &&
-        !direct &&
-        !nameCorroborated &&
-        key &&
-        (!acceptedKey ||
-          offerLock.settling ||
-          offerLock.awaitingReroll ||
-          (key !== acceptedKey && changedSlots === 3 && sameCommittedLabels))
+        acceptedKey &&
+        changedSlots < 3 &&
+        labels.choice === acceptedChoice &&
+        (labels.round === 0 || labels.round === acceptedRound) &&
+        !offerLock.settling &&
+        !offerLock.awaitingReroll &&
+        !offerLock.needsRestore &&
+        !selectionSpent
       ) {
-        awaitingNames = true;
-        const nameCandidate = `${labels.round}:${labels.choice}:${visualEpoch}`;
-        const resolving = nameConfirmation.resolve(img, reads, names, tiers, nameCandidate, strong);
-        const cachedOutcome = nameConfirmation.getOutcome(nameCandidate);
-        itemReadStatus = cachedOutcome ? completedItemStatus(cachedOutcome) : readingItemStatus(strong);
+        pollRerolls(img);
+        if (settledMeta) settledMeta.rerollsRemaining = rerollCounter.value ?? -1;
         post({
           type: 'result',
           shop: true,
-          pending: true,
-          pendingTransition: true,
-          itemReadStatus,
           round: acceptedRound,
           choice: acceptedChoice,
-          reads: [],
-          key: '',
-          accepted: false,
-          meta: null,
-          inventory: null,
+          reads: settledReads,
+          key: acceptedKey,
+          accepted: recoveredMarkers,
+          transition: recoveredMarkers ? 'metadata' : undefined,
+          meta: settledMeta,
+          inventory,
+          teamRoster: teamRoster.value,
           ms: performance.now() - t0,
+          stages,
         });
-        const resolved = await resolving;
-        if (readGeneration !== recovery.generation || epoch !== offerEpoch) return;
-        const outcome = nameConfirmation.getOutcome(nameCandidate);
-        if (outcome) itemReadStatus = completedItemStatus(outcome);
-        nameCorroborated = freshNames = !!resolved;
-        if (resolved) {
-          reads = resolved;
-          key = reads.map((r) => `${r.itemId}${r.enhanced ? '+' : ''}${r.rare ? 'r' : ''}`).join(',');
-        }
+        tick(SETTLED_INTERVAL_MS, true);
+        return;
       }
+      const nameCandidate = `${captureEpoch}:${offerEpoch}:${labels.round}:${labels.choice}`;
+      const nameEpoch = offerEpoch;
+      const nameCapture = captureEpoch;
+      const named = stage('names', () =>
+        recognition.read(img, idx, names, tiers, nameCandidate, iconSigs, (slot, text, itemId, ms, source) => {
+          if (nameEpoch === offerEpoch && nameCapture === captureEpoch) {
+            post({ type: 'name', slot, text, itemId, ms, source, icon: 0 });
+            noteReadMs(ms);
+          }
+        }),
+      );
+      const reads = named.reads;
+      const strong = named.outcome.slots.map((slot) => slot.status === 'strong');
+      const direct = named.complete && strong.every(Boolean);
+      const textured = iconSigs.every(hasCardTexture);
+      const nameCorroborated = named.complete && textured;
+      const key =
+        named.complete && textured
+          ? reads.map((r) => `${r.itemId}${r.enhanced ? '+' : ''}${r.rare ? 'r' : ''}`).join(',')
+          : '';
+      const namesVisible = named.outcome.slots.every((slot) => slot.reason !== 'empty-text');
+      const itemReadStatus = named.pending ? readingItemStatus(strong) : completedItemStatus(named.outcome);
+      const wasAwaitingNames = awaitingNames;
+      awaitingNames = !named.complete;
       // Anchor the resolved tuple, so a weak raw misidentification cannot reset exact-name stability on rereads.
       if (
         candidateCardKey !== key ||
@@ -862,16 +1054,22 @@ self.addEventListener(
         visualEpoch++;
         candidateCardKey = key;
         candidateCardSigs = iconSigs;
-        nameCorroborated = freshNames;
       }
       let accepted = false,
         meta: DraftMeta | null = null;
       const wasSettling = offerLock.settling;
-      const restore = awaitingNames && sameCommittedLabels && changedSlots === 0 && key === acceptedKey;
+      const sameCommittedLabels =
+        labels.choice === acceptedChoice && (labels.round === 0 || labels.round === acceptedRound);
+      const restore =
+        wasAwaitingNames && named.complete && sameCommittedLabels && changedSlots === 0 && key === acceptedKey;
       if (restore) offerLock.restoreCurrent();
       const commit =
         offerLock.observe(
-          { key: namesVisible && (direct || nameCorroborated) ? key : '', round: labels.round, choice: labels.choice },
+          {
+            key: namesVisible && (direct || nameCorroborated) && !(selectionSpent && key === acceptedKey) ? key : '',
+            round: labels.round,
+            choice: labels.choice,
+          },
           performance.now(),
           inventoryPick,
           { visual: visualEpoch, direct, nameCorroborated, changedSlots, frame: captured },
@@ -879,7 +1077,7 @@ self.addEventListener(
       const transition = restore ? 'metadata' : commit ? (offerLock.transition ?? undefined) : undefined;
       if (!wasSettling && offerLock.settling) {
         offerEpoch++;
-        recovery.reset();
+        recognition.reset();
       }
       if (commit) {
         awaitingNames = false;
@@ -898,6 +1096,8 @@ self.addEventListener(
         }
         if (acceptedRound > 0) previousRound = acceptedRound;
         inventoryPick = false;
+        selectionSpent = false;
+        pendingPicked = null;
         accepted = true;
         if (!knownHero && matchBar && sameBar(matchBar.sig, bsig)) knownHero = matchBar;
         meta = stage('meta', () =>
@@ -927,16 +1127,8 @@ self.addEventListener(
       if (!confirmed) {
         // The fingerprints belong to this actual recognition. Reused IDs must keep their original pixel anchor.
         pendingSig = key ? sig : null;
-        pendingReads = reads;
         pendingCardSigs = iconSigs;
-        pendingDirect = direct;
-        pendingStrong = strong;
-      } else if (freshNames) {
-        // A later exact-name correction and its proof belong to the same tuple. Keep the original
-        // pixel/strength anchors, but never replay the old weak IDs with the new tuple's proof.
-        pendingReads = reads;
       }
-      pendingNames = nameCorroborated;
       pendingChoice = labels.choice;
       if (acceptedKey) pollRerolls(img);
       if (meta) meta.rerollsRemaining = rerollCounter.value ?? -1;
@@ -948,8 +1140,14 @@ self.addEventListener(
         itemReadStatus: !acceptedKey || awaitingNames || offerLock.settling ? itemReadStatus : undefined,
         round: acceptedKey ? acceptedRound : labels.round,
         choice: acceptedKey ? acceptedChoice : labels.choice,
-        reads: awaitingNames || offerLock.awaitingReroll || offerLock.settling || !acceptedKey ? [] : settledReads,
-        key: awaitingNames || offerLock.awaitingReroll || offerLock.settling || !acceptedKey ? '' : acceptedKey,
+        reads:
+          awaitingNames || selectionSpent || offerLock.awaitingReroll || offerLock.settling || !acceptedKey
+            ? []
+            : settledReads,
+        key:
+          awaitingNames || selectionSpent || offerLock.awaitingReroll || offerLock.settling || !acceptedKey
+            ? ''
+            : acceptedKey,
         accepted: accepted && !awaitingNames && !offerLock.awaitingReroll && !offerLock.settling,
         transition,
         meta: accepted ? meta : settledMeta,
@@ -978,13 +1176,11 @@ const nonShopResult = (t0: number): FrameResult => {
     settledSig = pendingSig = null;
     knownHero = null;
     acceptedRound = acceptedChoice = 0;
-    pendingReads = [];
     pendingCardSigs = [];
-    pendingNames = false;
     candidateCardSigs = [];
     candidateCardKey = '';
     awaitingNames = false;
-    nameConfirmation.reset();
+    recognition.reset();
   }
   return {
     type: 'result',

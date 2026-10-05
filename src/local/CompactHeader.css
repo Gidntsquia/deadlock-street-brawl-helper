@@ -1,6 +1,9 @@
 /* Keep both actions beside the selected hero; wrap within the header at narrow widths. */
 .app-header {
   flex-wrap: wrap;
+  height: auto;
+  min-height: 72px;
+  overflow: visible;
 }
 
 .app-header .hero-identity {
@@ -21,7 +24,7 @@
   font-size: 12px;
 }
 
-.header-actions {
+.app-header .header-actions {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -60,7 +63,7 @@
 }
 
 @media (max-width: 440px) {
-  .header-actions {
+  .app-header .header-actions {
     flex-basis: 100%;
     margin-left: 58px;
   }

@@ -13,13 +13,13 @@ it('explains which slot blocks advice and separates a completed unread name from
   };
   const unknown = completedItemStatus(base);
   expect(unknown).toEqual({ confirmed: 2, phase: 'unknown', unresolved: [1] });
-  expect(itemReadStatusText(unknown)).toBe('Draft — top name unread (2/3); reveal the names or press F8');
-  expect(itemReadStatusText(readingItemStatus([true, false, true]))).toBe('Draft — reading items (2/3)…');
+  expect(itemReadStatusText(unknown)).toBe('Draft - top name unread (2/3); reveal the names or press F8');
+  expect(itemReadStatusText(readingItemStatus([true, false, true]))).toBe('Draft - reading items (2/3)…');
   const unavailable = completedItemStatus({
     ...base,
     slots: base.slots.map((slot) => (slot.status === 'unknown' ? { ...slot, status: 'unavailable' as const } : slot)),
   });
-  expect(itemReadStatusText(unavailable)).toBe('Draft — item reader unavailable (2/3); retrying');
+  expect(itemReadStatusText(unavailable)).toBe('Draft - item reader unavailable (2/3); retrying');
   expect(
     itemReadStatusText(
       completedItemStatus({
@@ -27,5 +27,5 @@ it('explains which slot blocks advice and separates a completed unread name from
         slots: base.slots.map((slot) => ({ ...slot, status: 'strong' as const })),
       }),
     ),
-  ).toBe('Draft — confirming items (3/3)…');
+  ).toBe('Draft - confirming items (3/3)…');
 });

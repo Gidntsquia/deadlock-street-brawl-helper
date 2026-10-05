@@ -25,7 +25,19 @@ const state: OverlayState = {
     choice: 1,
     reroll: { currentBest: 1, expectedBest: 2 },
     rerollsRemaining: 1,
-    ranked: [{ itemId: 7, name: 'Item', score: 1, enhanced: false, usage: 0, winRate: null, grade: 'B', rows: [] }],
+    ranked: [
+      {
+        itemId: 7,
+        name: 'Item',
+        score: 1,
+        enhanced: false,
+        enhancedBonus: 0,
+        usage: 0,
+        winRate: null,
+        grade: 'B',
+        rows: [],
+      },
+    ],
     status: 'Ready',
   },
 };

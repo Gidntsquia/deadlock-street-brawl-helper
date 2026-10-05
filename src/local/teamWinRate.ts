@@ -125,8 +125,8 @@ export function teamWinRate(
   const fetched = data && Number.isFinite(Date.parse(data.fetched_at)) ? data.fetched_at.slice(0, 10) : null;
   const window = start
     ? end
-      ? `${start} – ${end}`
-      : `Since ${start}${fetched ? ` · fetched ${fetched}` : ''}`
+      ? `${start} to ${end}`
+      : `Since ${start}${fetched ? `, fetched ${fetched}` : ''}`
     : fetched
       ? `Fetched ${fetched}`
       : 'Street Brawl snapshot';

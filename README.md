@@ -1,4 +1,4 @@
-# Deadlock Street Brawl Helper 🥊
+# Deadlock Street Brawl Helper
 
 <p align="center">
   <img alt="The draft advisor ranking the three cards of a Street Brawl set, with an enhanced Reactive Barrier marked TAKE" src="docs/brawl-overlay.png">
@@ -9,7 +9,7 @@ mode. It reads the draft screen while you play, ranks the three cards you're off
 the set is worth a re-roll. The advice shows up directly over the draft screen. Scores are built
 from a bundled Street Brawl snapshot or your downloaded post-patch matches from [deadlock-api.com](https://deadlock-api.com).
 
-## Download 🚀
+## Download
 
 Get the Windows app from the [latest Release](https://github.com/Gidntsquia/deadlock-street-brawl-helper/releases/latest).
 It has two files:
@@ -51,7 +51,7 @@ npm run dist                       # Build the Windows app (run on Windows)
 npm run win:dev                    # From WSL: run the Windows app from a synced copy
 ```
 
-## Features 🔬
+## Features
 
 - The three cards, the round, the enemy team, and the items you've already picked are read from the
   screen. Nothing is sent to the game.
@@ -84,7 +84,7 @@ npm run win:dev                    # From WSL: run the Windows app from a synced
   try the overlay without the game running.
 - There is no backend. Your hero, tab, round and enemy picks are stored in the browser only.
 
-## Documentation 📚
+## Documentation
 
 More details in the
 [wiki](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki):
@@ -92,15 +92,15 @@ More details in the
 The local [scoring assumptions and validation report](docs/algorithm-validation.md) documents evidence semantics,
 reroll approximations, and the reproducible structural audit (`npx tsx scripts/brawl-evaluate.ts`).
 
-- [Street Brawl Advisor](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Street-Brawl-Advisor) — the mode's rules, card scoring, re-roll maths
-- [Screen Reader](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Screen-Reader) — how cards, tiers, labels and your picks are recognised
-- [Overlay](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Overlay) — screen capture and the always-on-top window
-- [Windows App](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Windows-App) — the packaged app, test mode, developing from WSL
-- [Tier List](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Tier-List) — how the S/A/B/C grades are worked out
-- [Data Pipeline](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Data-Pipeline) — what `fetch-data` downloads, and the 30-day window
-- [Development](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Development) — code layout, scripts, checks
+- [Street Brawl Advisor](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Street-Brawl-Advisor): the mode's rules, card scoring, re-roll maths
+- [Screen Reader](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Screen-Reader): how cards, tiers, labels and your picks are recognised
+- [Overlay](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Overlay): screen capture and the always-on-top window
+- [Windows App](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Windows-App): the packaged app, test mode, developing from WSL
+- [Tier List](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Tier-List): how the S/A/B/C grades are worked out
+- [Data Pipeline](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Data-Pipeline): what `fetch-data` downloads, and the 30-day window
+- [Development](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Development): code layout, scripts, checks
 
-## License 📄
+## License
 
 [MIT](LICENSE). Match data and item art come from [deadlock-api.com](https://deadlock-api.com);
 Deadlock is Valve's.

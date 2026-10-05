@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_OVERLAY_SETTINGS, isOverlaySettings } from '../overlaySettings';
+import { DEFAULT_OVERLAY_SETTINGS, isOverlaySettings, migrateOverlaySettings } from '../overlaySettings';
 
 describe('persisted team win-rate display setting', () => {
   it('accepts older settings without the checkbox while retaining their existing values', () => {
     const legacy = { detail: 'compact', abilityTipMode: 'fixed', tipSeconds: 25, pointLimitSeconds: 80 };
-    expect(isOverlaySettings(legacy)).toBe(true);
-    expect({ ...DEFAULT_OVERLAY_SETTINGS, ...legacy }).toEqual({ ...legacy, showTeamWinRates: true });
+    expect(isOverlaySettings(legacy)).toBe(false);
+    expect(migrateOverlaySettings(legacy)).toEqual({ ...legacy, detail: 'off' });
+    expect({ ...DEFAULT_OVERLAY_SETTINGS, ...migrateOverlaySettings(legacy) }).toEqual({
+      ...legacy,
+      detail: 'off',
+      showTeamWinRates: true,
+    });
   });
 
   it('accepts both explicit states and rejects malformed stored checkbox values', () => {

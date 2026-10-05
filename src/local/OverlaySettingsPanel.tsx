@@ -31,13 +31,13 @@ export function OverlaySettingsPanel({
           Shown during the first draft of round 1 when both teams have been confirmed.
         </p>
         <label>
-          Item advice
+          Item advice box
           <select
             value={settings.detail}
             onChange={(e) => change({ detail: e.target.value as OverlaySettings['detail'] })}
           >
-            <option value="detailed">Detailed advice</option>
-            <option value="compact">Compact advice</option>
+            <option value="detailed">On (detailed)</option>
+            <option value="off">Off</option>
           </select>
         </label>
         <label>

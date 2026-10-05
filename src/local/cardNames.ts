@@ -23,7 +23,7 @@ export function cardNameRegions(
   return anchors.map((a) => {
     const u = a.icon / 185;
     const x = Math.max(0, Math.floor(a.cx - 300 * u));
-    const y = Math.max(0, Math.floor(a.cy + a.icon / 2 + 12 * u));
+    const y = Math.max(0, Math.floor(a.cy + a.icon / 2 + 8 * u));
     return {
       x,
       y,

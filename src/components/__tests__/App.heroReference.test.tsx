@@ -40,6 +40,8 @@ describe('selected hero reference', () => {
     expect(within(reference).getByRole('heading', { name: 'Ability order' })).toBeTruthy();
     expect(within(reference).getByRole('img', { name: 'Ability points, round 1' })).toBeTruthy();
     expect(reference.querySelector('.brawl-ability-order')!.children.length).toBeGreaterThan(0);
+    expect(screen.queryByLabelText('Debug panel')).toBeTruthy();
+    fireEvent.keyDown(window, { key: 'D', ctrlKey: true, shiftKey: true });
     expect(screen.queryByLabelText('Debug panel')).toBeNull();
 
     fireEvent.keyDown(window, { key: 'D', ctrlKey: true, shiftKey: true });

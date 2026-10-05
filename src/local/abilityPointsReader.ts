@@ -124,7 +124,15 @@ export function abilityPointsGlyph(img: RGBImage) {
 }
 let lastGlyph = '';
 let lastPoints: AbilityPoints = null;
-export async function readAbilityPoints(img: RGBImage): Promise<AbilityPoints> {
+export type PointsOcr = (glyph: {
+  data: Uint8Array;
+  width: number;
+  height: number;
+}) => Promise<{ text: string; confidence: number }>;
+export async function readAbilityPoints(
+  img: RGBImage,
+  ocr: PointsOcr = (glyph) => readItemName(glyph, true),
+): Promise<AbilityPoints> {
   const glyph = abilityPointsGlyph(img);
   if (!glyph) return null;
   if ('zero' in glyph) return 0;
@@ -134,9 +142,9 @@ export async function readAbilityPoints(img: RGBImage): Promise<AbilityPoints> {
   let signature = `${glyph.width}x${glyph.height}:`;
   for (let i = 0; i < glyph.data.length; i += 4) signature += glyph.data[i] === 0 ? '1' : '0';
   if (signature === lastGlyph) return lastPoints;
-  const { text, confidence } = await readItemName(glyph, true);
+  const { text } = await ocr(glyph);
   const digits = text.trim();
-  const points = confidence >= 45 && /^\d{1,2}$/.test(digits) && Number(digits) <= 64 ? Number(digits) : null;
+  const points = /^\d{1,2}$/.test(digits) && Number(digits) <= 64 ? Number(digits) : null;
   if (points !== null) {
     lastGlyph = signature;
     lastPoints = points;
@@ -147,7 +155,7 @@ export async function readAbilityPoints(img: RGBImage): Promise<AbilityPoints> {
 /** Confirm changes twice, never turn missing evidence into a zero, and discard OCR from an old tip. */
 export class AbilityPointsReader {
   private generation = 0;
-  private busy = false;
+  private busy: number | null = null;
   private nextAt = 0;
   private candidate: AbilityPoints = null;
   private hits = 0;
@@ -158,14 +166,15 @@ export class AbilityPointsReader {
   }
   reset() {
     this.generation++;
+    this.busy = null;
     this.value = this.candidate = null;
     this.hits = 0;
     this.nextAt = 0;
   }
   poll(img: RGBImage, now: number, emit: (points: AbilityPoints) => void) {
-    if (this.busy || now < this.nextAt) return;
+    if (this.busy !== null || now < this.nextAt) return;
     const generation = this.generation;
-    this.busy = true;
+    this.busy = generation;
     this.nextAt = now + 500;
     void this.read(img)
       .catch(() => null)
@@ -179,7 +188,7 @@ export class AbilityPointsReader {
         }
       })
       .finally(() => {
-        this.busy = false;
+        if (this.busy === generation) this.busy = null;
       });
   }
 }

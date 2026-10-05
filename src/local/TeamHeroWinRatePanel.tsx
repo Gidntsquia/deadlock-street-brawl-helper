@@ -12,7 +12,13 @@ function TeamColumn({ label, heroes, average }: { label: string; heroes: TeamHer
     <section className="team-hero-wr-team" aria-label={label}>
       <div className="team-hero-wr-average">
         <span>{label} avg</span>
-        <strong>{average === null ? 'Unavailable' : percent(average)}</strong>
+        <strong>
+          {average === null
+            ? heroes.some((hero) => hero.unavailable === 'reading-hero' || hero.unavailable === 'loading-data')
+              ? 'Reading'
+              : 'Unavailable'
+            : percent(average)}
+        </strong>
       </div>
       <ul aria-label={`${label} hero win rates`}>
         {heroes.map((hero, slot) => (
@@ -22,9 +28,9 @@ function TeamColumn({ label, heroes, average }: { label: string; heroes: TeamHer
               {hero.winRate !== null
                 ? percent(hero.winRate)
                 : hero.unavailable === 'reading-hero'
-                  ? 'Reading…'
+                  ? 'Reading'
                   : hero.unavailable === 'loading-data'
-                    ? 'Loading rates…'
+                    ? 'Reading'
                     : 'No win-rate data'}
             </span>
           </li>
@@ -45,9 +51,15 @@ export function TeamHeroWinRatePanel({
   round?: number;
   edge?: TeamWinRateEdge | null;
 }) {
+  if (!(visible ?? (draft && round === 1))) return null;
+  if (!edge)
+    return (
+      <aside className="team-hero-wr" aria-label="Team average hero win rates">
+        <div className="team-hero-wr-title">Street Brawl, Hero win rates</div>
+        <div role="status">Reading</div>
+      </aside>
+    );
   if (
-    !(visible ?? (draft && round === 1)) ||
-    !edge ||
     !validRate(edge.ownWinRate) ||
     !validRate(edge.enemyWinRate) ||
     (edge.deltaPp !== null && !Number.isFinite(edge.deltaPp)) ||
@@ -64,10 +76,18 @@ export function TeamHeroWinRatePanel({
   const delta = edge.deltaPp;
   const direction = delta !== null && delta > 0 ? 'positive' : delta !== null && delta < 0 ? 'negative' : 'neutral';
   const difference =
-    delta === null ? 'Unavailable' : delta !== 0 && Math.abs(delta) < 0.05 ? '<0.1' : Math.abs(delta).toFixed(1);
+    delta === null
+      ? edge.ownHeroes
+          .concat(edge.enemyHeroes)
+          .some((hero) => hero.unavailable === 'reading-hero' || hero.unavailable === 'loading-data')
+        ? 'Reading'
+        : 'Unavailable'
+      : delta !== 0 && Math.abs(delta) < 0.05
+        ? '<0.1'
+        : Math.abs(delta).toFixed(1);
   return (
     <aside className="team-hero-wr" data-direction={direction} aria-label="Team average hero win rates">
-      <div className="team-hero-wr-title">Street Brawl · Hero win rates</div>
+      <div className="team-hero-wr-title">Street Brawl, Hero win rates</div>
       <div className="team-hero-wr-teams">
         <TeamColumn label="Ours" heroes={edge.ownHeroes} average={edge.ownWinRate} />
         <TeamColumn label="Enemy" heroes={edge.enemyHeroes} average={edge.enemyWinRate} />
@@ -80,7 +100,7 @@ export function TeamHeroWinRatePanel({
           {delta === null ? '' : ' pp'}
         </strong>
       </div>
-      <div className="team-hero-wr-proxy">Mean hero WR · composition proxy</div>
+      <div className="team-hero-wr-proxy">Mean hero WR, composition proxy</div>
       {edge.window && <div className="team-hero-wr-source">{edge.window}</div>}
     </aside>
   );

@@ -5,7 +5,10 @@
 // card's plate is filled green and its card has a green outline in the PNG's own pixels) and `green-on-non-best` (any
 // other card has a green-filled plate or green outline: must be false). Drawn boxes are first checked against the
 // hand-measured `circles` labels in scripts/win/frames/labels.json, so a plate drawn in the wrong place fails.
-// Exits 1 unless frame-visible and green-on-best are true and green-on-non-best is false.
+// `veil-on-non-best` is true when the other cards' circles are darker than the same pixels of public/demo/<frame>.png
+// (the 35% black veil: about 0.65 of the original brightness) and `veil-on-best` when the best card's circle is not (must be false).
+// Exits 1 unless frame-visible, green-on-best are true and green-on-non-best, veil-on-non-best and veil-on-best are false.
+
 import { readFileSync } from 'node:fs';
 import sharp from 'sharp';
 import { adviseDraft, type BrawlInput } from '../../src/brawl';
@@ -113,6 +116,25 @@ async function main() {
   let placed = true;
   let greenBest = false;
   let greenOther = false;
+  const orig = await sharp(`public/demo/${frameName}.png`).resize(w, h).ensureAlpha().raw().toBuffer();
+  // brightness of the inner half of a card circle in the PNG relative to the screenshot under it
+  const ratio = (r: { x0: number; y0: number; x1: number; y1: number }) => {
+    let a = 0;
+    let b = 0;
+    const cx = (r.x0 + r.x1) / 2;
+    const cy = (r.y0 + r.y1) / 2;
+    const hw = (r.x1 - r.x0) / 4;
+    for (let y = Math.round(cy - hw); y < cy + hw; y++)
+      for (let x = Math.round(cx - hw); x < cx + hw; x++) {
+        const i = (y * w + x) * 4;
+        a += data[i]! + data[i + 1]! + data[i + 2]!;
+        b += orig[i]! + orig[i + 1]! + orig[i + 2]!;
+      }
+    return a / Math.max(1, b);
+  };
+  let veilOther = false;
+  let veilBest = false;
+
   for (const pos of ['left', 'top', 'right'] as const) {
     const d = sidecar.drawn.find((r) => r.card === pos && (r.kind === 'best' || r.kind === 'card'));
     const lab = label.circles[pos];
@@ -131,6 +153,9 @@ async function main() {
     const my = ((d.y0 + d.y1) / 2) * k;
     const outline = [-2, -1, 0, 1, 2].some((dx) => isGreen(px(d.x0 * k + dx, my)));
     const isBestCard = pos === bestPos;
+    const r = ratio({ x0: d.x0 * k, y0: d.y0 * k, x1: d.x1 * k, y1: d.y1 * k });
+    if (isBestCard) veilBest = r < 0.8;
+    else if (r < 0.8) veilOther = true;
     if (isBestCard) greenBest = plateFill && outline && d.kind === 'best';
     else if (plateFill || outline || d.kind === 'best') greenOther = true;
   }
@@ -138,7 +163,9 @@ async function main() {
   console.log(`plates-placed: ${placed}`);
   console.log(`green-on-best: ${greenBest}`);
   console.log(`green-on-non-best: ${greenOther}`);
-  if (!frameVisible || !placed || !greenBest || greenOther) process.exit(1);
+  console.log(`veil-on-non-best: ${veilOther}`);
+  console.log(`veil-on-best: ${veilBest}`);
+  if (!frameVisible || !placed || !greenBest || greenOther || veilOther || veilBest) process.exit(1);
 }
 
 main();
