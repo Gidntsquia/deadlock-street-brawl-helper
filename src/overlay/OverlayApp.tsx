@@ -155,8 +155,9 @@ export default function OverlayApp() {
       flip,
     });
   };
+  // `mouseleave` is not trusted for the badge tip: a click-through window with forwarded moves gets spurious ones
+  // (e.g. each time main re-raises the overlay), and a still cursor sends no move to bring the tip back.
   const clearHover = () => {
-    hideDotTip();
     if (hoverRef.current === null) return;
     hoverRef.current = null;
     setHover(null);
