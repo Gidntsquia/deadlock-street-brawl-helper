@@ -126,7 +126,10 @@ describe('worker: the draft gate on real frames', () => {
 
     // The pick: for over a second the old cards stay up while the label and inventory grid already show the next
     // choice. Before the gate this re-accepted the old cards as "choice 2".
+    // (the pick shows once the OCR/grid read lands in real time, so under load run until it has, not a fixed count)
     const linger = await run('oldCardsNewLabel', 20);
+    for (let i = 0; i < 100 && !(linger.at(-1)!.spent && !linger.at(-1)!.live); i++)
+      linger.push(await frame('oldCardsNewLabel'));
     expect(accepts(linger)).toEqual([]);
     expect(linger.some((o) => o.picked === 1548066885)).toBe(true); // the card that landed in the grid
     expect(linger.at(-1)!.live).toBe(false);
@@ -137,7 +140,9 @@ describe('worker: the draft gate on real frames', () => {
     expect(accepts(passing)).toEqual([]);
     expect(passing.every((o) => !o.live)).toBe(true);
 
-    const second = await run('c2', 8);
+    const second: Out[] = [];
+    for (let i = 0; i < 120 && !second.some((o) => o.accepted); i++) second.push(await frame('c2'));
+    second.push(...(await run('c2', 2)));
     const got = accepts(second);
     expect(got).toHaveLength(1);
     expect(got[0]![1]).toBe(1);

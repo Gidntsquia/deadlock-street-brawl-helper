@@ -1426,6 +1426,9 @@ footer {
   --bg-raised: #171c1d;
   --bg-hover: #1f2627;
   --overlay-panel: rgba(16, 19, 20, 0.85);
+  --overlay-grey: #8a9092;
+  --overlay-veil: rgba(0, 0, 0, 0.35);
+  --overlay-dim: 0.6;
   --teal: #2ec4b6;
   --teal-dim: #1b6f68;
   --teal-ink: #06201d;

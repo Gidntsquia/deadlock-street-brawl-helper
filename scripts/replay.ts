@@ -52,8 +52,14 @@ interface FramesFile {
   regions: { x: number; y: number; width: number; height: number; file: string }[];
 }
 
+/** `waitNames`: hold the first frame until its three name reads land (up to 8 s). For a synthetic recording on a loaded
+ *  machine; real recordings keep the fixed beat, since their timing is part of what they pin. */
+export interface ReplayOpts {
+  waitNames?: boolean;
+}
+
 /** Replays one draft folder (`dNNN` with draft.json, frames.json and the crops). */
-export async function replayDraft(dir: string): Promise<ReplayDraft> {
+export async function replayDraft(dir: string, opts: ReplayOpts = {}): Promise<ReplayDraft> {
   await boot();
   const live: DraftRecord = JSON.parse(readFileSync(path.join(dir, 'draft.json'), 'utf8'));
   const frames: FramesFile[] = JSON.parse(readFileSync(path.join(dir, 'frames.json'), 'utf8'));
@@ -64,6 +70,7 @@ export async function replayDraft(dir: string): Promise<ReplayDraft> {
   let prevT = frames[0]?.t ?? 0;
   let virtual = 0;
   const stat: StatFrame[] = [];
+  let first = true;
   for (const f of frames) {
     virtual += Math.min(f.t - prevT, GAP_MS);
     prevT = f.t;
@@ -80,6 +87,15 @@ export async function replayDraft(dir: string): Promise<ReplayDraft> {
     handler({ data: { type: 'frame', width: live.frameW, height: live.frameH, regions, prefer: [] } });
     // the name reads finish a moment after the frame; give them the time the page would
     await new Promise((r) => setTimeout(r, 40));
+    // the first frame's three name reads include the OCR engine's slow start: wait for them (up to 8 s) instead of a fixed
+    // beat, so a loaded machine replays the same draft as an idle one
+    for (
+      let w = 0;
+      w < 400 && opts.waitNames && !stat.length && first && posted.filter((m) => m.type === 'name').length < 3;
+      w++
+    )
+      await new Promise((r) => setTimeout(r, 20));
+    first = false;
     const res = posted.find((m): m is Result => m.type === 'result');
     if (!res) continue;
     stat.push({
@@ -107,12 +123,12 @@ export async function replayDraft(dir: string): Promise<ReplayDraft> {
 }
 
 /** Replays every draft of a session folder (`m-...`). */
-export async function replaySession(folder: string): Promise<ReplayDraft[]> {
+export async function replaySession(folder: string, opts: ReplayOpts = {}): Promise<ReplayDraft[]> {
   const out: ReplayDraft[] = [];
   const dirs = readdirSync(folder)
     .filter((n) => /^d\d+$/.test(n) && existsSync(path.join(folder, n, 'draft.json')))
     .sort();
-  for (const [i, n] of dirs.entries()) out.push({ ...(await replayDraft(path.join(folder, n))), n: i + 1 });
+  for (const [i, n] of dirs.entries()) out.push({ ...(await replayDraft(path.join(folder, n), opts)), n: i + 1 });
   return out;
 }
 

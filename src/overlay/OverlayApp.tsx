@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
+  bonusesFromAdvice,
   drawReads,
   drawReading,
   drawDot,
@@ -75,6 +76,8 @@ export default function OverlayApp() {
           scoresFromAdvice(state.advice),
           state.rerollRect ?? null,
           gradesFromAdvice(state.advice),
+          undefined,
+          bonusesFromAdvice(state.advice),
         ),
       );
     // The `Reading` sign stands in until the plates come, and is never drawn with them.
