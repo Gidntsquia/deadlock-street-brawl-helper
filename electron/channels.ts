@@ -24,6 +24,9 @@ export const CHANNELS = {
   // Debug: the frame capture sees at a Detect now press, saved as a PNG next to the app's data.
   saveDebugFrame: 'save-debug-frame',
   detectKeyState: 'detect-key-state',
+  // The one problem that stops the app (exclusive fullscreen, window too small, capture denied, F8 taken), or null.
+  problem: 'problem',
+  problemGet: 'problem-get',
   detectKeyGet: 'detect-key-get',
   platformWarning: 'platform-warning',
   // Tray menu "Debug panel" entry: main -> control window, toggles the hidden Debug panel.

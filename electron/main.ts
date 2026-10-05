@@ -16,6 +16,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { writeFileSync, readdirSync, readFileSync } from 'node:fs';
 import {
   findGameWindow,
+  gameWindowIsBorderless,
   grabScreenRegion,
   isGameForeground,
   isGameWindowTitle,
@@ -23,7 +24,8 @@ import {
   sendWindowToBottom,
   type Rect,
 } from './gameWindow';
-import { probeShopScreen } from './shopProbe';
+import { probeIsBlack, probeShopScreen } from './shopProbe';
+import { PROBLEM_TEXT, problemFor, type Problem } from '../src/brawl/problems';
 import { CHANNELS } from './channels';
 import { SessionStore, type DraftRecord, type FrameShot, type RegionShot } from './sessionStore';
 import { debugDefault } from '../src/brawl/debugMode';
@@ -108,6 +110,11 @@ let lobby = initialLobby();
 let lastDot: DotState | null = null;
 let f8Registered = false;
 let f8InUse = false;
+let problem: Problem | null = null;
+let noticeText: string | null = null;
+let noticeTimer: ReturnType<typeof setTimeout> | null = null;
+let blackTicks = 0;
+const NOTICE_MS = 5000;
 const DETECT_KEY = 'F8';
 const probeMode = () => process.platform === 'win32' && !process.env.BRAWL_E2E && !alive(testWindow);
 function captureState() {
@@ -363,10 +370,34 @@ function currentDot(): DotState | null {
 }
 /** Sends the overlay the control window's last state plus the dot (which only the main process knows). */
 function relayOverlay() {
-  const state = { ...(lastOverlayState ?? BLANK_OVERLAY), dot: lastDot };
+  const state = { ...(lastOverlayState ?? BLANK_OVERLAY), dot: lastDot, notice: noticeText };
   overlayWanted = overlayHasContent(state);
   syncOverlay();
   if (alive(overlay) && !overlay.webContents.isDestroyed()) overlay.webContents.send(CHANNELS.overlayState, state);
+}
+/** Works out the one problem to show; a new one goes to the window and to the overlay for 5 s. */
+function refreshProblem(found: Rect | null) {
+  const next = problemFor({
+    found: !!found,
+    width: found?.width ?? 0,
+    height: found?.height ?? 0,
+    borderless: gameWindowIsBorderless(),
+    black: blackTicks >= 3,
+    denied: captureFailed,
+    f8InUse,
+  });
+  if (next === problem) return;
+  problem = next;
+  sendControl(CHANNELS.problem, next);
+  if (noticeTimer) clearTimeout(noticeTimer);
+  noticeText = next ? PROBLEM_TEXT[next] : null;
+  if (next) {
+    noticeTimer = setTimeout(() => {
+      noticeText = null;
+      relayOverlay();
+    }, NOTICE_MS);
+  }
+  relayOverlay();
 }
 /** Recomputes the dot; resends the overlay state only when it changed. */
 function refreshDot() {
@@ -474,6 +505,9 @@ function startRectPolling() {
       captureHeld = false;
     }
     syncDetectKey(!!found);
+    blackTicks =
+      found && !alive(testWindow) && isGameForeground() && probeIsBlack(found, grabScreenRegion) ? blackTicks + 1 : 0;
+    refreshProblem(found);
     lobby = stepLobby(lobby, { type: 'tick', found: !!found, now: Date.now() });
     refreshDot();
     // Real game: capture stays off until the draft screen shows up. Only sample the screen while the game is the
@@ -787,6 +821,7 @@ function setupIpc() {
   });
   ipcMain.handle(CHANNELS.detectNow, () => detectNow('button'));
   ipcMain.handle(CHANNELS.detectKeyGet, () => f8InUse);
+  ipcMain.handle(CHANNELS.problemGet, () => problem);
   ipcMain.on(CHANNELS.detectMiss, () => {
     captureWanted = false;
     captureHeld = true;

@@ -1637,3 +1637,17 @@ body:not(.overlay-window) #root {
   letter-spacing: 0.08em;
   color: var(--accent);
 }
+
+.overlay-notice {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 70vw;
+  padding: 8px 14px;
+  border: 1px solid var(--teal);
+  border-radius: 4px;
+  background: rgba(24, 26, 28, 0.94);
+  color: #f2ede4;
+  font-size: 15px;
+}
