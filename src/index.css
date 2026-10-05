@@ -1626,3 +1626,14 @@ body:not(.overlay-window) #root {
   border: 1px solid var(--teal);
   border-radius: var(--radius);
 }
+
+.titlebar-debug {
+  margin-right: 8px;
+  padding: 1px 6px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+}

@@ -23,14 +23,13 @@ vi.mock('../../data/load', () => ({
 afterEach(cleanup);
 
 describe('App Debug panel', () => {
-  it('is hidden at start and Ctrl+Shift+D toggles it', async () => {
+  it('is on at start in dev, shows the DEBUG tag, and Ctrl+Shift+D toggles it', async () => {
     render(<App />);
-    await screen.findByRole('button', { name: /start capture/i });
-    expect(screen.queryByLabelText('Debug panel')).toBeNull();
-    fireEvent.keyDown(window, { key: 'D', ctrlKey: true, shiftKey: true });
-    await waitFor(() => expect(screen.getByLabelText('Debug panel')).toBeTruthy());
+    await screen.findByLabelText('Debug panel');
     expect(screen.getByLabelText('Round')).toBeTruthy();
     fireEvent.keyDown(window, { key: 'D', ctrlKey: true, shiftKey: true });
     await waitFor(() => expect(screen.queryByLabelText('Debug panel')).toBeNull());
+    fireEvent.keyDown(window, { key: 'D', ctrlKey: true, shiftKey: true });
+    await waitFor(() => expect(screen.getByLabelText('Debug panel')).toBeTruthy());
   });
 });
