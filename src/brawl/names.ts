@@ -33,7 +33,11 @@ const lev = (a: string, b: string): number => {
 const similarity = (t: string, n: string): number => {
   const whole = 1 - lev(t, n) / Math.max(t.length, n.length);
   const inside = n.length >= 5 && t.includes(n) ? 0.8 + (0.2 * n.length) / t.length : 0;
-  return Math.max(whole, inside);
+  // Something drawn over one end of the line (a capture glitch, a tooltip) leaves only the other end to read: a
+  // read of six or more letters that is the exact start or end of a longer name counts by how much of it was seen.
+  const part =
+    t.length >= 6 && n.length > t.length && (n.endsWith(t) || n.startsWith(t)) ? 0.7 + (0.3 * t.length) / n.length : 0;
+  return Math.max(whole, inside, part);
 };
 
 export type NameList = { id: number; key: string }[];
