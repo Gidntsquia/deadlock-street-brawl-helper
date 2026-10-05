@@ -16,7 +16,6 @@ vi.mock('../../data/load', () => ({
   img: (p?: string) => p,
 }));
 
-let onCaptureDeniedCb: (() => void) | undefined;
 type CaptureState = { wanted: boolean; probe: boolean };
 let onCaptureStateCb: ((st: CaptureState) => void) | undefined;
 let captureState: CaptureState = { wanted: false, probe: false };
@@ -37,12 +36,7 @@ let onProblemCb: ((p: unknown) => void) | undefined;
   captureIdle,
   sendOverlayState: () => {},
   onOverlayState: () => () => {},
-  onCaptureDenied: (cb: () => void) => {
-    onCaptureDeniedCb = cb;
-    return () => {
-      onCaptureDeniedCb = undefined;
-    };
-  },
+  onCaptureDenied: () => () => {},
   onTestMode: () => () => {},
   getTestMode: () => Promise.resolve({ on: false, frame: '', frames: [], message: null }),
   getPlatformWarning: () => Promise.resolve(null),

@@ -1651,3 +1651,28 @@ body:not(.overlay-window) #root {
   color: #f2ede4;
   font-size: 15px;
 }
+
+.session-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  align-items: center;
+  padding: 6px 0;
+  border-top: 1px solid var(--board-edge);
+  font-size: 13px;
+}
+.session-row.wrong {
+  background: rgba(230, 173, 95, 0.18);
+}
+.session-crops img {
+  height: 44px;
+  margin-right: 4px;
+  border-radius: 2px;
+}
+.session-flags {
+  color: var(--weapon-deep);
+}
+.brawl-problem {
+  margin-top: 6px;
+  color: var(--weapon-deep);
+}
