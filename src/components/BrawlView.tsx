@@ -40,6 +40,7 @@ import {
   type OverlayAdvice,
   type OverlayState,
 } from '../brawl/draw';
+import { SessionReport } from './SessionReport';
 import { PROBLEM_TEXT, statusFor, type Problem } from '../brawl/problems';
 import { breakdownRows } from '../brawl/breakdown';
 import { chooseHero } from '../brawl/heroChoice';
@@ -1260,6 +1261,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
                   </select>
                 </label>
               )}
+              {isElectron && <SessionReport items={items} />}
               {testMode.message && (
                 <span className="brawl-testmode-message" role="alert">
                   {testMode.message}
