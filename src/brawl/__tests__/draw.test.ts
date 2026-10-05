@@ -153,7 +153,7 @@ describe('drawReads', () => {
 
   it('shortens the cell to Enh when full cells would make neighbouring plates touch', () => {
     const a = { ...read(1, 10), enhanced: true };
-    const b = { ...read(2, 280), enhanced: true };
+    const b = { ...read(2, 340), enhanced: true };
     const drawn = drawReads(stubCtx(), [a, b], 1, 1, 1, 2560, 1440, false, SCORES, null, GRADES, THEME, {
       1: 0.5,
       2: 0.5,
