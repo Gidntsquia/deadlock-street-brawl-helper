@@ -40,8 +40,9 @@ import {
   type OverlayAdvice,
   type OverlayState,
 } from '../brawl/draw';
+import { FirstRun } from './FirstRun';
 import { SessionReport } from './SessionReport';
-import { PROBLEM_TEXT, statusFor, type Problem } from '../brawl/problems';
+import { PROBLEM_TEXT, statusFor, type Env, type Problem } from '../brawl/problems';
 import { breakdownRows } from '../brawl/breakdown';
 import { chooseHero } from '../brawl/heroChoice';
 import { DraftLog } from '../brawl/draftLog';
@@ -130,6 +131,13 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
   const [, setDraftSeen] = useState(false);
   const [, setF8InUse] = useState(false);
   const [problem, setProblem] = useState<Problem | null>(null);
+  const [env, setEnv] = useState<Env | null>(null);
+  const [firstRunDone, setFirstRunDone] = usePersisted<boolean>(
+    'firstRunDone',
+    (v): v is boolean => typeof v === 'boolean',
+    false,
+  );
+  const [firstRunOpen, setFirstRunOpen] = useState(false);
   // A running Detect now try: pressed-at time; the first frame result decides hit or miss.
   const detectMissesRef = useRef(0);
   const lastReadSigRef = useRef('');
@@ -671,11 +679,16 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
     void api.getDetectKeyInUse?.().then(setF8InUse);
     const offKey = api.onDetectKeyState?.(setF8InUse);
     void api.getProblem?.().then(setProblem);
+    void api.getEnv?.().then(setEnv);
+    const offEnv = api.onEnv?.(setEnv);
+    const offFirst = api.onFirstRunOpen?.(() => setFirstRunOpen(true));
     const offProblem = api.onProblem?.(setProblem);
     const offRun = api.onDetectRun?.(() => runDetectRef.current());
     return () => {
       offKey?.();
       offProblem?.();
+      offEnv?.();
+      offFirst?.();
       offRun?.();
     };
   }, []);
@@ -1203,6 +1216,23 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
   return (
     <div className="brawl">
       <video ref={videoRef} muted playsInline style={{ display: 'none' }} />
+      {isElectron && (!firstRunDone || firstRunOpen) && (
+        <FirstRun
+          env={env}
+          onShow={() => {
+            void window.brawlAPI!.setTestMode(true).then((st) => {
+              setTestMode(st);
+              void window.brawlAPI!.setTestFrame('choice1').then(setTestMode);
+            });
+            setFirstRunDone(true);
+            setFirstRunOpen(false);
+          }}
+          onDismiss={() => {
+            setFirstRunDone(true);
+            setFirstRunOpen(false);
+          }}
+        />
+      )}
       <div className="panel brawl-controls">
         <div className="brawl-status" role="status" aria-live="polite">
           {statusLine}

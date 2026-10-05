@@ -27,6 +27,10 @@ export const CHANNELS = {
   // The one problem that stops the app (exclusive fullscreen, window too small, capture denied, F8 taken), or null.
   problem: 'problem',
   problemGet: 'problem-get',
+  // What the first-run check reads (window found, size, borderless, black capture), and the tray entry that reopens it.
+  env: 'env',
+  envGet: 'env-get',
+  firstRunOpen: 'first-run-open',
   detectKeyGet: 'detect-key-get',
   platformWarning: 'platform-warning',
   // Tray menu "Debug panel" entry: main -> control window, toggles the hidden Debug panel.

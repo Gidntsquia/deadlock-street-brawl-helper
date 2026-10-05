@@ -142,7 +142,6 @@ function roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: num
   else ctx.rect(x, y, w, h);
 }
 
-
 /** One plate above a card: a tier badge and a label. `best` fills it teal (the item to take); `unknown` draws it grey
  *  for a card that could not be read. Returns its rectangle in frame px. */
 function drawPlate(
