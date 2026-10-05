@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import sharp from 'sharp';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { draftRegions } from '../../src/brawl/recognise';
+import { cardSquares, draftRegions } from '../../src/brawl/recognise';
 import type { WorkerIn, WorkerOut } from '../../src/brawl/worker';
 import type { Item } from '../../src/types';
 
@@ -66,6 +66,13 @@ beforeAll(async () => {
   send = (m) => handler({ data: m });
   frames.c1 = await load('choice1');
   frames.bad = blank(frames.c1, 0);
+  frames.enh = (await sharp('scripts/__tests__/data/enhanced-middle.png').ensureAlpha().raw().toBuffer()) as Buffer; // a real frame: Reactive Barrier enhanced, middle card
+  // the same frame before the ENHANCED label has drawn: the box under the middle card's name painted flat grey
+  frames.noLabel = Buffer.from(frames.enh);
+  const sq = cardSquares(W, H)[1]!,
+    u = sq.edge / 185;
+  for (let y = Math.round(sq.y + sq.edge + 80 * u); y < sq.y + sq.edge + 126 * u; y++)
+    frames.noLabel.fill(70, (y * W + Math.round(sq.x + sq.edge / 2 - 110 * u)) * 4, (y * W + Math.round(sq.x + sq.edge / 2 + 110 * u)) * 4);
   const items: Item[] = JSON.parse(readFileSync('public/data/items.json', 'utf8'));
   send({
     type: 'init',
@@ -119,5 +126,16 @@ describe('worker: the 2.5 s fallback', () => {
     // nothing earlier showed a card at all, and the set then stays unchanged
     for (const o of outs.slice(0, outs.indexOf(first))) expect(o.live).toBe(false);
     for (const o of outs.slice(outs.indexOf(first) + 1)) expect(o.live).toBe(true);
+  });
+});
+
+describe('worker: the ENHANCED mark', () => {
+  it('is kept when the label draws after the card, and shows on the accepted set', async () => {
+    send({ type: 'reset' });
+    const outs = [...(await run('noLabel', 2))];
+    for (let n = 0; n < 120 && !outs.some((o) => o.accepted); n++) outs.push(await frame('enh'));
+    const acc = outs.find((o) => o.accepted)!;
+    expect(acc.reads[1]!.enhanced).toBe(true);
+    expect(outs.filter((o) => o.live).every((o) => o.reads[1]!.enhanced)).toBe(true);
   });
 });

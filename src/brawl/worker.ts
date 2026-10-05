@@ -12,6 +12,7 @@ import {
   readDraftScreen,
   readInventory,
   cardNameCrop,
+  readMarkers,
   cardSquares,
   type CardRead,
   type DecodedIndex,
@@ -167,7 +168,14 @@ const applyNames = (
   choice: number,
 ): { reads: CardRead[]; waiting: boolean; pending: boolean; slotSure: boolean[] } => {
   const squares = cardSquares(img.width, img.height);
-  const pinned = raw.map((r, i) => ({ ...r, match: { ...r.match, ...squares[i]! } }));
+  // The RARE / ENHANCED marks are read at the fixed card square too: the icon search's wobble (an enhanced icon
+  // matches poorly) must not move the box off the label.
+  const pinned = raw.map((r, i) => {
+    const match = { ...r.match, ...squares[i]! };
+    if (!r.present) return { ...r, match };
+    const mk = readMarkers(img, match);
+    return { ...r, match, rare: mk.rare, enhanced: mk.enhanced };
+  });
   if (!names) return { reads: pinned, waiting: false, pending: false, slotSure: pinned.map((r) => r.present) };
   if (choice !== nameChoice) {
     forgetNames(); // the next choice's cards
@@ -193,6 +201,11 @@ const applyNames = (
       rare: l.rare,
       match: { ...r.match, itemId: l.id },
     });
+    // A mark that shows up after the lock (the label draws a beat after the card) is added to it, never removed.
+    if (lock && r.present && r.itemId === lock.id) {
+      lock.enhanced ||= r.enhanced;
+      lock.rare ||= r.rare;
+    }
     if (lock && sig && sameName(lock.sig, sig)) {
       slotSure[slot] = true;
       return asLock(lock);
