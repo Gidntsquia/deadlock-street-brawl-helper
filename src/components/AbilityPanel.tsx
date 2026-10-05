@@ -17,6 +17,7 @@ export function AbilityPanel({ panel, className = '' }: { panel: AbilityPanelDat
       <div className="ap-title">
         Round {panel.round}: {panel.points} points
       </div>
+      <div className="ap-evidence">{panel.evidence}</div>
       {panel.slots.map((s) => (
         <div key={s.key} className="ap-col" data-ability={s.name}>
           {s.tiers.map((st: PointState, i) => (

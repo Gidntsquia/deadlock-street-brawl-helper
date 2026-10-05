@@ -45,7 +45,7 @@ describe('ability tip lifecycle', () => {
     expect(overlayHasContent(null)).toBe(false);
     expect(overlayHasContent({ draft: false, panel: null })).toBe(false);
     expect(overlayHasContent({ draft: true, panel: null })).toBe(true);
-    expect(overlayHasContent({ draft: false, panel: { round: 1, slots: [] } })).toBe(true);
+    expect(overlayHasContent({ draft: false, panel: { round: 1, slots: [], evidence: '' } })).toBe(true);
   });
 });
 
