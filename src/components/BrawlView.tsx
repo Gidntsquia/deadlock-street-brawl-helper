@@ -1131,17 +1131,17 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
         setTook(name);
         log('brawl-view', 'info', 'draft.picked', { item: r.picked, name });
       }
-      const hidden = r.shop && seen < 3 ? ' · move the mouse off the cards' : '';
+      const hidden = r.shop && seen < 3 ? ', move the mouse off the cards' : '';
       const names = !r.shop
         ? 'waiting for the shop'
         : r.spent || r.picked
-          ? 'selection made · waiting for the next cards'
+          ? 'selection made, waiting for the next cards'
           : seen === 3 && !r.live
             ? 'reading the new cards…'
             : seen === 3
               ? r.reads.map((x) => byId.get(x.itemId)?.name ?? '?').join(' / ')
               : heroDetected
-                ? `hero: ${hero.name} · ${seen}/3 cards found${hidden}`
+                ? `hero: ${hero.name}, ${seen}/3 cards found${hidden}`
                 : `${seen}/3 cards found${hidden}`;
       setStatus(names);
     };
@@ -1330,7 +1330,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
               >
                 {[1, 2, 3].map((c) => (
                   <option key={c} value={c}>
-                    {c} of 3{tiers[c - 1] ? ` · tier ${tiers[c - 1].normal} (rare ${tiers[c - 1].rare})` : ''}
+                    {c} of 3{tiers[c - 1] ? `, tier ${tiers[c - 1].normal} (rare ${tiers[c - 1].rare})` : ''}
                   </option>
                 ))}
               </select>
@@ -1379,11 +1379,11 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
             createPortal(
               <div className="pip">
                 <h2>
-                  {hero.name} · round {round}, choice {choice}
+                  {hero.name}, round {round}, choice {choice}
                 </h2>
                 {reroll && (
                   <div className="brawl-reroll-banner">
-                    RE-ROLL this set — expected best {reroll.expectedBest.toFixed(2)} vs {reroll.currentBest.toFixed(2)}{' '}
+                    Re-roll this set: expected best {reroll.expectedBest.toFixed(2)} vs {reroll.currentBest.toFixed(2)}{' '}
                     on screen
                     <button className="btn" onClick={rerolled}>
                       I re-rolled

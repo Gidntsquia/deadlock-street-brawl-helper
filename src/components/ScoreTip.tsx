@@ -16,7 +16,7 @@ export function ScoreTip({
   return (
     <div className={className} style={style} role="tooltip">
       <div className="tip-head">
-        {card.name} · {card.grade}
+        {card.name}, {card.grade}
       </div>
       {card.rows.map((r) => (
         <div key={r.label} className="tip-row">
