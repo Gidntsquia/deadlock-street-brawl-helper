@@ -26,7 +26,7 @@ async function nodeOcrDir(): Promise<string> {
 /** Absolute URLs into public/ocr. A root-relative '/ocr/...' is invalid under file:// (packaged app), where it
  *  resolves to file:///ocr/; the built worker lives in dist/assets/, so the bundle is at ../ocr there. */
 function browserOcrOpts() {
-  const dir = import.meta.env.DEV
+  const dir = import.meta.env?.DEV
     ? new URL('/ocr/', self.location.href).href
     : new URL('../ocr/', self.location.href).href;
   const base = dir.replace(/\/$/, '');

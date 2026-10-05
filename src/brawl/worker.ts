@@ -376,7 +376,7 @@ const forgetDraft = () => {
 };
 // Dev builds only (`import.meta.env.DEV` is false in a production build, so this all folds away): milliseconds per
 // recogniser stage, sent back on each result for the page's perf summary.
-const DEV = import.meta.env.DEV;
+const DEV = import.meta.env?.DEV;
 let stages: Record<string, number> | undefined;
 const stage = <T>(name: string, fn: () => T): T => {
   if (!stages) return fn();
