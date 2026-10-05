@@ -3,7 +3,7 @@ import type { Rect } from './gameWindow';
 import type { OverlayState } from '../src/brawl/draw';
 import { CHANNELS } from './channels';
 import type { DraftRecord, FrameShot, SessionSummary } from './sessionStore';
-import type { Problem } from '../src/brawl/problems';
+import type { Env, Problem } from '../src/brawl/problems';
 
 export interface TestModeState {
   on: boolean;
@@ -50,6 +50,21 @@ const api = {
     ipcRenderer.on(CHANNELS.problem, listener);
     return () => {
       ipcRenderer.removeListener(CHANNELS.problem, listener);
+    };
+  },
+  onEnv: (cb: (e: Env) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, e: Env) => cb(e);
+    ipcRenderer.on(CHANNELS.env, listener);
+    return () => {
+      ipcRenderer.removeListener(CHANNELS.env, listener);
+    };
+  },
+  getEnv: (): Promise<Env | null> => ipcRenderer.invoke(CHANNELS.envGet),
+  onFirstRunOpen: (cb: () => void) => {
+    const listener = () => cb();
+    ipcRenderer.on(CHANNELS.firstRunOpen, listener);
+    return () => {
+      ipcRenderer.removeListener(CHANNELS.firstRunOpen, listener);
     };
   },
   getProblem: (): Promise<Problem | null> => ipcRenderer.invoke(CHANNELS.problemGet),

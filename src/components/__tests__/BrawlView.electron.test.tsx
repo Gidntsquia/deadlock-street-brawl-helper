@@ -71,6 +71,7 @@ const calls = () => (window as unknown as { __getDisplayMediaCalls: () => number
 
 describe('BrawlView main view (Electron)', () => {
   beforeEach(() => {
+    localStorage.setItem('brawl.firstRunDone', 'true');
     onCaptureStateCb = undefined;
     captureState = { wanted: false, probe: true };
     let n = 0;
@@ -116,6 +117,59 @@ describe('BrawlView main view (Electron)', () => {
     }
     act(() => onProblemCb!(null));
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+  });
+});
+
+describe('First-run check (Electron)', () => {
+  it('shows three lines and Show me, runs the test-mode draft, and is not shown again once dismissed', async () => {
+    localStorage.clear();
+    const api = (window as unknown as { brawlAPI: Record<string, unknown> }).brawlAPI;
+    const st = { on: true, frame: 'choice1', frames: ['choice1'], message: null };
+    api.setTestMode = vi.fn(() => Promise.resolve(st));
+    api.setTestFrame = vi.fn(() => Promise.resolve(st));
+    api.getEnv = () =>
+      Promise.resolve({
+        found: true,
+        width: 1920,
+        height: 1080,
+        borderless: true,
+        black: false,
+        denied: false,
+        f8InUse: false,
+      });
+    const { unmount } = render(<BrawlView {...props()} />);
+    const box = await screen.findByLabelText('First-run check');
+    expect(box.querySelectorAll('li').length).toBe(3);
+    await waitFor(() => expect(box.textContent).toContain('Deadlock found ok'));
+    expect(box.textContent).toContain('Borderless Windowed ok');
+    expect(box.textContent).toContain('Resolution readable ok');
+    screen.getByRole('button', { name: 'Show me' }).click();
+    await waitFor(() => expect(api.setTestFrame).toHaveBeenCalledWith('choice1'));
+    expect(api.setTestMode).toHaveBeenCalledWith(true);
+    unmount();
+    render(<BrawlView {...props()} />);
+    await screen.findByRole('status');
+    expect(screen.queryByLabelText('First-run check')).toBeNull();
+  });
+
+  it('shows an instruction with no tick when Borderless cannot be detected', async () => {
+    localStorage.clear();
+    const api = (window as unknown as { brawlAPI: Record<string, unknown> }).brawlAPI;
+    api.getEnv = () =>
+      Promise.resolve({
+        found: true,
+        width: 1920,
+        height: 1080,
+        borderless: null,
+        black: false,
+        denied: false,
+        f8InUse: false,
+      });
+    render(<BrawlView {...props()} />);
+    const box = await screen.findByLabelText('First-run check');
+    await waitFor(() => expect(box.textContent).toContain('Set Display Mode to Borderless Windowed in Video settings'));
+    expect(box.textContent).not.toContain('Borderless Windowed ok');
+    expect(box.textContent).not.toContain('Borderless Windowed not yet');
   });
 });
 

@@ -25,7 +25,7 @@ import {
   type Rect,
 } from './gameWindow';
 import { probeIsBlack, probeShopScreen } from './shopProbe';
-import { PROBLEM_TEXT, problemFor, type Problem } from '../src/brawl/problems';
+import { PROBLEM_TEXT, problemFor, type Env, type Problem } from '../src/brawl/problems';
 import { CHANNELS } from './channels';
 import { SessionStore, type DraftRecord, type FrameShot, type RegionShot } from './sessionStore';
 import { debugDefault } from '../src/brawl/debugMode';
@@ -114,6 +114,7 @@ let problem: Problem | null = null;
 let noticeText: string | null = null;
 let noticeTimer: ReturnType<typeof setTimeout> | null = null;
 let blackTicks = 0;
+let lastEnv: Env | null = null;
 const NOTICE_MS = 5000;
 const DETECT_KEY = 'F8';
 const probeMode = () => process.platform === 'win32' && !process.env.BRAWL_E2E && !alive(testWindow);
@@ -377,15 +378,20 @@ function relayOverlay() {
 }
 /** Works out the one problem to show; a new one goes to the window and to the overlay for 5 s. */
 function refreshProblem(found: Rect | null) {
-  const next = problemFor({
+  const env: Env = {
     found: !!found,
     width: found?.width ?? 0,
     height: found?.height ?? 0,
-    borderless: gameWindowIsBorderless(),
+    borderless: found ? gameWindowIsBorderless() : null,
     black: blackTicks >= 3,
     denied: captureFailed,
     f8InUse,
-  });
+  };
+  if (JSON.stringify(env) !== JSON.stringify(lastEnv)) {
+    lastEnv = env;
+    sendControl(CHANNELS.env, env);
+  }
+  const next = problemFor(env);
   if (next === problem) return;
   problem = next;
   sendControl(CHANNELS.problem, next);
@@ -822,6 +828,7 @@ function setupIpc() {
   ipcMain.handle(CHANNELS.detectNow, () => detectNow('button'));
   ipcMain.handle(CHANNELS.detectKeyGet, () => f8InUse);
   ipcMain.handle(CHANNELS.problemGet, () => problem);
+  ipcMain.handle(CHANNELS.envGet, () => lastEnv);
   ipcMain.on(CHANNELS.detectMiss, () => {
     captureWanted = false;
     captureHeld = true;
@@ -886,6 +893,7 @@ function setupTray() {
       { label: 'Toggle overlay', click: toggleOverlay },
       { label: 'Detect now (F8)', click: () => detectNow('tray') },
       { label: 'Debug panel', click: toggleDebugPanel },
+      { label: 'First-run check', click: () => sendControl(CHANNELS.firstRunOpen) },
       { label: 'Toggle test mode', click: () => (alive(testWindow) ? stopTestMode() : void startTestMode()) },
       { label: 'Quit', click: () => app.quit() },
     ]),
