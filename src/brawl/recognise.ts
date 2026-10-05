@@ -385,6 +385,8 @@ export interface CardRead {
   tier: number;
   rare: boolean;
   enhanced: boolean;
+  /** Set by the worker's fallback: the card could not be read in time. It is shown as a grey `?` plate, never as an item. */
+  unsure?: boolean;
 }
 
 /** Reads the three draft cards of a full-screen capture. Items that share an icon are told apart by the tier numeral. */

@@ -41,6 +41,8 @@ import {
   type OverlayState,
 } from '../brawl/draw';
 import { breakdownRows } from '../brawl/breakdown';
+import { chooseHero } from '../brawl/heroChoice';
+import { unknownCeiling } from '../brawl/engine';
 import { itemTiers, type BrawlTierListData } from '../brawl/tierlist';
 import { AbilityPanel } from './AbilityPanel';
 import { AdvicePanel } from './AdvicePanel';
@@ -86,6 +88,14 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
   const [enemies, setEnemies] = usePersisted('enemies', isEnemies, Array(ENEMY_SLOTS).fill(0));
   const [owned, setOwned] = useState<number[]>([]);
   const [cards, setCards] = useState<Offer[]>([]);
+  /** Cards of the accepted set the fallback could not read (shown as grey `?` plates, never ranked). */
+  const [unsure, setUnsure] = useState(0);
+  /** No sure hero read this match and none kept: the window's own hero is used and the panel stays away. */
+  const [heroNotRead, setHeroNotRead] = useState(false);
+  const heroNotReadRef = useRef(false);
+  const lastSureHeroRef = useRef(0);
+  /** The overlay state of the set on screen, held unchanged until that set is no longer live. */
+  const frozenRef = useRef<{ key: string; state: OverlayState } | null>(null);
   const [capture, setCapture] = useState<'off' | 'starting' | 'on'>('off');
   const captureStateRef = useRef<'off' | 'starting' | 'on'>('off');
   captureStateRef.current = capture;
@@ -227,11 +237,25 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
   const enemyIds = useMemo(() => enemies.filter(Boolean), [enemies]);
   const heroId = hero.id;
   const advice = useMemo(() => {
-    if (!input || cards.length < 3) return null; // advise only once all 3 cards are read
+    // advise only once all 3 cards are read, or (fallback) the sure ones with the others shown as `?`
+    if (!input || cards.length === 0 || cards.length + unsure < 3) return null;
     const sets: Offer[][] = [[], [], []];
     sets[choice - 1] = cards;
-    return adviseDraft(input, { round, owned, enemies: enemyIds, sets });
-  }, [input, cards, round, owned, choice, enemyIds]);
+    const a = adviseDraft(input, { round, owned, enemies: enemyIds, sets });
+    return unsure ? { ...a, reroll: null } : a; // no re-roll call on a set with an unread card
+  }, [input, cards, unsure, round, owned, choice, enemyIds]);
+  /** With an unread card the best sure card is only taken when it beats anything that card could be. */
+  const takeOk = useMemo(() => {
+    if (!unsure || !input || !advice) return true;
+    const sets: Offer[][] = [[], [], []];
+    sets[choice - 1] = cards;
+    const top = advice.sets[choice - 1]?.[0]?.score ?? -Infinity;
+    return top > unknownCeiling(input, { round, owned, enemies: enemyIds, sets }, choice - 1);
+  }, [unsure, input, advice, cards, round, owned, choice, enemyIds]);
+  const unsureRef = useRef(0);
+  unsureRef.current = unsure;
+  const takeOkRef = useRef(true);
+  takeOkRef.current = takeOk;
   const ranked: RankedOffer[] = useMemo(() => advice?.sets[choice - 1] ?? [], [advice, choice]);
   useEffect(() => {
     rankedRef.current = ranked;
@@ -246,8 +270,9 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
   const abilityStepNow = abilityStepIndex(round, choice);
   // The standard point allocation for this round, shown ~15 s after the draft closes (latched then).
   const abilityTarget = useMemo(
-    () => (abilityOrder && input ? abilityPanelFor(abilityOrder, hero, input.abilities, round) : null),
-    [abilityOrder, input, hero, round],
+    () =>
+      abilityOrder && input && !heroNotRead ? abilityPanelFor(abilityOrder, hero, input.abilities, round) : null,
+    [abilityOrder, input, hero, round, heroNotRead],
   );
   useEffect(() => {
     abilityTargetRef.current = abilityTarget;
@@ -264,11 +289,18 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
       // A newly accepted set's reads arrive before React has ranked it: sending them now would draw them with the
       // previous set's scores and pick for a frame. Wait for the advice effect, which pushes again once it has run.
       const adviceIds = overlayAdviceRef.current?.ranked.map((r) => r.itemId) ?? [];
-      if (draft && adviceIds.length && readsRef.current.some((r) => r.present && !adviceIds.includes(r.itemId))) return;
+      if (
+        draft &&
+        adviceIds.length &&
+        readsRef.current.some((r) => r.present && !r.unsure && !adviceIds.includes(r.itemId))
+      )
+        return;
       const rerollNow = !!rerollRef.current;
+      const plates = draft && readsRef.current.some((r) => r.present);
       state = {
         reads: draft ? readsRef.current : [],
-        bestId: rerollNow ? null : (rankedRef.current[0]?.item.id ?? null),
+        reading: draft && !plates,
+        bestId: rerollNow || !takeOkRef.current ? null : (rankedRef.current[0]?.item.id ?? null),
         reroll: rerollNow && draft,
         rerollRect: rerollNow && draft ? rerollRectRef.current : null,
         frameW: frameDimsRef.current.w,
@@ -278,6 +310,13 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
         panel: tipNow,
       };
     }
+    // Plates, take mark and re-roll call are shown as one step and then held: nothing about them changes until the set
+    // does (a hover, a late re-roll read or an owned-list update must not move them).
+    if (state.draft && state.reads.some((r) => r.present)) {
+      const f = frozenRef.current;
+      if (f && f.key === acceptedKeyRef.current) state = { ...f.state, rerollRect: state.rerollRect, panel: null };
+      else frozenRef.current = { key: acceptedKeyRef.current, state };
+    } else frozenRef.current = null;
     const json = JSON.stringify(state);
     if (json === lastOverlayJsonRef.current) return;
     lastOverlayJsonRef.current = json;
@@ -828,6 +867,10 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
         }
         return;
       }
+      if (ev.data.type === 'seen') {
+        stepTracker(true); // the draft screen is up: the overlay shows its `Reading` sign now
+        return;
+      }
       if (ev.data.type === 'rerolls') {
         // OCR runs off the hot path (see worker.ts); only apply it if the card set it was read for is
         // still the one on screen -- otherwise a slow OCR result from a since-superseded set would
@@ -860,7 +903,8 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
       readsRef.current = r.live ? stableRef.current.reads : [];
       const seen = r.reads.filter((x) => x.present).length;
       if (r.accepted) {
-        const offers = r.reads.map(toOffer);
+        const offers = r.reads.filter((x) => !x.unsure).map(toOffer);
+        setUnsure(r.reads.filter((x) => x.unsure).length);
         for (const o of offers) offeredRef.current.add(o.itemId);
         if (cardsRef.current.length) prevCardsRef.current = cardsRef.current;
         cardsRef.current = offers;
@@ -906,7 +950,14 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
         if (!meta.self) {
           log('brawl-view', 'debug', 'hero.detect.miss', { bar: meta.bar });
         }
-        const me = meta.self && heroes.some((h) => h.id === meta.self) ? meta.self : heroId;
+        if (meta.round === 1 && meta.choice === 1) lastSureHeroRef.current = 0; // a new match: last match's hero is not kept
+        const read = meta.self && heroes.some((h) => h.id === meta.self) ? meta.self : 0;
+        const pick = chooseHero(read, lastSureHeroRef.current, heroId);
+        if (read) lastSureHeroRef.current = read;
+        const notRead = pick.source === 'selected';
+        heroNotReadRef.current = notRead;
+        setHeroNotRead(notRead);
+        const me = pick.heroId;
         if (me !== heroId) {
           const score = [...meta.bar.left, ...meta.bar.right].find((m) => m.heroId === me)?.score;
           log('brawl-view', 'info', 'hero.detect', { from: heroId, to: me, score });
@@ -973,10 +1024,11 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
       const heroDetected = r.accepted && r.meta!.self && r.meta!.self === heroId;
       // The worker's gate says when the accepted set no longer stands: a selection was made from it, the screen is
       // changing to the next set, or a card stayed hidden for a few frames. Its advice must not stay up meanwhile.
-      if (r.shop && !r.live && cardsRef.current.length) {
+      if (r.shop && !r.live && (cardsRef.current.length || unsureRef.current)) {
         prevCardsRef.current = cardsRef.current;
         cardsRef.current = [];
         setCards([]);
+        setUnsure(0);
       }
       if (r.picked) {
         const name = byId.get(r.picked)?.name ?? '';

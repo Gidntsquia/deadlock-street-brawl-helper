@@ -64,6 +64,7 @@ export type WorkerIn =
  *  browser tab is hidden; worker timers are not, so the advice keeps updating without alt-tabbing. */
 export type WorkerOut =
   | FrameResult
+  | { type: 'seen' } // the probe saw the draft screen: no cards are read yet
   | { type: 'tick'; full: boolean } // full: send a whole frame; otherwise just the probe crop
   | { type: 'rerolls'; forKey: string; rerollsRemaining: number }
   // a card's name line was read: what the icon said, the OCR text, and the item it names (0: no clear match)
@@ -107,7 +108,7 @@ const NAME_RETRY_MS = 700;
 /** An icon match at least this good is trusted on its own; below it a card waits for its name. */
 const SURE_SCORE = 0.8,
   SURE_MARGIN = 0.08;
-/** A slot whose name reads keep failing falls back to its icon guess after this long. */
+/** A slot whose name reads keep failing falls back to its icon after this long, when the icon is a clear match. */
 const NAME_GIVE_UP_MS = 1500;
 interface SlotLock {
   id: number;
@@ -164,10 +165,10 @@ const applyNames = (
   img: Parameters<typeof cardNameCrop>[0],
   raw: CardRead[],
   choice: number,
-): { reads: CardRead[]; waiting: boolean; pending: boolean } => {
+): { reads: CardRead[]; waiting: boolean; pending: boolean; slotSure: boolean[] } => {
   const squares = cardSquares(img.width, img.height);
   const pinned = raw.map((r, i) => ({ ...r, match: { ...r.match, ...squares[i]! } }));
-  if (!names) return { reads: pinned, waiting: false, pending: false };
+  if (!names) return { reads: pinned, waiting: false, pending: false, slotSure: pinned.map((r) => r.present) };
   if (choice !== nameChoice) {
     forgetNames(); // the next choice's cards
     nameChoice = choice;
@@ -176,6 +177,8 @@ const applyNames = (
   const now = performance.now();
   let waiting = false,
     pending = false;
+  // A slot is sure when its name is locked, or (no lock yet) its icon is a clear match. The fallback shows the rest as `?`.
+  const slotSure = [false, false, false];
   const out = pinned.map((r, slot) => {
     const crop = cardNameCrop(img, r.match);
     const sig = crop ? nameSig(crop) : null;
@@ -230,18 +233,24 @@ const applyNames = (
         waiting = true;
         return r;
       }
+      slotSure[slot] = true;
       return asLock(lock);
     }
     // No lock yet. A sure icon offers its set to the gate so the settle time runs while the name is read (`pending`
     // holds the accept until it is in); a shaky one keeps the set out. After the name has failed to read for a while,
     // the icon guess stands.
     const f = nameFail[slot];
-    if (f && now - f.since > NAME_GIVE_UP_MS && r.present) return r;
+    // Only a clear icon stands on its own once the name will not read: a shaky guess is never put on screen.
+    if (f && now - f.since > NAME_GIVE_UP_MS && r.present && sure) {
+      slotSure[slot] = true;
+      return r;
+    }
     pending = true;
     if (!sure) waiting = true;
+    else slotSure[slot] = true;
     return r;
   });
-  return { reads: out, waiting, pending };
+  return { reads: out, waiting, pending, slotSure };
 };
 let lastKey = '',
   acceptedKey = '';
@@ -343,6 +352,11 @@ const OFF_FRAMES = 3;
 let offFrames = 0;
 let acceptedRound = 0,
   acceptedChoice = 0;
+/** Without a sure read of all three cards this long after the draft screen (or a new set) appeared, the sure cards are
+ *  advised and each other card shows a grey `?`. */
+export const FALLBACK_MS = 2500;
+let readingSince: number | null = null; // when the current not-yet-accepted screen was first seen
+let frozenReads: CardRead[] | null = null; // the accepted set's reads, sent unchanged for as long as the set is live
 
 const forgetDraft = () => {
   forgetNames();
@@ -353,6 +367,7 @@ const forgetDraft = () => {
   settledSig = pendingSig = null;
   knownHero = null;
   acceptedRound = acceptedChoice = 0;
+  readingSince = frozenReads = null;
   gate = initialGate();
   stableInv = null;
 };
@@ -443,6 +458,7 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
       origin: { x: msg.x, y: msg.y, fullWidth: msg.frameW, fullHeight: msg.frameH },
     };
     if (isShopScreen(crop)) {
+      post({ type: 'seen' }); // the page can show its `Reading` sign before the first full frame is read
       tick(0, true); // a draft screen: ask for the whole frame right away
       return;
     }
@@ -512,6 +528,20 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
   const seen = reads.filter((r) => r.present).length;
   // A set with a shaky card whose name is still being read is not a full set yet: the gate must not settle on it.
   const key = seen === 3 && !named.waiting ? reads.map((r) => `${r.itemId}${r.enhanced ? '+' : ''}`).join(',') : '';
+  const nowMs = performance.now();
+  if (!gate.live && readingSince === null) readingSince = nowMs;
+  // Fallback: no sure set within FALLBACK_MS. The sure cards are advised, the others become `?`. Never for a set the
+  // player already picked from (its cards read sure, so it never gets here with its own key).
+  const fullKey = seen === 3 ? reads.map((r) => `${r.itemId}${r.enhanced ? '+' : ''}`).join(',') : '';
+  const fbDue =
+    !gate.live &&
+    readingSince !== null &&
+    nowMs - readingSince >= FALLBACK_MS &&
+    !gate.spent.some((k) => fullKey && k.replace(/\+/g, '') === fullKey.replace(/\+/g, ''));
+  const fbReads = reads.map((r, i) =>
+    named.slotSure[i] && r.present ? r : { ...r, present: true, unsure: true, itemId: 0, tier: 0, enhanced: false },
+  );
+  const fbKey = fbDue ? fbReads.map((r) => (r.unsure ? '?' : `${r.itemId}${r.enhanced ? '+' : ''}`)).join(',') : '';
   let meta: DraftMeta | null = null,
     inventory: number[] | null = null;
   if (key && key === lastKey) {
@@ -533,10 +563,14 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
       if (acceptedKey) post({ type: 'rerolls', forKey: acceptedKey, rerollsRemaining: v });
     });
   // The gate decides when this screen is settled enough to advise on, and spots the player's selection.
+  const inFallback = !!gate.last && gate.live && gate.last.key.includes('?');
   const g = stepGate(gate, {
     ready: !named.pending && (!set || (rr.set === set && rr.value !== null)),
-    key,
-    present: reads.filter((r) => r.present).map((r) => r.itemId),
+    key: fbDue ? fbKey : key,
+    force: fbDue,
+    present: reads
+      .filter((r, i) => r.present && (!inFallback || named.slotSure[i]))
+      .map((r) => r.itemId),
     round: labels.round,
     choice: labels.choice,
     now: performance.now(),
@@ -546,6 +580,8 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
   if (g.live && gate.last) acceptedRound = gate.last.round;
   const accepted = g.accept;
   if (accepted) {
+    readingSince = null;
+    frozenReads = fbDue ? fbReads : reads;
     acceptedKey = key;
     acceptedChoice = labels.choice;
     acceptedRound = labels.round;
@@ -566,19 +602,25 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
       inventory = stableInv;
     }
   }
-  if (!g.live) acceptedKey = '';
+  if (!g.live) {
+    acceptedKey = '';
+    frozenReads = null;
+  }
+  // The accepted set is sent as it was accepted until it stops being live: nothing about it moves with the hover.
+  const sent = g.live && frozenReads ? frozenReads : reads;
+  if (g.live && fbDue) acceptedKey = fbKey;
   lastKey = key;
   pendingSig = key ? sig : null;
   pendingReads = raw;
   pendingChoice = labels.choice;
   settledSig = key !== '' && key === acceptedKey ? sig : null;
-  settledReads = reads;
+  settledReads = sent;
   post({
     type: 'result',
     shop: true,
     round: labels.round,
     choice: labels.choice,
-    reads,
+    reads: sent,
     key,
     accepted,
     live: g.live,
@@ -597,6 +639,7 @@ const nonShopResult = (t0: number): FrameResult => {
   settledSig = pendingSig = null;
   knownHero = null;
   acceptedRound = acceptedChoice = 0;
+  readingSince = frozenReads = null;
   gate = offScreenGate(gate);
   stableInv = null;
   return {

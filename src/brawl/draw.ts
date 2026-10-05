@@ -36,6 +36,8 @@ export interface OverlayState {
   frameH: number;
   advice: OverlayAdvice | null;
   draft: boolean;
+  /** The draft screen is up but no set is accepted yet: the overlay draws the `Reading` sign and nothing else. */
+  reading?: boolean;
   panel: AbilityPanelData | null;
   /** The "Use Re-Roll" pill's outline found on the frame (frame px); absent: the nominal layout rect. */
   rerollRect?: { x0: number; y0: number; x1: number; y1: number } | null;
@@ -63,7 +65,7 @@ export { overlayHasContent } from './overlayContent';
  *  compare directly without redoing the scale math. For cards the rect is the bounding box of the large
  *  circle the item sits in; `score` is the number drawn above it (null for the re-roll box). */
 export interface DrawnRect {
-  kind: 'card' | 'best' | 'reroll';
+  kind: 'card' | 'best' | 'reroll' | 'unknown';
   itemId: number | null;
   card: string | null; // read.card ("left"/"top"/"right") for card/best, null for reroll
   x0: number;
@@ -138,6 +140,85 @@ function roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: num
   else ctx.rect(x, y, w, h);
 }
 
+
+/** One plate above a card: a tier badge and a label. `best` fills it teal (the item to take); `unknown` draws it grey
+ *  for a card that could not be read. Returns its rectangle in frame px. */
+function drawPlate(
+  ctx: CanvasRenderingContext2D,
+  match: { edge: number },
+  cx: number,
+  top: number,
+  scaleX: number,
+  scaleY: number,
+  theme: OverlayTheme,
+  isBest: boolean,
+  mode: 'item' | 'unknown',
+  badge: string,
+  label: string,
+): FrameRect {
+  const font = Math.max(14, Math.round(match.edge * 0.2 * scaleY));
+  const h = Math.round(font * 1.7);
+  ctx.font = `bold ${font}px sans-serif`;
+  const textW = mode === 'unknown' ? 0 : ctx.measureText(label).width;
+  const pad = Math.round(font * 0.5);
+  const w = mode === 'unknown' ? h : Math.round(h + textW + pad * 2);
+  const x = Math.round(cx * scaleX - w / 2);
+  const y = Math.max(2, Math.round(top * scaleY - h - Math.max(4, match.edge * 0.04 * scaleY)));
+  const grey = '#8a9092';
+  ctx.fillStyle = isBest ? theme.teal : theme.panel;
+  roundedRect(ctx, x, y, w, h, 4);
+  ctx.fill();
+  if (!isBest) {
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = mode === 'unknown' ? grey : theme.teal;
+    roundedRect(ctx, x + 0.5, y + 0.5, w - 1, h - 1, 4);
+    ctx.stroke();
+  }
+  // tier badge: a square at the left end, a darker cell so the letter reads at a glance
+  ctx.fillStyle = mode === 'unknown' ? grey : isBest ? theme.tealInk : theme.teal;
+  roundedRect(ctx, x + 2, y + 2, h - 4, h - 4, 3);
+  ctx.fill();
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = mode === 'unknown' ? theme.panel : isBest ? theme.teal : theme.tealInk;
+  ctx.fillText(badge, x + h / 2, y + h / 2 + 1);
+  ctx.textAlign = 'start';
+  if (mode === 'item') {
+    ctx.fillStyle = isBest ? theme.tealInk : theme.muted;
+    ctx.fillText(label, x + h + pad, y + h / 2 + 1);
+  }
+  ctx.textBaseline = 'alphabetic';
+  return { x0: x / scaleX, y0: y / scaleY, x1: (x + w) / scaleX, y1: (y + h) / scaleY };
+}
+
+/** The small `Reading` sign above the middle card, drawn from the draft screen's first frame until the plates replace
+ *  it. `middle` is the middle card's match square in frame px. */
+export function drawReading(
+  ctx: CanvasRenderingContext2D,
+  middle: { x: number; y: number; edge: number },
+  scaleX: number,
+  scaleY: number,
+  theme: OverlayTheme = readTheme(),
+): FrameRect {
+  const { cx, cy, r } = itemCircle(middle);
+  const font = Math.max(14, Math.round(middle.edge * 0.2 * scaleY));
+  const h = Math.round(font * 1.7);
+  ctx.font = `bold ${font}px sans-serif`;
+  const w = Math.round(ctx.measureText('Reading').width + font);
+  const x = Math.round(cx * scaleX - w / 2);
+  const y = Math.max(2, Math.round((cy - r) * scaleY - h - Math.max(4, middle.edge * 0.04 * scaleY)));
+  ctx.fillStyle = theme.panel;
+  roundedRect(ctx, x, y, w, h, 4);
+  ctx.fill();
+  ctx.fillStyle = theme.muted;
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'center';
+  ctx.fillText('Reading', x + w / 2, y + h / 2 + 1);
+  ctx.textAlign = 'start';
+  ctx.textBaseline = 'alphabetic';
+  return { x0: x / scaleX, y0: y / scaleY, x1: (x + w) / scaleX, y1: (y + h) / scaleY };
+}
+
 /** Draws the plate above every offered card (tier badge + `Score: <n>`) and the 3 px teal outline around the best card,
  *  scaled from capture-frame pixels to the target canvas size. Shared by the preview canvas (BrawlView) and the Electron
  *  overlay window. The best card's plate is filled teal with dark text, the others are charcoal with a thin teal border
@@ -160,6 +241,13 @@ export function drawReads(
 ): DrawnRect[] {
   const drawn: DrawnRect[] = [];
   for (const read of reads) {
+    if (read.unsure) {
+      const { cx, cy, r } = itemCircle(read.match);
+      const box = { x0: cx - r, y0: cy - r, x1: cx + r, y1: cy + r };
+      const plate = drawPlate(ctx, read.match, cx, box.y0, scaleX, scaleY, theme, false, 'unknown', '?', '?');
+      drawn.push({ kind: 'unknown', itemId: null, card: read.card, ...box, score: null, plate });
+      continue;
+    }
     if (!read.present) continue;
     const isBest = !reroll && read.itemId === bestId;
     const { cx, cy, r } = itemCircle(read.match);
@@ -173,39 +261,20 @@ export function drawReads(
     }
     const score = scores[read.itemId];
     let plate: FrameRect | null = null;
-    if (score !== undefined) {
-      const font = Math.max(14, Math.round(read.match.edge * 0.2 * scaleY));
-      const h = Math.round(font * 1.7);
-      const label = `Score: ${score.toFixed(2)}`;
-      ctx.font = `bold ${font}px sans-serif`;
-      const textW = ctx.measureText(label).width;
-      const pad = Math.round(font * 0.5);
-      const w = Math.round(h + textW + pad * 2);
-      const x = Math.round(cx * scaleX - w / 2);
-      const y = Math.max(2, Math.round(box.y0 * scaleY - h - Math.max(4, read.match.edge * 0.04 * scaleY)));
-      ctx.fillStyle = isBest ? theme.teal : theme.panel;
-      roundedRect(ctx, x, y, w, h, 4);
-      ctx.fill();
-      if (!isBest) {
-        ctx.lineWidth = 1;
-        ctx.strokeStyle = theme.teal;
-        roundedRect(ctx, x + 0.5, y + 0.5, w - 1, h - 1, 4);
-        ctx.stroke();
-      }
-      // tier badge: a square at the left end, a darker cell so the letter reads at a glance
-      ctx.fillStyle = isBest ? theme.tealInk : theme.teal;
-      roundedRect(ctx, x + 2, y + 2, h - 4, h - 4, 3);
-      ctx.fill();
-      ctx.textBaseline = 'middle';
-      ctx.textAlign = 'center';
-      ctx.fillStyle = isBest ? theme.teal : theme.tealInk;
-      ctx.fillText(grades[read.itemId] ?? '-', x + h / 2, y + h / 2 + 1);
-      ctx.textAlign = 'start';
-      ctx.fillStyle = isBest ? theme.tealInk : theme.muted;
-      ctx.fillText(label, x + h + pad, y + h / 2 + 1);
-      ctx.textBaseline = 'alphabetic';
-      plate = { x0: x / scaleX, y0: y / scaleY, x1: (x + w) / scaleX, y1: (y + h) / scaleY };
-    }
+    if (score !== undefined)
+      plate = drawPlate(
+        ctx,
+        read.match,
+        cx,
+        box.y0,
+        scaleX,
+        scaleY,
+        theme,
+        isBest,
+        'item',
+        grades[read.itemId] ?? '-',
+        `Score: ${score.toFixed(2)}`,
+      );
     drawn.push({
       kind: isBest ? 'best' : 'card',
       itemId: read.itemId,
