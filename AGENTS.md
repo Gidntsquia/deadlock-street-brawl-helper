@@ -61,7 +61,7 @@ that one session; do not add a new case or a second app launch. Commands live in
 
 ## Debug mode, sessions, replay
 
-Debug mode (`src/debugMode.ts`) is on in dev and in any `-rc` version (now `0.3.0-rc.1`); the title bar shows `DEBUG`.
+Debug mode (`src/debugMode.ts`) is on in dev and in any `-rc` version (last rc was `0.3.0-rc.1`; `0.3.0` is final, debug off); the title bar shows `DEBUG`.
 Ctrl+Shift+D (or the tray entry, channel `debugToggle`) toggles the Debug panel: Start/Stop capture, Detect now (F8 still
 works without it), test mode, round/choice/re-rolls, enemies, owned, advice list, ability order, and the **session report**
 (one row per draft with its crops, items, shown plates, advice ms, and `Mark wrong`). The main view has only the status
