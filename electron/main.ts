@@ -24,7 +24,7 @@ import {
   sendWindowToBottom,
   type Rect,
 } from './gameWindow';
-import { probeIsBlack, probeShopScreen } from './shopProbe';
+import { probeIsBlack, probeLoadingName, probeShopScreen } from './shopProbe';
 import { PROBLEM_TEXT, problemFor, type Env, type Problem } from '../src/brawl/problems';
 import { CHANNELS } from './channels';
 import { SessionStore, type DraftRecord, type FrameShot, type RegionShot } from './sessionStore';
@@ -105,6 +105,11 @@ let captureFailed = false;
 /** When the renderer last stopped an idle capture; until a probe miss (or PROBE_REARM_MS) a probe hit is ignored. */
 let idleAt = 0;
 const PROBE_REARM_MS = 30_000;
+/** The loading screen's hero name is sent to the page at most this often, and this many times per screen. */
+const LOADING_SEND_MS = 2_500;
+const LOADING_SEND_MAX = 3;
+let loadingSentAt = 0;
+let loadingSent = 0;
 // Lobby status dot (see src/brawl/lobbyDot.ts) and the F8 hotkey, which exists only while a game window does.
 let lobby = initialLobby();
 let lastDot: DotState | null = null;
@@ -524,6 +529,16 @@ function startRectPolling() {
     } else if (!probeMode()) captureWanted = !captureHeld;
     else if (!captureWanted && isGameForeground()) {
       const hit = perf.time('probe', () => probeShopScreen(found, grabScreenRegion));
+      if (!hit) {
+        const crop = probeLoadingName(found, grabScreenRegion);
+        if (!crop) loadingSent = 0;
+        else if (loadingSent < LOADING_SEND_MAX && Date.now() - loadingSentAt >= LOADING_SEND_MS) {
+          loadingSent++;
+          loadingSentAt = Date.now();
+          sendControl(CHANNELS.loadingName, crop);
+          log('electron-main', 'info', 'loading.name.sent', { n: loadingSent });
+        }
+      }
       if (!hit) idleAt = 0;
       else if (idleAt && Date.now() - idleAt < PROBE_REARM_MS) {
         // the screen the capture just gave up on (the probe sees a CHOICE glyph the full read does not): do not

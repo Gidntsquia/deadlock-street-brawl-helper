@@ -1441,3 +1441,42 @@ export function findRerollButton(
   if (xMax < xMin) return null;
   return { x0: ox + xMin, y0: oy + top, x1: ox + xMax + 1, y1: oy + bottom + 1 };
 }
+
+/** The big hero name on the loading screen ("JOINING THE FIGHT AS..." and then the name), as fractions of the frame
+ *  (measured on a 2000x1125 frame: the name spans x 150-790, y 425-580). */
+export const LOADING_NAME = { x0: 0.07, y0: 0.37, x1: 0.41, y1: 0.53 } as const;
+
+/** The loading screen's name box in frame px. */
+export function loadingNameRect(width: number, height: number) {
+  const x = Math.floor(LOADING_NAME.x0 * width),
+    y = Math.floor(LOADING_NAME.y0 * height);
+  return {
+    x,
+    y,
+    width: Math.ceil(LOADING_NAME.x1 * width) - x,
+    height: Math.ceil(LOADING_NAME.y1 * height) - y,
+  };
+}
+
+/** True when a crop of the name box (RGBA or RGB) is dark with a block of warm off-white lettering, as the loading
+ *  screen's name is: a dark box with 10-55 % cream pixels. Anything else (gameplay, the shop, menus) fails one half. */
+export function looksLikeLoadingName(img: RGBImage): boolean {
+  const n = img.width * img.height;
+  if (n <= 0) return false;
+  let cream = 0,
+    dark = 0;
+  for (let i = 0; i < n; i++) {
+    const o = i * img.channels,
+      r = img.data[o]!,
+      g = img.data[o + 1]!,
+      b = img.data[o + 2]!;
+    if (r > 215 && g > 195 && b > 160 && r - b > 10 && r - b < 80) cream++;
+    else if (r < 60 && g < 60 && b < 60) dark++;
+  }
+  return cream / n > 0.1 && cream / n < 0.55 && dark / n > 0.4;
+}
+
+/** The name crop for OCR, already padded to RGBA, or null when the box is not the loading screen's. */
+export function loadingNameCrop(img: RGBImage): RGBImage | null {
+  return looksLikeLoadingName(img) ? img : null;
+}

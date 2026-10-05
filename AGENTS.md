@@ -72,6 +72,14 @@ worker and gate on a virtual clock and prints items, `?` count, changes, drop-ou
 from live`. `npm run brawl:fixture -- <session folder>` copies every marked-wrong, `?`-fallback or changed draft into
 `scripts/fixtures/sessions/` with an `expect.json`; `session-fixtures.test.ts` replays them. That tool is the only way to add them.
 
+## Loading-screen hero
+
+While the game is foreground and capture is off, the probe tick also grabs the "Joining the fight as..." name box
+(`loadingNameRect`, `probeLoadingName` in `electron/shopProbe.ts`; cream-on-dark test `looksLikeLoadingName`). A hit sends
+the pixels over `loadingName` (at most 3 times per screen) to `BrawlView`, which OCRs them (`readHeroName`), matches the
+text to a hero name and uses it ahead of the portrait read for that match (valid 60 min). A hand-picked hero (`pinned`)
+beats both. Not verified on real Windows: only the one frame in `scripts/fixtures/loading/` is tested.
+
 ## Reading sign and the fallback
 
 While the draft screen is up and no plates are drawn the overlay shows `Reading` (`OverlayState.reading`). Plates, take mark and

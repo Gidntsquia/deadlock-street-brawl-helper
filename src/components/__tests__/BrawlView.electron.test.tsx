@@ -27,6 +27,7 @@ let onProblemCb: ((p: unknown) => void) | undefined;
   getGameRect: () => Promise.resolve(null),
   onGameRect: () => () => {},
   getCaptureState: () => Promise.resolve(captureState),
+  onLoadingName: () => () => {},
   onCaptureState: (cb: typeof onCaptureStateCb) => {
     onCaptureStateCb = cb;
     return () => {

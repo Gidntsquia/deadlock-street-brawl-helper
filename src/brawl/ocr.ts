@@ -119,6 +119,23 @@ export async function readCardName(crop: NameCrop): Promise<string> {
   return text.trim();
 }
 
+/** OCR of the loading screen's big hero name (loadingNameRect crop); the raw text, '' when nothing reads. The name
+ *  is capital letters about a fifth of the crop tall, scaled to the same text height as a card name. */
+export async function readHeroName(crop: RGBImage): Promise<string> {
+  const scale = Math.min(1, 160 / crop.height);
+  const png = await upscaledPng(
+    crop.data instanceof Uint8Array ? crop.data : new Uint8Array(crop.data),
+    crop.width,
+    crop.height,
+    scale,
+  );
+  const worker = await getNameWorker();
+  const {
+    data: { text },
+  } = await worker.recognize(png as unknown as Buffer);
+  return text.trim();
+}
+
 export async function readRerollsRemaining(img: RGBImage): Promise<number> {
   const crop = extractRerollLabelCrop(img);
   if (!crop) return 0;

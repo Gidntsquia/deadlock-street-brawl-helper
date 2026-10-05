@@ -42,6 +42,8 @@ export const CHANNELS = {
   sessionDraft: 'session-draft',
   sessionList: 'session-list',
   sessionMark: 'session-mark',
+  // Loading screen ("Joining the fight as..."): main grabs the hero name box and pushes its pixels to the control window.
+  loadingName: 'loading-name',
   // Custom title strip buttons: renderer -> main.
   windowMinimize: 'window-minimize',
   windowClose: 'window-close',

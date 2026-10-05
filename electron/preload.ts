@@ -76,6 +76,14 @@ const api = {
       ipcRenderer.removeListener(CHANNELS.captureState, listener);
     };
   },
+  onLoadingName: (cb: (crop: { width: number; height: number; buffer: ArrayBuffer }) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, crop: { width: number; height: number; buffer: ArrayBuffer }) =>
+      cb(crop);
+    ipcRenderer.on(CHANNELS.loadingName, listener);
+    return () => {
+      ipcRenderer.removeListener(CHANNELS.loadingName, listener);
+    };
+  },
   detectNow: (): Promise<boolean> => ipcRenderer.invoke(CHANNELS.detectNow),
   onDetectRun: (cb: () => void) => {
     const listener = () => cb();
