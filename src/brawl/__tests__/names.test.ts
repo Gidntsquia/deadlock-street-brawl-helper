@@ -17,6 +17,7 @@ describe('matchItemName', () => {
     ["chanter's Emble", "Enchanter's Emblem"], // cut off at the crop edge
     ['Torment Pulse r', 'Torment Pulse'], // a stray letter from the card art
     ['Metal Skin', 'Metal Skin'],
+    ['a Health', 'Extra Health'], // the left end hidden by a capture glitch
   ])('%s -> %s', (text, name) => {
     expect(matchItemName(text, all)?.itemId).toBe(idOf(name));
   });
