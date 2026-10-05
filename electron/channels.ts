@@ -28,6 +28,13 @@ export const CHANNELS = {
   platformWarning: 'platform-warning',
   // Tray menu "Debug panel" entry: main -> control window, toggles the hidden Debug panel.
   debugToggle: 'debug-toggle',
+  // Debug-mode recording and the session report. The page says whether debug mode is on, hands over the crops of the
+  // draft on screen and then its record; the report lists the sessions and marks drafts wrong.
+  debugState: 'debug-state',
+  sessionFrame: 'session-frame',
+  sessionDraft: 'session-draft',
+  sessionList: 'session-list',
+  sessionMark: 'session-mark',
   // Custom title strip buttons: renderer -> main.
   windowMinimize: 'window-minimize',
   windowClose: 'window-close',

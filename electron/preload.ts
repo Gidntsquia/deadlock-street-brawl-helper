@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type { Rect } from './gameWindow';
 import type { OverlayState } from '../src/brawl/draw';
 import { CHANNELS } from './channels';
+import type { DraftRecord, FrameShot, SessionSummary } from './sessionStore';
 
 export interface TestModeState {
   on: boolean;
@@ -78,6 +79,12 @@ const api = {
   getTestMode: (): Promise<TestModeState> => ipcRenderer.invoke(CHANNELS.testModeGet),
   setTestMode: (on: boolean): Promise<TestModeState> => ipcRenderer.invoke(CHANNELS.testModeSet, on),
   setTestFrame: (frame: string): Promise<TestModeState> => ipcRenderer.invoke(CHANNELS.testModeFrame, frame),
+  setDebugState: (on: boolean) => ipcRenderer.send(CHANNELS.debugState, on),
+  sessionFrame: (frame: FrameShot) => ipcRenderer.send(CHANNELS.sessionFrame, frame),
+  sessionDraft: (rec: DraftRecord) => ipcRenderer.send(CHANNELS.sessionDraft, rec),
+  sessionList: (): Promise<SessionSummary[]> => ipcRenderer.invoke(CHANNELS.sessionList),
+  sessionMark: (matchId: string, n: number, wrong: boolean): Promise<void> =>
+    ipcRenderer.invoke(CHANNELS.sessionMark, matchId, n, wrong),
   onDebugToggle: (cb: () => void) => {
     const listener = () => cb();
     ipcRenderer.on(CHANNELS.debugToggle, listener);
