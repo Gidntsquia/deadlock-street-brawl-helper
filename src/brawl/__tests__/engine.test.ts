@@ -7,6 +7,7 @@ import {
   pairLifts,
   roundTiers,
   scoreOffer,
+  unknownCeiling,
 } from '../engine';
 import { heroByName, inputFor, itemByName, items } from './testData';
 
@@ -106,5 +107,24 @@ describe('baseScores: enemy counter', () => {
     const bases = baseScores(infernus, [seven.id]);
     const hasCounter = [...bases.values()].some((b) => b.counter !== 0);
     expect(hasCounter).toBe(true);
+  });
+});
+
+describe('unknownCeiling: the take-mark rule with an unread card', () => {
+  const state = (offer: { itemId: number; enhanced: boolean }) => ({
+    round: 1,
+    owned: [] as number[],
+    enemies: [] as number[],
+    sets: [[offer], [], []],
+  });
+  it('is at least the score of any real card of that set, so a weaker sure card is not marked', () => {
+    const adv = adviseDraft(infernus, state({ itemId: items.find((i) => i.item_tier === 1)!.id, enhanced: false }));
+    const top = adv.sets[0]![0]!.score;
+    const ceiling = unknownCeiling(
+      infernus,
+      state({ itemId: items.find((i) => i.item_tier === 1)!.id, enhanced: false }),
+      0,
+    );
+    expect(ceiling).toBeGreaterThanOrEqual(top);
   });
 });
