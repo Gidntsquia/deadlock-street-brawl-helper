@@ -33,6 +33,16 @@ describe('DraftLog', () => {
     expect(got.length).toBeLessThanOrEqual(10);
   });
 
+  it('starts a new run of kept frames after a long silence', () => {
+    const log = new DraftLog();
+    expect(log.wantFrame(0)).toBe('full');
+    log.push(f(0), '', 0);
+    expect(log.wantFrame(400)).toBe('light');
+    expect(log.wantFrame(600_000)).toBe('full'); // the schedule restarts with a full frame
+    expect(log.wantFrame(600_100)).toBeNull();
+    expect(log.wantFrame(600_400)).toBe('light');
+  });
+
   it('ends the draft at the pick and reports its stats', () => {
     const log = new DraftLog();
     log.wantFrame(0);

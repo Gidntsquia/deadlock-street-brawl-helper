@@ -58,10 +58,16 @@ export async function replayDraft(dir: string): Promise<ReplayDraft> {
   const live: DraftRecord = JSON.parse(readFileSync(path.join(dir, 'draft.json'), 'utf8'));
   const frames: FramesFile[] = JSON.parse(readFileSync(path.join(dir, 'frames.json'), 'utf8'));
   handler({ data: { type: 'reset' } });
-  const t0 = frames[0]?.t ?? 0;
+  // The recorder keeps sparse frames, so a long silence between two of them (capture idle, nothing sent) is shortened:
+  // the worker's timers (settle, fallback) must not see minutes pass between two neighbouring pictures.
+  const GAP_MS = 1000;
+  let prevT = frames[0]?.t ?? 0;
+  let virtual = 0;
   const stat: StatFrame[] = [];
   for (const f of frames) {
-    clock = f.t - t0 + 1000;
+    virtual += Math.min(f.t - prevT, GAP_MS);
+    prevT = f.t;
+    clock = virtual + 1000;
     const regions = await Promise.all(
       f.regions.map(async (r) => {
         const { data } = await sharp(path.join(dir, r.file)).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
