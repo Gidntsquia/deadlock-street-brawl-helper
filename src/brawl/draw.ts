@@ -440,7 +440,7 @@ export function drawDot(
   ctx.fillText('STREET BRAWL ADVISOR', 54 * k, 15 * k);
   ctx.fillStyle = theme.muted;
   ctx.font = `${10.5 * k}px sans-serif`;
-  ctx.fillText(`${DOT_WORD[state]} · F8`, 54 * k, 27.5 * k);
+  ctx.fillText(`${DOT_WORD[state]}, F8`, 54 * k, 27.5 * k);
   ctx.restore();
   return { ...g, color, state };
 }

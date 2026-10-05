@@ -811,7 +811,7 @@ function setupDisplayMediaHandler() {
  *  `npm run win:dev` is what actually runs Windows Electron from WSL. */
 function platformWarning(): string | null {
   if (process.platform === 'win32') return null;
-  const msg = `platform.unsupported: process.platform=${process.platform} — run "npm run win:dev" from WSL (or "npm run dev:electron" from a Windows terminal in the synced Windows copy), not dev:electron inside WSL`;
+  const msg = `platform.unsupported: process.platform=${process.platform}: run "npm run win:dev" from WSL (or "npm run dev:electron" from a Windows terminal in the synced Windows copy), not dev:electron inside WSL`;
   log('electron-main', 'warn', 'platform.unsupported', { platform: process.platform });
   return msg;
 }

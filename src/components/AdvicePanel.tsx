@@ -46,7 +46,7 @@ export function AdvicePanel({
     <div className="brawl-advice">
       {reroll && (
         <div className="brawl-reroll-banner">
-          RE-ROLL this set — expected best {reroll.expectedBest.toFixed(2)} vs {reroll.currentBest.toFixed(2)} on screen
+          Re-roll this set: expected best {reroll.expectedBest.toFixed(2)} vs {reroll.currentBest.toFixed(2)} on screen
           <button className="btn" onClick={rerolled}>
             I re-rolled
           </button>
@@ -61,7 +61,7 @@ export function AdvicePanel({
       )}
       {lastTaken && (
         <div className="muted">
-          Took {lastTaken} · {owned.length} owned
+          Took {lastTaken}, {owned.length} owned
         </div>
       )}
       {ranked.map((r, k) => (
@@ -69,7 +69,7 @@ export function AdvicePanel({
           key={r.item.id}
           className={`brawl-card ${k === 0 && !reroll ? 'best' : ''}`}
           onClick={() => took(r)}
-          title={`score ${r.score.toFixed(2)} · ${
+          title={`score ${r.score.toFixed(2)}, ${
             capture === 'on' ? 'picks are read from the inventory grid; click only if it missed' : 'I took this one'
           }`}
         >
@@ -80,11 +80,11 @@ export function AdvicePanel({
               {r.enhanced ? ' (enhanced)' : ''}
             </b>
             <small>
-              score {r.score.toFixed(2)} ·{' '}
-              {k === 0 ? 'best' : `−${((1 - r.score / ranked[0].score) * 100).toFixed(0)}% vs best`} · used by{' '}
+              score {r.score.toFixed(2)} ,{' '}
+              {k === 0 ? 'best' : `-${((1 - r.score / ranked[0].score) * 100).toFixed(0)}% vs best`}, used by{' '}
               {(r.usage * 100).toFixed(0)}% of {hero.name}s
               {r.winRate !== null ? `, wins ${(r.winRate * 100).toFixed(0)}%` : ''}
-              {r.known ? '' : ' · no brawl data'}
+              {r.known ? '' : ', no brawl data'}
             </small>
             {r.why.length > 0 && <small>{r.why.join('; ')}</small>}
           </span>
