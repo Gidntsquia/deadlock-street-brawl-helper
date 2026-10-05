@@ -29,6 +29,7 @@ export interface GateFrame {
   now: number; // ms
   inventory: number[] | null; // the inventory grid, once two reads agree; null when not known
   force?: boolean; // accept now whatever the settle time and the pending reads say (the 2.5 s fallback)
+  changed?: boolean; // a card's name line shows other lettering than the accepted set's: the old advice is stale now
   ready?: boolean; // false: a read the advice needs (the re-roll caption) is still in flight; hold the accept
 }
 
@@ -107,6 +108,7 @@ export function stepGate(s: GateState, f: GateFrame): GateOut {
       // A card read that is not on the accepted set means a new screen with a card still hidden: drop at once.
       // Cards that are all from the accepted set (one hidden by the hover tooltip, or by the cursor on a plate) keep
       // the advice up for as long as the hover lasts; only frames with no card read at all count down.
+      if (f.changed) live = false;
       const shown = last ? cardIds(last.key) : [];
       const read = f.present.filter((id) => id);
       if (read.some((id) => !shown.includes(id))) live = false;
@@ -117,7 +119,7 @@ export function stepGate(s: GateState, f: GateFrame): GateOut {
   }
   missing = 0;
 
-  if (spent.some((k) => sameSet(k, f.key))) {
+  if (!/^\?(\+?,\?)*$/.test(f.key) && spent.some((k) => sameSet(k, f.key))) {
     cand = null;
     live = false;
     return out(false, true);

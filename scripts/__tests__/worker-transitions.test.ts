@@ -121,7 +121,8 @@ describe('worker: the draft gate on real frames', () => {
     first.push(...(await run('c1', 4)));
     const c1Key = '1548066885,2829638276,3633614685';
     expect(accepts(first)).toEqual([[c1Key, 1, 1]]);
-    expect((first.findIndex((o) => o.accepted) - first.findIndex((o) => o.key)) * 70).toBeGreaterThanOrEqual(300);
+    // the settle time runs from the first sight of the set (while its names are still being read), so the accept is never sooner than that
+    expect(first.findIndex((o) => o.accepted) * 70).toBeGreaterThanOrEqual(300);
 
     // The pick: for over a second the old cards stay up while the label and inventory grid already show the next
     // choice. Before the gate this re-accepted the old cards as "choice 2".

@@ -213,6 +213,7 @@ in `win:e2e`/`win:demo` drives the actual game:
   which drops its cards whenever `live` is false. The game swaps label, cards and grid a beat apart; the old
   two-frame accept advised old cards under the new label, half-swapped sets, and new cards under the stale label
   (`scripts/__tests__/worker-transitions.test.ts` replays those on real frames).
+- The worker does no icon search on the cards any more (`squareReads` in `worker.ts`): the item is whatever the name lock says, and a slot whose name will not read becomes a grey `?` at 2.5 s. A name line that changes by more than 6 grid cells (a re-roll) makes the slot unsettled at once (`changed` on `GateFrame`). Before the names land, the gate gets the set with a `?` per unread slot so the 300 ms settle runs alongside the OCR. `readDraftScreen`/`matchIcon` remain for the CLI, fixtures, inventory and hero reads (`matchIcon` tries a narrow search first). Older text below about icon guesses describes the icon-based design.
 - Cards sit at fixed screen positions and print their exact item name: the worker pins every card read to
   `cardSquares` (`recognise.ts`, anchors x 0.95 icon edge, matches the hand-labelled circles) so the overlay never follows
   the icon search's step/scale wobble, and each slot's item comes from a **name lock** (`applyNames` in `worker.ts`): the
