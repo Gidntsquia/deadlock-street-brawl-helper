@@ -141,14 +141,14 @@ describe('drawReads', () => {
     });
     expect(drawn[0].chip).toBeNull();
     expect(drawn[1].chip).not.toBeNull();
-    expect(drawn[1].chipText).toBe('Enhanced +0.74');
+    expect(drawn[1].chipText).toBe('Enhanced: (+0.74)');
     const p = drawn[1].plate!;
     const { cx } = itemCircle({ x: 700, y: 100, edge: 50 });
     expect((p.x0 + p.x1) / 2).toBeCloseTo(cx, 0);
     expect(drawn[1].chip!.x1).toBeCloseTo(p.x1, 5);
     expect(drawn[1].veiled).toBe(true);
     const r = drawReads(stubCtx(), [enh], 1, 1, 1, 2560, 1440, true, SCORES, null, GRADES, THEME, { 2: 0.7391 });
-    expect(r[0].chipText).toBe('Enhanced +0.74');
+    expect(r[0].chipText).toBe('Enhanced: (+0.74)');
   });
 
   it('shortens the cell to Enh when full cells would make neighbouring plates touch', () => {
@@ -158,7 +158,7 @@ describe('drawReads', () => {
       1: 0.5,
       2: 0.5,
     });
-    expect(drawn[0].chipText).toMatch(/^Enh \+/);
+    expect(drawn[0].chipText).toMatch(/^Enh: \(\+/);
     expect(drawn[0].plate!.x1).toBeLessThan(drawn[1].plate!.x0);
   });
 

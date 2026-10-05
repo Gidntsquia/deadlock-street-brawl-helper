@@ -373,7 +373,7 @@ export function drawReads(
   }
   // chips: the full text unless two neighbouring plates would touch, then the short one for all of them
   const chipText = (short: boolean, b: number) =>
-    `${short ? 'Enh' : 'Enhanced'} +${(Math.round(b * 100) / 100).toFixed(2)}`;
+    `${short ? 'Enh' : 'Enhanced'}: (+${(Math.round(b * 100) / 100).toFixed(2)})`;
   const layout = (short: boolean) =>
     slots.map((sl) => {
       if (!sl.o) return null;
