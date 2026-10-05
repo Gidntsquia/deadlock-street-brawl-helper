@@ -247,11 +247,21 @@ async function main() {
     check('first-run-shown', firstRun === 3, `lines=${firstRun}`);
     await js(control, `[...document.querySelectorAll('button')].find((b) => b.textContent === 'Got it')?.click()`);
     await sleep(200);
-    // Debug is on by default in an -rc build; the main view itself has no capture buttons.
-    check('debug-on-by-default', !!(await hasDebug()), 'rc build opens with the Debug panel');
+    // Debug starts off in a final version and on in an -rc (or dev) one (src/brawl/debugMode.ts); the main view itself has
+    // no capture buttons. Whichever way it starts, the checks below end with the panel shown, so test mode is reachable.
+    const version = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
+    const wantOn = /^\d+\.\d+\.\d+-[0-9A-Za-z]/.test(version);
+    const startedOn = !!(await hasDebug());
+    check(
+      'debug-on-by-default',
+      startedOn === wantOn,
+      `version ${version}: expected ${wantOn ? 'on' : 'off'}, started ${startedOn ? 'on' : 'off'}`,
+    );
     const key = `window.dispatchEvent(new KeyboardEvent('keydown', { key: 'D', ctrlKey: true, shiftKey: true }))`;
-    await js(control, key);
-    await waitFor(async () => !(await hasDebug()), 3000, 100);
+    if (startedOn) {
+      await js(control, key);
+      await waitFor(async () => !(await hasDebug()), 3000, 100);
+    }
     const mainBtns = await js(control, `/Start capture|Stop capture|Detect now/.test(document.body.innerText)`);
     check('main-view-no-buttons', !(await hasDebug()) && !mainBtns, `buttons=${mainBtns}`);
     await js(control, key);
