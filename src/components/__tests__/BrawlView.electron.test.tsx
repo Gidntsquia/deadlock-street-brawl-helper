@@ -114,7 +114,7 @@ describe('BrawlView main view (Electron)', () => {
   it('shows each reported problem and clears it without changing controls', async () => {
     render(<BrawlView {...props()} />);
     await waitFor(() => expect(onProblemCb).toBeTypeOf('function'));
-    for (const kind of ['fullscreen', 'small', 'denied', 'f8'] as const) {
+    for (const kind of ['small', 'denied', 'f8'] as const) {
       act(() => onProblemCb!(kind));
       await waitFor(() => expect(screen.getByRole('alert').textContent).toBe(PROBLEM_TEXT[kind]));
     }

@@ -183,9 +183,9 @@ export function warmOCR(): void {
 export type NameCrop = NonNullable<ReturnType<typeof cardNameCrop>>;
 
 /** OCR of a card's item name line; the raw text, '' when nothing reads. */
-export async function readCardName(crop: NameCrop, slot = 0): Promise<string> {
+export async function readCardName(crop: NameCrop, slot = 0, current?: () => boolean): Promise<string> {
   const scale = Math.max(1, NAME_PX / crop.line);
-  return readName(() => upscaledPng(crop.data, crop.width, crop.height, scale), slot);
+  return readName(() => upscaledPng(crop.data, crop.width, crop.height, scale), slot, 'item-name', current);
 }
 
 /** OCR of the loading screen's big hero name (loadingNameRect crop); the raw text, '' when nothing reads. The name

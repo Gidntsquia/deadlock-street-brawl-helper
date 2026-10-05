@@ -1340,6 +1340,12 @@ export function BrawlView({
         setPreparationOpen(open);
         pushOverlay();
       }
+      // Detect now answers whether this capture sees the draft or preparation, independently of
+      // item qualification. Pending OCR and identity-only results are valid capture evidence.
+      if (detectRef.current && (r.shop || (preparationRef.current.visible && r.roundCountdown))) {
+        finishDetect('hit');
+        setStatus(r.shop ? 'reading the draft' : 'waiting for the shop');
+      }
       if (r.identityOnly) {
         // Keep manual hero overrides and item/session transitions independent of preparation evidence.
         if (r.meta?.self && heroes.some((h) => h.id === r.meta!.self)) {
@@ -1540,8 +1546,7 @@ export function BrawlView({
       setFps(r.shop);
       stepTracker(r.shop);
       if (detectRef.current) {
-        if (r.shop || (preparationRef.current.visible && r.roundCountdown)) finishDetect('hit');
-        else if (++detectMissesRef.current < DETECT_MISSES) {
+        if (++detectMissesRef.current < DETECT_MISSES) {
           return;
         } else {
           finishDetect('miss');

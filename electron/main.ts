@@ -24,7 +24,7 @@ import {
   sendWindowToBottom,
   type Rect,
 } from './gameWindow';
-import { probeIsBlack, probeLoadingName, probeShopScreen } from './shopProbe';
+import { probeLoadingName, probeShopScreen } from './shopProbe';
 import { PROBLEM_TEXT, problemFor, type Env, type Problem } from '../src/brawl/problems';
 import { CHANNELS } from './channels';
 import { setupDataUpdates } from './update/integration';
@@ -125,7 +125,6 @@ let f8InUse = false;
 let problem: Problem | null = null;
 let noticeText: string | null = null;
 let noticeTimer: ReturnType<typeof setTimeout> | null = null;
-let blackTicks = 0;
 let lastEnv: Env | null = null;
 const NOTICE_MS = 5000;
 const DETECT_KEY = 'F8';
@@ -395,7 +394,7 @@ function refreshProblem(found: Rect | null) {
     width: found?.width ?? 0,
     height: found?.height ?? 0,
     borderless: found ? gameWindowIsBorderless() : null,
-    black: blackTicks >= 3,
+    black: false, // A dark scene probe cannot establish the window's display mode or capture health.
     denied: captureFailed,
     f8InUse,
   };
@@ -530,8 +529,6 @@ function startRectPolling() {
       captureHeld = false;
     }
     syncDetectKey(!!found);
-    blackTicks =
-      found && !alive(testWindow) && isGameForeground() && probeIsBlack(found, grabScreenRegion) ? blackTicks + 1 : 0;
     refreshProblem(found);
     lobby = stepLobby(lobby, { type: 'tick', found: !!found, now: Date.now() });
     refreshDot();

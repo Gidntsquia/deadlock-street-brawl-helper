@@ -52,8 +52,8 @@ function grabCrop(
   };
 }
 
-/** True when the probe region of the game window reads as solid black: what a capture of an exclusive fullscreen game
- *  returns. A black loading screen does the same for a moment, so the caller waits before it says anything. */
+/** Diagnostic only: the tiny CHOICE probe is dark. Loading art and normal gameplay can produce the same
+ * pixels, so this cannot establish exclusive fullscreen or whether window capture is working. */
 export function probeIsBlack(game: Rect, grab: GrabRegion): boolean {
   const r = shopProbeRect(game.width, game.height);
   if (r.width <= 0 || r.height <= 0) return false;

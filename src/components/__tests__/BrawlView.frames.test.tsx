@@ -447,6 +447,70 @@ it('F8 clears current advice immediately, forces independent reset reads, and re
   expect(screen.getByRole('heading', { name: 'Owned (0)' })).toBeTruthy();
 });
 
+it.each([
+  { name: 'pending-only draft frames', kind: 'pending', hit: true },
+  { name: 'identity-only draft frames', kind: 'identity', hit: true },
+  { name: 'stale capture draft frames', kind: 'stale', hit: false },
+  { name: 'no frames', kind: 'none', hit: false },
+])('F8 handles $name independently of final item advice', async ({ kind, hit }) => {
+  const heroes = readJson('heroes.json') as Hero[],
+    items = readJson('items.json') as Item[],
+    abilities = readJson('abilities.json') as Ability[];
+  const track = { stop: vi.fn(), addEventListener: vi.fn(), applyConstraints: () => Promise.resolve() };
+  (navigator as unknown as { mediaDevices: unknown }).mediaDevices = {
+    getDisplayMedia: () => Promise.resolve({ getTracks: () => [track], getVideoTracks: () => [track] }),
+  };
+  vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue();
+  const logs = vi.spyOn(console, 'info').mockImplementation(() => {});
+  render(
+    <BrawlView
+      hero={heroes.find((h) => h.id === 1)!}
+      heroes={heroes}
+      items={items}
+      abilities={abilities}
+      onHero={() => {}}
+    />,
+  );
+  fireEvent.click(screen.getByRole('button', { name: /start capture/i }));
+  await waitFor(() => expect(listener).toBeTypeOf('function'));
+  vi.useFakeTimers();
+  await act(async () => detectRun!());
+  const epoch = workerMessages
+    .filter((m): m is Extract<WorkerIn, { type: 'reset' }> => m.type === 'reset')
+    .at(-1)!.captureEpoch!;
+  if (kind !== 'none') {
+    const pending: FrameResult = {
+      type: 'result',
+      captureEpoch: kind === 'stale' ? epoch - 1 : epoch,
+      shop: true,
+      round: 1,
+      choice: 2,
+      accepted: false,
+      pending: true,
+      pendingTransition: true,
+      identityOnly: kind === 'identity',
+      reads: [],
+      key: '',
+      meta: null,
+      inventory: null,
+      ms: 0,
+    };
+    await act(async () => listener!({ data: pending } as MessageEvent<WorkerOut>));
+  }
+  if (hit) expect(screen.queryByText('Detecting…')).toBeNull();
+  else expect(logs.mock.calls.some(([line]) => JSON.parse(String(line)).msg === 'detect.manual')).toBe(false);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(4001);
+  });
+  const outcomes = logs.mock.calls
+    .map(([line]) => JSON.parse(String(line)))
+    .filter((line) => line.msg === 'detect.manual');
+  expect(outcomes.map((line) => line.outcome)).toEqual([hit ? 'hit' : 'failed']);
+  expect(sent.at(-1)?.advice?.ranked ?? []).toHaveLength(0);
+  expect(sent.at(-1)?.reads ?? []).toHaveLength(0);
+  if (hit) expect(sent.at(-1)?.reading).toBe(true);
+});
+
 it('keeps capture alive beyond the idle grace while a draft is pending, then stops after a sustained non-shop screen', async () => {
   captureProbe = true;
   const heroes = readJson('heroes.json') as Hero[],

@@ -665,9 +665,11 @@ describe('worker confirmed state', () => {
   }, 20_000);
   it('publishes no initial recommendation while any card is incomplete, then waits for the complete fresh tuple', async () => {
     state.visible = 2;
+    namePixels(false, 2);
     for (let i = 0; i < 4; i++)
       expect(await frame()).toMatchObject({ pending: true, reads: [], key: '', accepted: false });
     state.visible = 3;
+    namePixels(true, 2);
     expect(await frame()).toMatchObject({ pending: true, reads: [], key: '', accepted: false });
     expect(await frame()).toMatchObject({ pending: true, reads: [], key: '', accepted: false });
     cardPixels(100);
@@ -679,7 +681,7 @@ describe('worker confirmed state', () => {
     expect(state.nameReads).toHaveBeenCalledTimes(6); // One two-pass ladder per physical slot.
     state.cardScores = [];
     rosterPixels(255);
-    cardPixels(100);
+    cardPixels(130); // A materially new picture permits a fresh read; score changes alone are not evidence.
     expect(await accept()).toMatchObject({ accepted: true, key: '101,102,103' });
     state.choice = 2;
     state.cards = [201, 202, 203];

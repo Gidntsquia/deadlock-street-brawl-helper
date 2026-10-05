@@ -44,6 +44,26 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 describe('shared bounded primary OCR ownership', () => {
+  it('skips an obsolete queued card before encoding or recognizing and keeps the shared engine alive', async () => {
+    const ocr = await import('../ocr');
+    await ocr.readCardName(crop);
+    const worker = state.workers[0]!;
+    let finish!: (v: { data: { text: string } }) => void;
+    worker.recognize.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
+    const held = ocr.readCardName(crop);
+    await flush();
+    let current = true;
+    const obsolete = ocr.readCardName(crop, 0, () => current);
+    const rejected = expect(obsolete).rejects.toThrow('stopped');
+    current = false;
+    finish({ data: { text: 'Tankbuster' } });
+    await held;
+    await rejected;
+    expect(worker.recognize).toHaveBeenCalledTimes(2);
+    expect(worker.terminate).not.toHaveBeenCalled();
+    expect(await ocr.readCardName(crop)).toBe('Tankbuster');
+    expect(state.workers).toHaveLength(1);
+  });
   it('serializes profile configuration with recognition, sharing digit and name jobs', async () => {
     const ocr = await import('../ocr');
     const name = ocr.readCardName(crop);
