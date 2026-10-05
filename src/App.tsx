@@ -37,7 +37,7 @@ export default function App() {
     loadCore()
       .then(([i, h, a, m]) => {
         setItems(i);
-        setHeroes(h);
+        setHeroes([...h].sort((a, b) => a.name.localeCompare(b.name)));
         setAbilities(a);
         setManifest(m);
       })
