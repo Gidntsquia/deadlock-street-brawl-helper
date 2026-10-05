@@ -203,7 +203,7 @@ export default function OverlayApp() {
       {advice?.reroll && (
         <div className="overlay-panel">
           <div className="overlay-panel-reroll">
-            RE-ROLL · {advice.reroll.expectedBest.toFixed(2)} vs {advice.reroll.currentBest.toFixed(2)}
+            Re-roll: {advice.reroll.expectedBest.toFixed(2)} vs {advice.reroll.currentBest.toFixed(2)}
           </div>
         </div>
       )}
@@ -218,6 +218,7 @@ export default function OverlayApp() {
           {DOT_TEXT[dotTip]}
         </div>
       )}
+      {panelState?.notice && <div className="overlay-notice">{panelState.notice}</div>}
       {abilityPanel && <AbilityPanel panel={abilityPanel} className="overlay-ap" />}
     </>
   );

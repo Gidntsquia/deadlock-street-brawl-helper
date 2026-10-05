@@ -40,6 +40,7 @@ import {
   type OverlayAdvice,
   type OverlayState,
 } from '../brawl/draw';
+import { PROBLEM_TEXT, statusFor, type Problem } from '../brawl/problems';
 import { breakdownRows } from '../brawl/breakdown';
 import { chooseHero } from '../brawl/heroChoice';
 import { DraftLog } from '../brawl/draftLog';
@@ -122,11 +123,12 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
   // Electron: Deadlock's window is on screen (from the game-rect feed); the person pressed Stop (blocks auto-start
   // until they press Start); a platform warning from main; a draft screen has been seen this session (hides the how-to).
   const [gameFound, setGameFound] = useState(false);
-  const [manualStop, setManualStop] = useState(false);
+  const [, setManualStop] = useState(false);
   const manualStopRef = useRef(false);
   const [platformWarning, setPlatformWarning] = useState<string | null>(null);
-  const [draftSeen, setDraftSeen] = useState(false);
-  const [f8InUse, setF8InUse] = useState(false);
+  const [, setDraftSeen] = useState(false);
+  const [, setF8InUse] = useState(false);
+  const [problem, setProblem] = useState<Problem | null>(null);
   // A running Detect now try: pressed-at time; the first frame result decides hit or miss.
   const detectMissesRef = useRef(0);
   const lastReadSigRef = useRef('');
@@ -617,7 +619,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
   const captureWantedRef = useRef(false);
   const probeModeRef = useRef(false);
   // Mirrors probeModeRef for rendering: with a real game, capture being off is the normal "watching" state.
-  const [probing, setProbing] = useState(false);
+  const [, setProbing] = useState(false);
   useEffect(() => {
     if (!isElectron) return;
     return window.brawlAPI!.onCaptureState((st) => {
@@ -667,9 +669,12 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
     const api = window.brawlAPI!;
     void api.getDetectKeyInUse?.().then(setF8InUse);
     const offKey = api.onDetectKeyState?.(setF8InUse);
+    void api.getProblem?.().then(setProblem);
+    const offProblem = api.onProblem?.(setProblem);
     const offRun = api.onDetectRun?.(() => runDetectRef.current());
     return () => {
       offKey?.();
+      offProblem?.();
       offRun?.();
     };
   }, []);
@@ -1173,25 +1178,9 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
     captureWantedRef.current = false;
     stopCapture();
   };
-  const statusLine = (() => {
-    if (platformWarning) return platformWarning;
-    if (status === NO_DRAFT_STATUS && capture !== 'on') return status;
-    if (status === 'Detecting…') return status;
-    if (capture === 'starting') return 'Capture starting…';
-    if (capture === 'on') {
-      if (draftOpen) return `Draft — round ${round}, choice ${choice}`;
-      return testMode.on ? 'Test mode on' : 'Capturing — no draft on screen';
-    }
-    if (testMode.on) return 'Test mode on';
-    if (status.startsWith('capture failed')) return status;
-    if (denied)
-      return gameFound ? 'Capture denied — press Start to retry' : 'Deadlock window not found — press Start to retry';
-    if (!isElectron) return status || 'Capture off — press Start';
-    if (gameFound && f8InUse) return 'F8 is in use by another program';
-    if (!gameFound) return 'Deadlock window not found';
-    if (manualStop) return 'Capture stopped — press Start';
-    return probing ? 'Watching for the draft screen' : 'Deadlock found, capture off';
-  })();
+  const statusLine = platformWarning
+    ? platformWarning
+    : statusFor({ found: gameFound || testMode.on, draft: draftOpen, advising: draftOpen && ranked.length > 0 });
   const advicePanel = (
     <AdvicePanel
       input={input}
@@ -1214,42 +1203,38 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
     <div className="brawl">
       <video ref={videoRef} muted playsInline style={{ display: 'none' }} />
       <div className="panel brawl-controls">
-        <div className="brawl-buttons">
-          <button
-            className={
-              capture === 'off' && !(probing && gameFound && !manualStop)
-                ? 'btn primary brawl-capture'
-                : 'btn brawl-capture'
-            }
-            onClick={capture === 'on' ? onStop : onStart}
-            disabled={capture === 'starting'}
-          >
-            {capture === 'on' ? 'Stop capture' : capture === 'starting' ? 'Starting…' : 'Start capture'}
-          </button>
-          {isElectron && (
-            <button
-              className="btn brawl-detect"
-              onClick={() => void window.brawlAPI!.detectNow()}
-              disabled={!gameFound || status === 'Detecting…'}
-              title={gameFound ? 'Read the game once, now (F8)' : 'Deadlock not found'}
-            >
-              {status === 'Detecting…' ? 'Detecting…' : 'Detect now (F8)'}
-            </button>
-          )}
-        </div>
-        <div className="muted brawl-status" role="status" aria-live="polite" title={statusLine}>
+        <div className="brawl-status" role="status" aria-live="polite">
           {statusLine}
         </div>
-        {!draftSeen && (
-          <div className="muted brawl-howto">
-            In Deadlock, set Video → Display Mode to Borderless Windowed. Advice appears over the draft screen.
+        {problem && (
+          <div className="brawl-problem" role="alert">
+            {PROBLEM_TEXT[problem]}
           </div>
         )}
+        {heroNotRead && draftOpen && <div className="muted brawl-hero-note">{`Hero not read. Using ${hero.name}`}</div>}
       </div>
 
       {debug && (
         <div className="panel brawl-debug" aria-label="Debug panel">
           <h2>Debug</h2>
+          <div className="brawl-buttons">
+            <button
+              className="btn brawl-capture"
+              onClick={capture === 'on' ? onStop : onStart}
+              disabled={capture === 'starting'}
+            >
+              {capture === 'on' ? 'Stop capture' : capture === 'starting' ? 'Starting' : 'Start capture'}
+            </button>
+            {isElectron && (
+              <button
+                className="btn brawl-detect"
+                onClick={() => void window.brawlAPI!.detectNow()}
+                disabled={!gameFound || status === 'Detecting…'}
+              >
+                Detect now (F8)
+              </button>
+            )}
+          </div>
           {isElectron && (
             <div className="row brawl-testmode">
               <button

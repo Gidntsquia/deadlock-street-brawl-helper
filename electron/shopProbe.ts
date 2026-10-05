@@ -27,3 +27,15 @@ export function probeShopScreen(game: Rect, grab: GrabRegion): boolean {
     origin: { x: r.x, y: r.y, fullWidth: game.width, fullHeight: game.height },
   });
 }
+
+/** True when the probe region of the game window reads as solid black: what a capture of an exclusive fullscreen game
+ *  returns. A black loading screen does the same for a moment, so the caller waits before it says anything. */
+export function probeIsBlack(game: Rect, grab: GrabRegion): boolean {
+  const r = shopProbeRect(game.width, game.height);
+  if (r.width <= 0 || r.height <= 0) return false;
+  const bgra = grab(game.x + r.x, game.y + r.y, r.width, r.height);
+  if (!bgra || bgra.length < r.width * r.height * 4) return false;
+  for (let i = 0; i < r.width * r.height * 4; i += 4)
+    if (bgra[i]! > 8 || bgra[i + 1]! > 8 || bgra[i + 2]! > 8) return false;
+  return true;
+}

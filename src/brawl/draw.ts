@@ -43,6 +43,8 @@ export interface OverlayState {
   rerollRect?: { x0: number; y0: number; x1: number; y1: number } | null;
   /** The lobby status dot (set by the main process, not the control window): absent while in a match. */
   dot?: DotState | null;
+  /** A one-sentence problem the overlay shows for a few seconds. */
+  notice?: string | null;
 }
 
 /** The blank state: nothing to draw. */
