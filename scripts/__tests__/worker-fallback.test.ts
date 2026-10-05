@@ -72,7 +72,11 @@ beforeAll(async () => {
   const sq = cardSquares(W, H)[1]!,
     u = sq.edge / 185;
   for (let y = Math.round(sq.y + sq.edge + 80 * u); y < sq.y + sq.edge + 126 * u; y++)
-    frames.noLabel.fill(70, (y * W + Math.round(sq.x + sq.edge / 2 - 110 * u)) * 4, (y * W + Math.round(sq.x + sq.edge / 2 + 110 * u)) * 4);
+    frames.noLabel.fill(
+      70,
+      (y * W + Math.round(sq.x + sq.edge / 2 - 110 * u)) * 4,
+      (y * W + Math.round(sq.x + sq.edge / 2 + 110 * u)) * 4,
+    );
   const items: Item[] = JSON.parse(readFileSync('public/data/items.json', 'utf8'));
   send({
     type: 'init',
