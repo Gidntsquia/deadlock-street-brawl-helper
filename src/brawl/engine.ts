@@ -228,6 +228,7 @@ export function scoreOffer(
     item,
     enhanced,
     score,
+    enhancedBonus: enhanced ? parts.enhanced + (b ? BRAWL_WEIGHTS.kit * b.kit * (ENHANCED_STAT_MULT - 1) : 0) : 0,
     parts,
     why,
     usage: b?.pop ?? 0,

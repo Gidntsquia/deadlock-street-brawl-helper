@@ -55,7 +55,7 @@ describe('brawl:replay', () => {
       fallback: false,
     });
     const [id] = await store.ids();
-    const out = await replaySession(path.join(dir, id!));
+    const out = await replaySession(path.join(dir, id!), { waitNames: true });
     expect(out.length).toBe(1);
     const d = out[0]!;
     expect(d.stats.items.filter(Boolean).length).toBe(3);

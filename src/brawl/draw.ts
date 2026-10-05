@@ -12,6 +12,8 @@ export interface OverlayAdviceCard {
   winRate: number | null;
   /** Tier-list letter ("S".."C"), "-" when the item has none. */
   grade: string;
+  /** Points enhanced adds to this card's score (its score minus the same card's score not enhanced); 0 when not enhanced. */
+  enhancedBonus: number;
   /** Tooltip rows: fixed labels and hundredths (see `breakdownRows`); one "No Street Brawl data" row without data. */
   rows: { label: string; cents: number }[];
 }
@@ -77,6 +79,11 @@ export interface DrawnRect {
   score: number | null;
   /** The plate above the card (frame px); null for the re-roll box or a card without a score. */
   plate: FrameRect | null;
+  /** The card sits under the dark veil and has the grey plate (every card but the one to take). */
+  veiled?: boolean;
+  /** The `Enhanced +n` cell on the plate (frame px) and its text; null without one. For `reroll`, `plate` is the teal label. */
+  chip?: FrameRect | null;
+  chipText?: string | null;
 }
 
 // The large circle an item sits in, relative to the small icon square the recogniser matches: measured on
@@ -108,6 +115,12 @@ export interface OverlayTheme {
   tealInk: string;
   text: string;
   muted: string;
+  /** Border and badge of a non-advised plate. */
+  grey: string;
+  /** Veil over a non-advised card's circle. */
+  veil: string;
+  /** Opacity of a non-advised plate (0..1). */
+  dim: number;
 }
 const DEFAULT_THEME: OverlayTheme = {
   panel: 'rgba(16,19,20,0.85)',
@@ -115,6 +128,9 @@ const DEFAULT_THEME: OverlayTheme = {
   tealInk: '#06201d',
   text: '#ece6da',
   muted: '#a39e92',
+  grey: '#8a9092',
+  veil: 'rgba(0,0,0,0.35)',
+  dim: 0.6,
 };
 function readTheme(): OverlayTheme {
   if (typeof document === 'undefined' || typeof getComputedStyle === 'undefined') return DEFAULT_THEME;
@@ -126,6 +142,9 @@ function readTheme(): OverlayTheme {
     tealInk: v('--teal-ink', DEFAULT_THEME.tealInk),
     text: v('--text', DEFAULT_THEME.text),
     muted: v('--muted', DEFAULT_THEME.muted),
+    grey: v('--overlay-grey', DEFAULT_THEME.grey),
+    veil: v('--overlay-veil', DEFAULT_THEME.veil),
+    dim: Number(v('--overlay-dim', String(DEFAULT_THEME.dim))) || DEFAULT_THEME.dim,
   };
 }
 
@@ -142,58 +161,112 @@ function roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: num
   else ctx.rect(x, y, w, h);
 }
 
-/** One plate above a card: a tier badge and a label. `best` fills it teal (the item to take); `unknown` draws it grey
- *  for a card that could not be read. Returns its rectangle in frame px. */
-function drawPlate(
-  ctx: CanvasRenderingContext2D,
-  match: { edge: number },
+const PLATE_GAP = (edge: number, scaleY: number) => Math.max(4, edge * 0.04 * scaleY);
+
+/** The one place a plate's size and position come from (canvas px): `drawPlate`, `drawReading` and the re-roll label all
+ *  use it, so they scale and anchor together. `cx`/`top` are the card circle's centre x and top edge (frame px). */
+export function plateGeometry(
+  edge: number,
   cx: number,
   top: number,
   scaleX: number,
   scaleY: number,
-  theme: OverlayTheme,
-  isBest: boolean,
-  mode: 'item' | 'unknown',
-  badge: string,
-  label: string,
-): FrameRect {
-  const font = Math.max(14, Math.round(match.edge * 0.2 * scaleY));
+  textW: number,
+  chipW = 0,
+) {
+  const font = Math.max(14, Math.round(edge * 0.2 * scaleY));
   const h = Math.round(font * 1.7);
-  ctx.font = `bold ${font}px sans-serif`;
-  const textW = mode === 'unknown' ? 0 : ctx.measureText(label).width;
   const pad = Math.round(font * 0.5);
-  const w = mode === 'unknown' ? h : Math.round(h + textW + pad * 2);
+  const w = Math.round(h + textW + pad * 2 + chipW);
   const x = Math.round(cx * scaleX - w / 2);
-  const y = Math.max(2, Math.round(top * scaleY - h - Math.max(4, match.edge * 0.04 * scaleY)));
-  const grey = '#8a9092';
+  const y = Math.max(2, Math.round(top * scaleY - h - PLATE_GAP(edge, scaleY)));
+  return { font, h, pad, w, x, y };
+}
+
+interface PlateOpts {
+  isBest: boolean;
+  mode: 'item' | 'unknown';
+  badge: string;
+  label: string;
+  chip: string | null;
+}
+
+/** Measures a plate (no drawing) for the given chip text. */
+function measurePlate(
+  ctx: CanvasRenderingContext2D,
+  edge: number,
+  cx: number,
+  top: number,
+  scaleX: number,
+  scaleY: number,
+  o: PlateOpts,
+) {
+  const font = Math.max(14, Math.round(edge * 0.2 * scaleY));
+  ctx.font = `bold ${font}px sans-serif`;
+  const textW = o.mode === 'unknown' ? 0 : ctx.measureText(o.label).width;
+  const pad = Math.round(font * 0.5);
+  const chipW = o.chip ? Math.round(ctx.measureText(o.chip).width + pad * 2) : 0;
+  const g = plateGeometry(edge, cx, top, scaleX, scaleY, o.mode === 'unknown' ? -pad * 2 : textW, chipW);
+  return { ...g, chipW };
+}
+
+/** One plate above a card: a tier badge, a label and, for an enhanced card, an `Enhanced +n` cell at the right end.
+ *  `isBest` fills it teal (the item to take); every other plate is charcoal with a grey border, grey badge and text, drawn
+ *  at the theme's dim opacity. Returns the plate and chip rectangles in frame px. */
+function drawPlate(
+  ctx: CanvasRenderingContext2D,
+  g: ReturnType<typeof measurePlate>,
+  scaleX: number,
+  scaleY: number,
+  theme: OverlayTheme,
+  o: PlateOpts,
+): { plate: FrameRect; chip: FrameRect | null } {
+  const { x, y, w, h, pad, chipW } = g;
+  const { isBest, mode } = o;
+  ctx.save();
+  if (!isBest) ctx.globalAlpha = theme.dim;
+  ctx.font = `bold ${g.font}px sans-serif`;
   ctx.fillStyle = isBest ? theme.teal : theme.panel;
   roundedRect(ctx, x, y, w, h, 4);
   ctx.fill();
   if (!isBest) {
     ctx.lineWidth = 1;
-    ctx.strokeStyle = mode === 'unknown' ? grey : theme.teal;
+    ctx.strokeStyle = theme.grey;
     roundedRect(ctx, x + 0.5, y + 0.5, w - 1, h - 1, 4);
     ctx.stroke();
   }
   // tier badge: a square at the left end, a darker cell so the letter reads at a glance
-  ctx.fillStyle = mode === 'unknown' ? grey : isBest ? theme.tealInk : theme.teal;
+  ctx.fillStyle = isBest ? theme.tealInk : theme.grey;
   roundedRect(ctx, x + 2, y + 2, h - 4, h - 4, 3);
   ctx.fill();
   ctx.textBaseline = 'middle';
   ctx.textAlign = 'center';
-  ctx.fillStyle = mode === 'unknown' ? theme.panel : isBest ? theme.teal : theme.tealInk;
-  ctx.fillText(badge, x + h / 2, y + h / 2 + 1);
+  ctx.fillStyle = isBest ? theme.teal : theme.panel;
+  ctx.fillText(o.badge, x + h / 2, y + h / 2 + 1);
   ctx.textAlign = 'start';
+  const ink = isBest ? theme.tealInk : theme.muted;
   if (mode === 'item') {
-    ctx.fillStyle = isBest ? theme.tealInk : theme.muted;
-    ctx.fillText(label, x + h + pad, y + h / 2 + 1);
+    ctx.fillStyle = ink;
+    ctx.fillText(o.label, x + h + pad, y + h / 2 + 1);
   }
+  let chip: FrameRect | null = null;
+  if (o.chip && chipW) {
+    const cx0 = x + w - chipW;
+    ctx.fillStyle = ink;
+    ctx.globalAlpha = (isBest ? 1 : theme.dim) * 0.5;
+    ctx.fillRect(cx0, y + 4, 1, h - 8);
+    ctx.globalAlpha = isBest ? 1 : theme.dim;
+    ctx.fillText(o.chip, cx0 + pad, y + h / 2 + 1);
+    chip = { x0: cx0 / scaleX, y0: y / scaleY, x1: (x + w) / scaleX, y1: (y + h) / scaleY };
+  }
+  ctx.restore();
   ctx.textBaseline = 'alphabetic';
-  return { x0: x / scaleX, y0: y / scaleY, x1: (x + w) / scaleX, y1: (y + h) / scaleY };
+  return { plate: { x0: x / scaleX, y0: y / scaleY, x1: (x + w) / scaleX, y1: (y + h) / scaleY }, chip };
 }
 
 /** The small `Reading` sign above the middle card, drawn from the draft screen's first frame until the plates replace
- *  it. `middle` is the middle card's match square in frame px. */
+ *  it. `middle` is the middle card's match square in frame px. It sits one plate height times 0.35 (min 6 px) above
+ *  where the middle plate will land, from the same plate geometry; clamped to the top, it goes below that plate. */
 export function drawReading(
   ctx: CanvasRenderingContext2D,
   middle: { x: number; y: number; edge: number },
@@ -202,12 +275,14 @@ export function drawReading(
   theme: OverlayTheme = readTheme(),
 ): FrameRect {
   const { cx, cy, r } = itemCircle(middle);
-  const font = Math.max(14, Math.round(middle.edge * 0.2 * scaleY));
-  const h = Math.round(font * 1.7);
+  const plate = plateGeometry(middle.edge, cx, cy - r, scaleX, scaleY, 0);
+  const { font, h } = plate;
   ctx.font = `bold ${font}px sans-serif`;
   const w = Math.round(ctx.measureText('Reading').width + font);
   const x = Math.round(cx * scaleX - w / 2);
-  const y = Math.max(2, Math.round((cy - r) * scaleY - h - Math.max(4, middle.edge * 0.04 * scaleY)));
+  const gap = Math.max(6, Math.round(plate.h * 0.35));
+  const wanted = plate.y - gap - h;
+  const y = wanted >= 2 ? wanted : plate.y + plate.h + gap;
   ctx.fillStyle = theme.panel;
   roundedRect(ctx, x, y, w, h, 4);
   ctx.fill();
@@ -239,75 +314,139 @@ export function drawReads(
   rerollRect: FrameRect | null = null,
   grades: Record<number, string> = {},
   theme: OverlayTheme = readTheme(),
+  bonuses: Record<number, number> = {},
 ): DrawnRect[] {
   const drawn: DrawnRect[] = [];
-  for (const read of reads) {
-    if (read.unsure) {
-      const { cx, cy, r } = itemCircle(read.match);
-      const box = { x0: cx - r, y0: cy - r, x1: cx + r, y1: cy + r };
-      const plate = drawPlate(ctx, read.match, cx, box.y0, scaleX, scaleY, theme, false, 'unknown', '?', '?');
-      drawn.push({ kind: 'unknown', itemId: null, card: read.card, ...box, score: null, plate });
-      continue;
-    }
-    if (!read.present) continue;
-    const isBest = !reroll && read.itemId === bestId;
-    const { cx, cy, r } = itemCircle(read.match);
+  interface Slot {
+    read: CardRead;
+    unknown: boolean;
+    isBest: boolean;
+    veiled: boolean;
+    circle: Circle;
+    o: PlateOpts | null;
+    bonus: number | null;
+  }
+  const cards = reads.filter((r) => r.unsure || r.present);
+  const hasBest = !reroll && cards.some((r) => !r.unsure && r.itemId === bestId);
+  const slots: Slot[] = cards.map((read) => {
+    const circle = itemCircle(read.match);
+    if (read.unsure)
+      return {
+        read,
+        unknown: true,
+        isBest: false,
+        veiled: hasBest || reroll,
+        circle,
+        o: { isBest: false, mode: 'unknown', badge: '?', label: '?', chip: null },
+        bonus: null,
+      };
+    const isBest = hasBest && read.itemId === bestId;
+    const score = scores[read.itemId];
+    const bonus = read.enhanced && bonuses[read.itemId] !== undefined ? bonuses[read.itemId]! : null;
+    return {
+      read,
+      unknown: false,
+      isBest,
+      veiled: !isBest && (hasBest || reroll),
+      circle,
+      o:
+        score === undefined
+          ? null
+          : {
+              isBest,
+              mode: 'item',
+              badge: grades[read.itemId] ?? '-',
+              label: `Score: ${score.toFixed(2)}`,
+              chip: null,
+            },
+      bonus,
+    };
+  });
+  // veils first, so every plate is drawn over every veil
+  for (const sl of slots) {
+    if (!sl.veiled) continue;
+    const { cx, cy, r } = sl.circle;
+    ctx.fillStyle = theme.veil;
+    ctx.beginPath();
+    ctx.ellipse(cx * scaleX, cy * scaleY, r * scaleX, r * scaleY, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // chips: the full text unless two neighbouring plates would touch, then the short one for all of them
+  const chipText = (short: boolean, b: number) =>
+    `${short ? 'Enh' : 'Enhanced'} +${(Math.round(b * 100) / 100).toFixed(2)}`;
+  const layout = (short: boolean) =>
+    slots.map((sl) => {
+      if (!sl.o) return null;
+      const o = { ...sl.o, chip: sl.bonus !== null ? chipText(short, sl.bonus) : null };
+      const { cx, cy, r } = sl.circle;
+      return { o, g: measurePlate(ctx, sl.read.match.edge, cx, cy - r, scaleX, scaleY, o) };
+    });
+  const touches = (ls: ReturnType<typeof layout>) =>
+    ls.some((a, i) =>
+      ls.some(
+        (b, j) =>
+          j > i &&
+          !!a &&
+          !!b &&
+          a.g.x < b.g.x + b.g.w + 2 &&
+          b.g.x < a.g.x + a.g.w + 2 &&
+          a.g.y < b.g.y + b.g.h &&
+          b.g.y < a.g.y + a.g.h,
+      ),
+    );
+  let laid = layout(false);
+  if (touches(laid)) laid = layout(true);
+  slots.forEach((sl, i) => {
+    const { cx, cy, r } = sl.circle;
     const box = { x0: cx - r, y0: cy - r, x1: cx + r, y1: cy + r };
-    if (isBest) {
+    if (sl.isBest) {
       ctx.lineWidth = 3;
       ctx.strokeStyle = theme.teal;
       ctx.beginPath();
       ctx.ellipse(cx * scaleX, cy * scaleY, r * scaleX, r * scaleY, 0, 0, Math.PI * 2);
       ctx.stroke();
     }
-    const score = scores[read.itemId];
-    let plate: FrameRect | null = null;
-    if (score !== undefined)
-      plate = drawPlate(
-        ctx,
-        read.match,
-        cx,
-        box.y0,
-        scaleX,
-        scaleY,
-        theme,
-        isBest,
-        'item',
-        grades[read.itemId] ?? '-',
-        `Score: ${score.toFixed(2)}`,
-      );
+    const l = laid[i];
+    const res = l ? drawPlate(ctx, l.g, scaleX, scaleY, theme, l.o) : null;
+    const score = sl.unknown ? null : (scores[sl.read.itemId] ?? null);
     drawn.push({
-      kind: isBest ? 'best' : 'card',
-      itemId: read.itemId,
-      card: read.card,
+      kind: sl.unknown ? 'unknown' : sl.isBest ? 'best' : 'card',
+      itemId: sl.unknown ? null : sl.read.itemId,
+      card: sl.read.card,
       ...box,
-      score: score ?? null,
-      plate,
+      score,
+      plate: res?.plate ?? null,
+      veiled: sl.veiled,
+      chip: res?.chip ?? null,
+      chipText: res?.chip && l ? l.o.chip : null,
     });
-  }
+  });
   if (reroll) {
     const rect = rerollRect ?? rerollButtonRect(frameW, frameH);
     const x0 = rect.x0 * scaleX,
       y0 = rect.y0 * scaleY,
       x1 = rect.x1 * scaleX,
       y1 = rect.y1 * scaleY;
-    ctx.lineWidth = 3;
+    ctx.lineWidth = 4;
     ctx.strokeStyle = theme.teal;
     roundedRect(ctx, x0, y0, x1 - x0, y1 - y0, 4);
     ctx.stroke();
-    ctx.font = 'bold 14px sans-serif';
-    const w = ctx.measureText('RE-ROLL').width + 16;
-    const ly = Math.max(2, y0 - 28);
-    ctx.fillStyle = theme.panel;
-    roundedRect(ctx, x0, ly, w, 24, 4);
+    // the label is a card plate's size, centred above the button with the gap plates use above cards
+    const edge = cards[0]?.match.edge ?? Math.round(frameH * 0.12);
+    const font = Math.max(14, Math.round(edge * 0.2 * scaleY));
+    const h = Math.round(font * 1.7);
+    ctx.font = `bold ${font}px sans-serif`;
+    const w = Math.round(ctx.measureText('RE-ROLL').width + font * 1.5);
+    const lx = Math.round((x0 + x1) / 2 - w / 2);
+    const ly = Math.max(2, Math.round(y0 - h - PLATE_GAP(edge, scaleY)));
+    ctx.fillStyle = theme.teal;
+    roundedRect(ctx, lx, ly, w, h, 4);
     ctx.fill();
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = theme.teal;
-    roundedRect(ctx, x0 + 0.5, ly + 0.5, w - 1, 23, 4);
-    ctx.stroke();
-    ctx.fillStyle = theme.text;
+    ctx.fillStyle = theme.tealInk;
     ctx.textBaseline = 'middle';
-    ctx.fillText('RE-ROLL', x0 + 8, ly + 13);
+    ctx.textAlign = 'center';
+    ctx.fillText('RE-ROLL', lx + w / 2, ly + h / 2 + 1);
+    ctx.textAlign = 'start';
     ctx.textBaseline = 'alphabetic';
     drawn.push({
       kind: 'reroll',
@@ -318,10 +457,17 @@ export function drawReads(
       x1: rect.x1,
       y1: rect.y1,
       score: null,
-      plate: null,
+      plate: { x0: lx / scaleX, y0: ly / scaleY, x1: (lx + w) / scaleX, y1: (ly + h) / scaleY },
     });
   }
   return drawn;
+}
+
+/** itemId -> points enhanced adds, from the advice ranking. */
+export function bonusesFromAdvice(advice: OverlayAdvice | null): Record<number, number> {
+  const out: Record<number, number> = {};
+  for (const r of advice?.ranked ?? []) out[r.itemId] = r.enhancedBonus;
+  return out;
 }
 
 /** itemId -> tier letter map from the advice ranking. */

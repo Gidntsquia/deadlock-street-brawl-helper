@@ -34,6 +34,7 @@ import { createPerf } from '../perf';
 import type { FrameRegion, WorkerIn, WorkerOut } from '../brawl/worker';
 import {
   BLANK_OVERLAY,
+  bonusesFromAdvice,
   drawReads,
   gradesFromAdvice,
   scoresFromAdvice,
@@ -373,7 +374,8 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
             usage: r.usage,
             winRate: r.winRate,
             grade: gradeById.get(r.item.id) ?? '-',
-            rows: breakdownRows(r.parts, r.score, r.known),
+            enhancedBonus: r.enhancedBonus,
+            rows: breakdownRows(r.parts, r.score, r.known, r.enhancedBonus),
           })),
         }
       : null;
@@ -952,6 +954,8 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
             scoresFromAdvice(overlayAdviceRef.current),
             null,
             gradesFromAdvice(overlayAdviceRef.current),
+            undefined,
+            bonusesFromAdvice(overlayAdviceRef.current),
           );
         }
       }

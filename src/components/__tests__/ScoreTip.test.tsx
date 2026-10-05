@@ -24,6 +24,7 @@ const card = (known: boolean): OverlayAdviceCard => ({
   name: 'Extra Regen',
   score,
   enhanced: false,
+  enhancedBonus: 0,
   usage: 0.5,
   winRate: 0.5,
   grade: 'A',

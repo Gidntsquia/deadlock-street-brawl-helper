@@ -73,6 +73,8 @@ export interface RankedOffer {
   item: Item;
   enhanced: boolean;
   score: number;
+  /** Points enhanced adds to this card's score (score minus the same card's score not enhanced); 0 when not enhanced. */
+  enhancedBonus: number;
   parts: ScoreParts;
   why: string[];
   usage: number;
