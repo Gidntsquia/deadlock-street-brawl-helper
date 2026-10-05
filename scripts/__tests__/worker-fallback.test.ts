@@ -68,6 +68,7 @@ beforeAll(async () => {
   frames.bad = blank(frames.c1, 0);
   frames.enh = (await sharp('scripts/__tests__/data/enhanced-middle.png').ensureAlpha().raw().toBuffer()) as Buffer; // a real frame: Reactive Barrier enhanced, middle card
   // the same frame before the ENHANCED label has drawn: the box under the middle card's name painted flat grey
+  frames.enhR = (await sharp('scripts/__tests__/data/enhanced-right.png').ensureAlpha().raw().toBuffer()) as Buffer; // Intensifying Magazine enhanced, right card
   frames.noLabel = Buffer.from(frames.enh);
   const sq = cardSquares(W, H)[1]!,
     u = sq.edge / 185;
@@ -141,5 +142,13 @@ describe('worker: the ENHANCED mark', () => {
     const acc = outs.find((o) => o.accepted)!;
     expect(acc.reads[1]!.enhanced).toBe(true);
     expect(outs.filter((o) => o.live).every((o) => o.reads[1]!.enhanced)).toBe(true);
+  });
+
+  it('is read on the right card', async () => {
+    send({ type: 'reset' });
+    const outs: Out[] = [];
+    for (let n = 0; n < 120 && !outs.some((o) => o.accepted); n++) outs.push(await frame('enhR'));
+    const acc = outs.find((o) => o.accepted)!;
+    expect(acc.reads.map((r) => r.enhanced)).toEqual([false, false, true]);
   });
 });
