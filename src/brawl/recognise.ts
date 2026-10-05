@@ -692,7 +692,7 @@ function readLeanBar(img: RGBImage, index: DecodedIndex, slot: { left: number; r
 // edges run the full height of the upper half, and the tile fill in the top corners differs from the bar background
 // beside it. While the "round starting" banner is up every slot sits in a tile, so a frame where several slots show
 // tiles is rejected and the next frame is used.
-const SELF_TILE = { edgeRun: 0.9, minScore: 40, maxTiles: 2 } as const;
+const SELF_TILE = { edgeRun: 0.9, minScore: 40, maxTiles: 2, cornerSat: 40, cornerGap: 8 } as const;
 
 function pxAt(img: RGBImage, x: number, y: number): [number, number, number] {
   x = Math.min(img.width - 1, Math.max(0, x));
@@ -761,8 +761,23 @@ function readSelfSlot(img: RGBImage): { left: number; right: number } {
   const order = scores.map((_, i) => i).sort((p, q) => scores[q] - scores[p]);
   const ok =
     tiles <= SELF_TILE.maxTiles && scores[order[0]] >= SELF_TILE.minScore && scores[order[0]] >= 2 * scores[order[1]];
-  if (!ok) return { left: -1, right: -1 };
-  const k = order[0];
+  let k = order[0];
+  if (!ok) {
+    // Fallback: the tile's two top corners are filled with the team colour while a circular portrait leaves the grey
+    // bar there, so both corners are saturated. Needs one clear winner (a banner tiles every slot).
+    const sat = [...HERO_BAR.left, ...HERO_BAR.right].map((x) => {
+      const c = x * sx;
+      const corner = (a: number) => {
+        const m = meanRect(img, Math.round(c + a * R - 5), cb, Math.round(c + a * R + 5), ce);
+        return Math.max(...m) - Math.min(...m);
+      };
+      return Math.min(corner(-0.85), corner(0.85));
+    });
+    const ord = sat.map((_, i) => i).sort((p, q) => sat[q] - sat[p]);
+    if (sat[ord[0]] < SELF_TILE.cornerSat || sat[ord[0]] - sat[ord[1]] < SELF_TILE.cornerGap)
+      return { left: -1, right: -1 };
+    k = ord[0];
+  }
   return k < HERO_BAR.left.length ? { left: k, right: -1 } : { left: -1, right: k - HERO_BAR.left.length };
 }
 
