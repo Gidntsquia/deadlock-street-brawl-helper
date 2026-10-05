@@ -101,6 +101,8 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
   const [heroNotRead, setHeroNotRead] = useState(false);
   const heroNotReadRef = useRef(false);
   const lastSureHeroRef = useRef(0);
+  // The hero the loading screen named ("Joining the fight as..."): exact text, so it outranks the portrait read.
+  const loadedHeroRef = useRef<{ id: number; at: number } | null>(null);
   /** The overlay state of the set on screen, held unchanged until that set is no longer live. */
   const frozenRef = useRef<{ key: string; state: OverlayState } | null>(null);
   // Debug-mode recording: the page keeps the log of the draft on screen and hands crops and the record to main.
@@ -641,6 +643,45 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
       }
     });
   }, [capture, denied]);
+  useEffect(() => {
+    if (!isElectron) return;
+    let busy = false;
+    return window.brawlAPI!.onLoadingName((crop) => {
+      if (busy || pinnedRef.current) return;
+      busy = true;
+      void (async () => {
+        try {
+          const { readHeroName, terminateOCR } = await import('../brawl/ocr');
+          const { matchItemName, nameList } = await import('../brawl/names');
+          const text = await readHeroName({
+            width: crop.width,
+            height: crop.height,
+            data: new Uint8ClampedArray(crop.buffer),
+            channels: 4,
+          });
+          void terminateOCR();
+          const hs = loopCtxRef.current.heroes;
+          const m = matchItemName(
+            text,
+            nameList(
+              hs.map((h) => h.id),
+              Object.fromEntries(hs.map((h) => [h.id, h.name])),
+            ),
+          );
+          log('brawl-view', 'info', 'hero.loading', { text, hero: m?.itemId ?? 0 });
+          if (m && !pinnedRef.current) {
+            loadedHeroRef.current = { id: m.itemId, at: Date.now() };
+            lastSureHeroRef.current = m.itemId;
+            if (m.itemId !== loopCtxRef.current.heroId) loopCtxRef.current.onHero(m.itemId, 'detected');
+          }
+        } catch (e) {
+          log('brawl-view', 'warn', 'hero.loading.failed', { error: String(e) });
+        } finally {
+          busy = false;
+        }
+      })();
+    });
+  }, []);
   // A window that was found a moment ago is sometimes not yet offered by desktopCapturer, so the first attempt
   // is denied and no further state change follows. While capture is wanted and off, retry every 2 s (never
   // otherwise: that would be a busy loop against a denial that cannot succeed).
@@ -722,6 +763,8 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
     });
   }, []);
 
+  const pinnedRef = useRef(pinned);
+  pinnedRef.current = pinned;
   const loopCtxRef = useRef({ byId, heroId, heroes, onHero, hero, pinned });
   useLayoutEffect(() => {
     loopCtxRef.current = { byId, heroId, heroes, onHero, hero, pinned };
@@ -1006,8 +1049,11 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
         if (!meta.self) {
           log('brawl-view', 'debug', 'hero.detect.miss', { bar: meta.bar });
         }
-        if (meta.round === 1 && meta.choice === 1) lastSureHeroRef.current = 0; // a new match: last match's hero is not kept
-        const read = meta.self && heroes.some((h) => h.id === meta.self) ? meta.self : 0;
+        const loaded = loadedHeroRef.current;
+        const loadedFresh = loaded && Date.now() - loaded.at < 60 * 60_000 ? loaded.id : 0;
+        if (meta.round === 1 && meta.choice === 1 && !loadedFresh) lastSureHeroRef.current = 0; // a new match: last match's hero is not kept
+        const portrait = meta.self && heroes.some((h) => h.id === meta.self) ? meta.self : 0;
+        const read = loadedFresh || portrait;
         const pick = pinned
           ? { heroId, source: 'selected' as const }
           : chooseHero(read, lastSureHeroRef.current, heroId);
