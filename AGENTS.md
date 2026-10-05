@@ -33,7 +33,7 @@ Repo constitution for planner / worker / evaluator agents. Overrides generic sta
 - `npm run win:dev` — the actual way to run the app from WSL: syncs, then launches real Windows
   `electron.exe` from the Windows copy.
 - `npm run win:e2e [-- --only <case1,case2>]` — drives real Windows `electron.exe` end to end (boot,
-  capture-denied, test mode: advice/boxes/frame switches/ability points panel/blank overlay) and writes
+  capture-denied, first-run panel, `Reading` before plates, advice time under 2.5 s, test mode: advice/boxes/frame switches/ability points panel/blank overlay) and writes
   `logs/win-e2e.json`. Cases are `boot`, `capture-denied`, `testmode`, `overlay-closed`. The
   ability panel runs 1.2 s in the harness (`BRAWL_TIP_MS`), not the real 15 s. Target: a full run under 30 s; the
   harness's own hard timeout is 40 s. It needs a >= 1080p desktop (see Overlay behaviour). Don't touch a window it didn't
@@ -53,17 +53,40 @@ Repo constitution for planner / worker / evaluator agents. Overrides generic sta
 
 ## Which tests to run
 
-`npm test` (vitest, 125 tests, already the whole suite) takes ~3 s wall: run it after any code change; run one file with
+`npm test` (vitest, ~210 tests, already the whole suite; the two real-frame worker tests can time out once under heavy machine load) takes ~3 s wall: run it after any code change; run one file with
 `npx vitest run <file>`. `npm run check` before pushing. `npm run win:e2e` (~30 s, drives real Windows) only when
 capture, overlay, worker or Electron code changed, and only once per session. Docs/comments: run nothing.
 All e2e-needing checks belong in the single `testmode` pass in `scripts/win/e2e-main.cjs`, asserted against
 that one session; do not add a new case or a second app launch. Commands live in `.claude/test-commands.sh`.
 
-## Debug panel
+## Debug mode, sessions, replay
 
-The control window is slim (hero header, Start/Stop capture, status line, how-to) plus the Tier List tab. Ctrl+Shift+D
-(or the tray entry "Debug panel", channel `debugToggle`) toggles a hidden Debug panel with test mode, round/choice/
-re-rolls, enemies, owned, advice list, ability order. Not persisted. `win:e2e`/`win:demo` open it before using those controls.
+Debug mode (`src/debugMode.ts`) is on in dev and in any `-rc` version (now `0.3.0-rc.1`); the title bar shows `DEBUG`.
+Ctrl+Shift+D (or the tray entry, channel `debugToggle`) toggles the Debug panel: Start/Stop capture, Detect now (F8 still
+works without it), test mode, round/choice/re-rolls, enemies, owned, advice list, ability order, and the **session report**
+(one row per draft with its crops, items, shown plates, advice ms, and `Mark wrong`). The main view has only the status
+sentence, a one-sentence problem (`src/brawl/problems.ts`, also drawn on the overlay for 5 s) and `Hero not read. Using <name>`.
+With debug on, `electron/sessionStore.ts` records the last 3 matches under `userData/sessions/m-<id>/dNNN/` (crops only, 300 MB
+cap, oldest deleted first; never commit them). `npm run brawl:replay -- <session folder>` re-runs each draft through the real
+worker and gate on a virtual clock and prints items, `?` count, changes, drop-outs, advice ms and `same as live` or `differs
+from live`. `npm run brawl:fixture -- <session folder>` copies every marked-wrong, `?`-fallback or changed draft into
+`scripts/fixtures/sessions/` with an `expect.json`; `session-fixtures.test.ts` replays them. That tool is the only way to add them.
+
+## Reading sign and the fallback
+
+While the draft screen is up and no plates are drawn the overlay shows `Reading` (`OverlayState.reading`). Plates, take mark and
+re-roll call appear together once every sure card has advice (`pushOverlay` waits for it) and are then frozen for the set. After
+`FALLBACK_MS` (2.5 s) the sure cards are advised and the rest get grey `?` plates; take and re-roll only if the best sure card
+beats `unknownCeiling`. The hero is used only when the read is sure (`chooseHero`): else the last sure hero of the match, else
+the window's hero with the `Hero not read` line and no ability panel. Round 1 choice 1 empties the owned list.
+
+## First run and problems
+
+`FirstRun.tsx` shows three ticks (Borderless, window size, capture) with `Show me` (test mode); dismissal is remembered
+(`brawl.firstRunDone`) and the tray entry `First-run check` reopens it. Borderless is read from the missing WS_CAPTION style;
+exclusive fullscreen is told apart by the GDI probe region reading black 3 polls in a row. If the style cannot be read the line
+is an instruction with no tick. Strings: no `!`, emoji, em dashes, arrows or middle dots in `src/`, `electron/` or README
+(`scripts/__tests__/strings.test.ts`; the wiki is checked by hand).
 
 ## Window and overlay look
 
