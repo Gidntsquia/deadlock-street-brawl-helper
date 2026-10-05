@@ -77,12 +77,14 @@ interface Props {
   items: Item[];
   abilities: Ability[];
   onHero: (id: number, source?: 'detected' | 'manual') => void;
+  /** The user picked the hero by hand: the scoreboard read does not override it. */
+  pinned?: boolean;
   /** The hidden Debug panel (Ctrl+Shift+D) is open: shows the manual controls and the full advice list. */
   debug?: boolean;
 }
 
 /** Street Brawl draft advisor: the three cards on screen (read from a screen capture or typed in), ranked for this hero. */
-export function BrawlView({ hero, heroes, items, abilities, onHero, debug = false }: Props) {
+export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = false, debug = false }: Props) {
   const [loaded, setLoaded] = useState<{ heroId: number; analytics: BrawlAnalytics } | null>(null);
   const [config, setConfig] = useState<BrawlConfig | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -720,9 +722,9 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
     });
   }, []);
 
-  const loopCtxRef = useRef({ byId, heroId, heroes, onHero, hero });
+  const loopCtxRef = useRef({ byId, heroId, heroes, onHero, hero, pinned });
   useLayoutEffect(() => {
-    loopCtxRef.current = { byId, heroId, heroes, onHero, hero };
+    loopCtxRef.current = { byId, heroId, heroes, onHero, hero, pinned };
   });
   // frame loop: the worker asks for a frame ('tick'), the page draws the video to a canvas and sends the pixels,
   // the worker answers with what it read and asks again after CAPTURE_MS. Nothing here depends on page timers.
@@ -905,7 +907,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
     };
     const onMessage = (ev: MessageEvent<WorkerOut>) => {
       // read through a ref: a hero switch must not tear this loop down (it cleared the tip timer and frame wait)
-      const { byId, heroId, heroes, onHero, hero } = loopCtxRef.current;
+      const { byId, heroId, heroes, onHero, hero, pinned } = loopCtxRef.current;
       if (ev.data.type === 'tick') {
         if (ev.data.full) setFps(true); // the probe saw a draft screen: raise the frame rate before the first full read
         const full = ev.data.full;
@@ -1006,10 +1008,12 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
         }
         if (meta.round === 1 && meta.choice === 1) lastSureHeroRef.current = 0; // a new match: last match's hero is not kept
         const read = meta.self && heroes.some((h) => h.id === meta.self) ? meta.self : 0;
-        const pick = chooseHero(read, lastSureHeroRef.current, heroId);
+        const pick = pinned
+          ? { heroId, source: 'selected' as const }
+          : chooseHero(read, lastSureHeroRef.current, heroId);
         if (read) lastSureHeroRef.current = read;
         heroUsedRef.current = { id: pick.heroId, source: pick.source };
-        const notRead = pick.source === 'selected';
+        const notRead = !pinned && pick.source === 'selected';
         heroNotReadRef.current = notRead;
         setHeroNotRead(notRead);
         const me = pick.heroId;
