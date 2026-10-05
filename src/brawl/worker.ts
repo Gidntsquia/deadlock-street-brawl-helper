@@ -65,6 +65,7 @@ export type WorkerIn =
  *  browser tab is hidden; worker timers are not, so the advice keeps updating without alt-tabbing. */
 export type WorkerOut =
   | FrameResult
+  | { type: 'load'; slow: boolean } // this machine reads frames slowly: the page lowers its frame rate
   | { type: 'seen' } // the probe saw the draft screen: no cards are read yet
   | { type: 'tick'; full: boolean } // full: send a whole frame; otherwise just the probe crop
   | { type: 'rerolls'; forKey: string; rerollsRemaining: number }
@@ -355,7 +356,22 @@ let intervalMs = 250;
 // "CHOICE n OF 3" crop, until the shop reappears.
 const IDLE_INTERVAL_MS = 300;
 // Once the draft screen's cards, round and choice are all settled, only a change matters: look less often.
-const SETTLED_INTERVAL_MS = 100;
+const SETTLED_INTERVAL_MS = 250;
+// Load adapter: a moving average of what a full frame read costs. Over SLOW_ENTER_MS the machine is struggling: the
+// settled interval doubles and the page is told to lower its frame rate; back under SLOW_EXIT_MS it recovers.
+const SLOW_ENTER_MS = 150;
+const SLOW_EXIT_MS = 90;
+let readEma = 0;
+let slow = false;
+const noteReadMs = (ms: number) => {
+  readEma = readEma === 0 ? ms : readEma * 0.7 + ms * 0.3;
+  const next = slow ? readEma > SLOW_EXIT_MS : readEma > SLOW_ENTER_MS;
+  if (next !== slow) {
+    slow = next;
+    post({ type: 'load', slow });
+  }
+};
+const settledInterval = () => (slow ? SETTLED_INTERVAL_MS * 2 : SETTLED_INTERVAL_MS);
 // While the cards are settled, a frame that looks the same (coarse pixel grid, same round/choice labels) skips the
 // expensive card and inventory reads and reuses the last result: a change is noticed within one interval and the
 // idle draft screen costs almost nothing.
@@ -568,7 +584,7 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
       ms: performance.now() - t0,
       stages,
     });
-    tick(SETTLED_INTERVAL_MS, true);
+    tick(settledInterval(), true);
     return;
   }
   // A new picture is about to be read: ask for the next frame now, so the page copies it while this one is being read
@@ -702,6 +718,7 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
   pendingChoice = labels.choice;
   settledSig = key !== '' && key === acceptedKey ? sig : null;
   settledReads = sent;
+  noteReadMs(performance.now() - t0);
   post({
     type: 'result',
     shop: true,

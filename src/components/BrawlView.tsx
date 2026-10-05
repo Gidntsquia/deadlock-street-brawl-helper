@@ -68,6 +68,8 @@ const DETECT_MISSES = 3; // non-draft results in a row before Detect now says "N
 const DETECT_TIMEOUT_MS = 4000; // a try that gets no frame at all in this long counts as failed
 const CAPTURE_IDLE_MS = 4000; // no draft screen or tip for this long: stop capturing (real game only)
 const IDLE_FPS = 4;
+const SLOW_DRAFT_FPS = 8; // when the worker reports slow reads
+const PREVIEW_MS = 200; // the debug preview redraws at most 5 times a second
 const ENEMY_SLOTS = 4;
 const isElectron = typeof window !== 'undefined' && !!window.brawlAPI;
 
@@ -804,13 +806,18 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
       vfcId = vid.requestVideoFrameCallback(loop);
     }
     let lastLoggedSource = '';
-    let fpsForShop: boolean | null = null;
+    let lastPreviewAt = 0;
+    let fpsApplied = 0;
+    let slowLoad = false;
+    let lastShop = false;
     const setFps = (shop: boolean) => {
-      if (fpsForShop === shop) return;
-      fpsForShop = shop;
+      lastShop = shop;
+      const fps = shop ? (slowLoad ? SLOW_DRAFT_FPS : DRAFT_FPS) : IDLE_FPS;
+      if (fpsApplied === fps) return;
+      fpsApplied = fps;
       void streamRef.current
         ?.getVideoTracks()[0]
-        ?.applyConstraints({ frameRate: shop ? DRAFT_FPS : IDLE_FPS })
+        ?.applyConstraints({ frameRate: fps })
         .catch(() => {});
     };
     let tipTimer: ReturnType<typeof setTimeout> | undefined;
@@ -925,7 +932,8 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
       ]);
       const pv = previewRef.current;
       // the preview only matters while the control window can be seen: skip its full-frame scale-draw otherwise
-      if (pv && !document.hidden) {
+      if (pv && !document.hidden && performance.now() - lastPreviewAt >= (slowLoad ? PREVIEW_MS * 3 : PREVIEW_MS)) {
+        lastPreviewAt = performance.now();
         const rerollNow = !!rerollRef.current;
         const bestId = rerollNow ? null : (rankedRef.current[0]?.item.id ?? null);
         const pctx = pv.getContext('2d');
@@ -951,6 +959,12 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
     const onMessage = (ev: MessageEvent<WorkerOut>) => {
       // read through a ref: a hero switch must not tear this loop down (it cleared the tip timer and frame wait)
       const { byId, heroId, heroes, onHero, hero, pinned } = loopCtxRef.current;
+      if (ev.data.type === 'load') {
+        slowLoad = ev.data.slow;
+        log('brawl-view', 'info', 'load.slow', { slow: slowLoad });
+        setFps(lastShop);
+        return;
+      }
       if (ev.data.type === 'tick') {
         if (ev.data.full) setFps(true); // the probe saw a draft screen: raise the frame rate before the first full read
         const full = ev.data.full;
