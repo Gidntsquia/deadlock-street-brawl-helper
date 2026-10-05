@@ -310,12 +310,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
       // A newly accepted set's reads arrive before React has ranked it: sending them now would draw them with the
       // previous set's scores and pick for a frame. Wait for the advice effect, which pushes again once it has run.
       const adviceIds = overlayAdviceRef.current?.ranked.map((r) => r.itemId) ?? [];
-      if (
-        draft &&
-        adviceIds.length &&
-        readsRef.current.some((r) => r.present && !r.unsure && !adviceIds.includes(r.itemId))
-      )
-        return;
+      if (draft && readsRef.current.some((r) => r.present && !r.unsure && !adviceIds.includes(r.itemId))) return;
       const rerollNow = !!rerollRef.current;
       const plates = draft && readsRef.current.some((r) => r.present);
       state = {
