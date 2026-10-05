@@ -373,6 +373,9 @@ export function matchIcon(
   return best;
 }
 const SHORTLIST = 12;
+const NARROW = { search: 12, scales: [0.92, 0.97] as const };
+const NARROW_SURE_SCORE = 0.85;
+const NARROW_SURE_MARGIN = 0.1;
 
 const MIN_ICON_SCORE = 0.45; // icon similarity floor; between this and SURE_ICON_SCORE a tier numeral must also be read
 const SURE_ICON_SCORE = 0.75;
@@ -392,7 +395,11 @@ export interface CardRead {
 /** Reads the three draft cards of a full-screen capture. Items that share an icon are told apart by the tier numeral. */
 export function readDraftScreen(img: RGBImage, index: DecodedIndex, tierOf: (id: number) => number): CardRead[] {
   return cardAnchors(img.width, img.height).map((a) => {
-    const match = matchIcon(img, index, a.cx, a.cy, a.icon);
+    // The game draws every card at the same place, so a narrow search nearly always finds it; only a weak or
+    // ambiguous result pays for the full position/scale search.
+    let match = matchIcon(img, index, a.cx, a.cy, a.icon, undefined, NARROW);
+    if (match.score < NARROW_SURE_SCORE || match.margin < NARROW_SURE_MARGIN)
+      match = matchIcon(img, index, a.cx, a.cy, a.icon);
     const tier = match.score >= MIN_ICON_SCORE ? readTier(img, match) : 0;
     // The numeral only tells twin icons apart: an icon with no twin needs none (a numeral is not always readable, e.g.
     // when the game shows the card without one or the card is hovered).
