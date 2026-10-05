@@ -68,6 +68,10 @@ const RECT_POLL_MS = 250; // base tick; see the poll's own cadence below
 // Game window lookup cadence (in ticks): once a second while no game is open, twice a second while it is.
 const POLL_TICKS_NO_GAME = 4;
 const POLL_TICKS_GAME = 2;
+// With the game open but in the background and nothing being read, or when a tick itself is slow (a loaded PC), look
+// half as often. The probe only runs while the game is the foreground window, so nothing is missed.
+const POLL_TICKS_QUIET = 4;
+const POLL_TICK_SLOW_MS = 40;
 
 let control: BrowserWindow | null = null;
 let overlay: BrowserWindow | null = null;
@@ -494,9 +498,16 @@ function startRectPolling() {
   let tickNo = 0;
   let lastReassert = 0;
   let gameWasForeground = false;
+  let quiet = false;
+  let tickEma = 0;
   pollTimer = setInterval(() => {
     tickNo += 1;
-    if (tickNo % (lastRect ? POLL_TICKS_GAME : POLL_TICKS_NO_GAME) !== 0) return;
+    const every = !lastRect
+      ? POLL_TICKS_NO_GAME
+      : quiet || tickEma > POLL_TICK_SLOW_MS
+        ? POLL_TICKS_QUIET
+        : POLL_TICKS_GAME;
+    if (tickNo % every !== 0) return;
     const t0 = performance.now();
     if (alive(testWindow) && findGameWindow(GAME_WINDOW_TITLE, ownWindowHandles(true))) {
       // A real Deadlock window appeared while test mode was on: hand over to the real game.
@@ -564,7 +575,10 @@ function startRectPolling() {
       }
       gameWasForeground = fg;
     } else gameWasForeground = false;
-    perf.record('poll.tick', performance.now() - t0);
+    quiet = !!found && !captureWanted && probeMode() && !isGameForeground();
+    const took = performance.now() - t0;
+    tickEma = tickEma === 0 ? took : tickEma * 0.8 + took * 0.2;
+    perf.record('poll.tick', took);
   }, RECT_POLL_MS);
 }
 

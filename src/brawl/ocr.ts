@@ -15,7 +15,10 @@ let workerPromise: Promise<TesseractWorker> | null = null;
 // switching them per call would race the two kinds of read.
 // One engine per card slot: the three name lines are read at the same time instead of queueing behind one engine,
 // which is what held the first advice back on a slow PC. Slot 0 also serves the loading-screen hero name.
-const NAME_ENGINES = 3;
+// On a 2 to 4 thread machine three engines (each a wasm model in memory) compete with the game: one engine reads the
+// names one after another instead.
+const cores = (globalThis as { navigator?: { hardwareConcurrency?: number } }).navigator?.hardwareConcurrency ?? 8;
+const NAME_ENGINES = cores <= 4 ? 1 : cores <= 6 ? 2 : 3;
 const nameWorkerPromises: (Promise<TesseractWorker> | null)[] = Array(NAME_ENGINES).fill(null);
 /** The name crop is scaled so its text line is about this tall before OCR (it is ~25 px tall in a 1280 px frame). */
 const NAME_PX = 64;
