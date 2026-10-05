@@ -3,6 +3,7 @@ import type { Ability, Hero, Item } from './types';
 import { img, loadCore, type Manifest } from './data/load';
 import { BrawlView } from './components/BrawlView';
 import { TierList } from './components/TierList';
+import { debugDefault } from './brawl/debugMode';
 import { TitleBar } from './components/TitleBar';
 import { usePersisted, isNumber, isString } from './hooks/usePersisted';
 
@@ -23,7 +24,7 @@ export default function App() {
   const [heroId, setHeroId] = usePersisted('heroId', isNumber, INFERNUS);
   const [tab, setTab] = usePersisted<Tab>('tab', isTab, 'advisor');
   const [error, setError] = useState<string | null>(null);
-  const [debug, setDebug] = useState(false); // hidden Debug panel; never persisted
+  const [debug, setDebug] = useState(() => debugDefault(__APP_VERSION__, import.meta.env.DEV)); // Debug panel: on in dev and rc builds
   const [now] = useState(Date.now);
   const [changeHero, setChangeHero] = useState(false);
   const [heroSource, setHeroSource] = useState<'detected' | 'manual'>('manual');
@@ -64,14 +65,14 @@ export default function App() {
   if (error)
     return (
       <>
-        <TitleBar />
+        <TitleBar debug={debug} />
         <div className="error">{error}</div>
       </>
     );
   if (!hero)
     return (
       <>
-        <TitleBar />
+        <TitleBar debug={debug} />
         <div className="loading">Loading snapshots…</div>
       </>
     );
@@ -83,7 +84,7 @@ export default function App() {
 
   return (
     <>
-      <TitleBar />
+      <TitleBar debug={debug} />
       <header className="app-header">
         {tab === 'advisor' && <img className="hero-portrait" src={img(hero.images.small)} alt="" />}
         <div>

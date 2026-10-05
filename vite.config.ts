@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 import electron from 'vite-plugin-electron';
@@ -7,6 +8,7 @@ export default defineConfig(({ mode }) => ({
   // Electron loads dist/index.html via loadFile (no server), so assets must resolve relative to the
   // file, not from the site root; the browser dev server still needs the root-relative default.
   base: process.env.BASE_PATH ?? (mode === 'electron' ? './' : '/'),
+  define: { __APP_VERSION__: JSON.stringify(JSON.parse(readFileSync('package.json', 'utf8')).version) },
   plugins: [
     react(),
     mode === 'electron' &&
