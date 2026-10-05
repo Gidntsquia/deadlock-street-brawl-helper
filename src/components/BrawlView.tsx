@@ -42,6 +42,8 @@ import {
 } from '../brawl/draw';
 import { breakdownRows } from '../brawl/breakdown';
 import { chooseHero } from '../brawl/heroChoice';
+import { DraftLog } from '../brawl/draftLog';
+import type { DraftRecord, RegionShot } from '../../electron/sessionStore';
 import { unknownCeiling } from '../brawl/engine';
 import { itemTiers, type BrawlTierListData } from '../brawl/tierlist';
 import { AbilityPanel } from './AbilityPanel';
@@ -96,6 +98,15 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
   const lastSureHeroRef = useRef(0);
   /** The overlay state of the set on screen, held unchanged until that set is no longer live. */
   const frozenRef = useRef<{ key: string; state: OverlayState } | null>(null);
+  // Debug-mode recording: the page keeps the log of the draft on screen and hands crops and the record to main.
+  const debugRef = useRef(debug);
+  const draftLogRef = useRef(new DraftLog());
+  const heroUsedRef = useRef<DraftRecord['hero']>({ id: 0, source: 'none' });
+  const shownRef = useRef<DraftRecord['shown']>({ plates: [], takeId: null, reroll: false });
+  useEffect(() => {
+    debugRef.current = debug;
+    window.brawlAPI?.setDebugState?.(debug);
+  }, [debug]);
   const [capture, setCapture] = useState<'off' | 'starting' | 'on'>('off');
   const captureStateRef = useRef<'off' | 'starting' | 'on'>('off');
   captureStateRef.current = capture;
@@ -270,8 +281,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
   const abilityStepNow = abilityStepIndex(round, choice);
   // The standard point allocation for this round, shown ~15 s after the draft closes (latched then).
   const abilityTarget = useMemo(
-    () =>
-      abilityOrder && input && !heroNotRead ? abilityPanelFor(abilityOrder, hero, input.abilities, round) : null,
+    () => (abilityOrder && input && !heroNotRead ? abilityPanelFor(abilityOrder, hero, input.abilities, round) : null),
     [abilityOrder, input, hero, round, heroNotRead],
   );
   useEffect(() => {
@@ -315,7 +325,17 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
     if (state.draft && state.reads.some((r) => r.present)) {
       const f = frozenRef.current;
       if (f && f.key === acceptedKeyRef.current) state = { ...f.state, rerollRect: state.rerollRect, panel: null };
-      else frozenRef.current = { key: acceptedKeyRef.current, state };
+      else {
+        frozenRef.current = { key: acceptedKeyRef.current, state };
+        const score = (id: number) => state.advice?.ranked.find((x) => x.itemId === id)?.score ?? null;
+        shownRef.current = {
+          plates: state.reads
+            .filter((r) => r.present)
+            .map((r) => ({ itemId: r.unsure ? 0 : r.itemId, tier: r.tier, score: r.unsure ? null : score(r.itemId) })),
+          takeId: state.bestId,
+          reroll: state.reroll,
+        };
+      }
     } else frozenRef.current = null;
     const json = JSON.stringify(state);
     if (json === lastOverlayJsonRef.current) return;
@@ -821,6 +841,26 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
         }
       }
       const prefer = [...offeredRef.current, ...ownedRef.current];
+      if (debugRef.current && window.brawlAPI?.sessionFrame) {
+        const now = performance.now();
+        const shot = draftLogRef.current.wantFrame(now);
+        if (shot) {
+          const n = rects.length;
+          // the first frame keeps every region (the replay reuses the grid and hero bar); later ones only what changes
+          const keep = (i: number) => shot === 'full' || i < 3 || i === 4 || i === 5 || i >= n - 6;
+          const copy: RegionShot[] = regions
+            .map((r, index) => ({
+              index,
+              x: r.x,
+              y: r.y,
+              width: r.width,
+              height: r.height,
+              rgba: new Uint8Array(r.buffer.slice(0)),
+            }))
+            .filter((r) => keep(r.index));
+          setTimeout(() => window.brawlAPI?.sessionFrame?.({ t: now, regions: copy }), 0);
+        }
+      }
       w.postMessage({ type: 'frame', width: srcW, height: srcH, regions, prefer } satisfies WorkerIn, [
         ...regions.map((r) => r.buffer),
       ]);
@@ -954,6 +994,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
         const read = meta.self && heroes.some((h) => h.id === meta.self) ? meta.self : 0;
         const pick = chooseHero(read, lastSureHeroRef.current, heroId);
         if (read) lastSureHeroRef.current = read;
+        heroUsedRef.current = { id: pick.heroId, source: pick.source };
         const notRead = pick.source === 'selected';
         heroNotReadRef.current = notRead;
         setHeroNotRead(notRead);
@@ -1003,6 +1044,42 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, debug = fals
           accepted: r.accepted,
           items: r.reads.map((x) => x.itemId),
         });
+      }
+      if (debugRef.current && window.brawlAPI?.sessionDraft) {
+        const now = performance.now();
+        const end = draftLogRef.current.push(
+          {
+            t: now,
+            shop: r.shop,
+            live: r.live,
+            accepted: r.accepted,
+            picked: r.picked !== null,
+            spent: r.spent,
+            round: r.round,
+            choice: r.choice,
+            items: r.reads.map((x) => (x.present && !x.unsure ? x.itemId : 0)),
+            unsure: r.reads.filter((x) => x.unsure).length,
+            tiers: r.reads.map((x) => x.tier),
+          },
+          r.key,
+          now,
+        );
+        if (end)
+          window.brawlAPI.sessionDraft({
+            round: end.round,
+            choice: end.choice,
+            startedAt: end.startedAt,
+            frameW: frameDimsRef.current.w,
+            frameH: frameDimsRef.current.h,
+            items: end.stats.items,
+            unsure: end.stats.unsure,
+            hero: heroUsedRef.current,
+            shown: shownRef.current,
+            adviceMs: end.stats.adviceMs === null ? null : Math.round(end.stats.adviceMs),
+            changes: end.stats.changes,
+            dropouts: end.stats.dropouts,
+            fallback: end.stats.fallback,
+          });
       }
       setFps(r.shop);
       stepTracker(r.shop);

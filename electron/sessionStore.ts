@@ -77,11 +77,14 @@ export class SessionStore {
   private current: { id: string; drafts: number; lastStep: number } | null = null;
   private chain: Promise<unknown> = Promise.resolve();
 
-  constructor(
-    readonly dir: string,
-    private readonly encode: Encode,
-    private readonly opts: { keep?: number; capBytes?: number } = {},
-  ) {}
+  readonly dir: string;
+  private readonly encode: Encode;
+  private readonly opts: { keep?: number; capBytes?: number };
+  constructor(dir: string, encode: Encode, opts: { keep?: number; capBytes?: number } = {}) {
+    this.dir = dir;
+    this.encode = encode;
+    this.opts = opts;
+  }
 
   /** A frame of the draft that is up now; kept in memory until `finishDraft`. */
   addFrame(frame: FrameShot) {

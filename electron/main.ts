@@ -25,6 +25,8 @@ import {
 } from './gameWindow';
 import { probeShopScreen } from './shopProbe';
 import { CHANNELS } from './channels';
+import { SessionStore, type DraftRecord, type FrameShot, type RegionShot } from './sessionStore';
+import { debugDefault } from '../src/brawl/debugMode';
 import { MIN_HEIGHT, MIN_WIDTH, isBounds, validBounds } from './windowBounds';
 import { overlayHasContent } from '../src/brawl/overlayContent';
 import { dotState, initialLobby, lobbyDotVisible, stepLobby, type DotState } from '../src/brawl/lobbyDot';
@@ -69,6 +71,25 @@ let control: BrowserWindow | null = null;
 let overlay: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let lastRect: Rect | null = null;
+
+// Debug-mode recording (see sessionStore.ts): crops as PNG, written by main so the read path never waits on it.
+const encodeRegion = (r: RegionShot): Buffer => {
+  const bgra = Buffer.alloc(r.rgba.length);
+  for (let i = 0; i < r.rgba.length; i += 4) {
+    bgra[i] = r.rgba[i + 2]!;
+    bgra[i + 1] = r.rgba[i + 1]!;
+    bgra[i + 2] = r.rgba[i]!;
+    bgra[i + 3] = 255;
+  }
+  return nativeImage.createFromBitmap(bgra, { width: r.width, height: r.height }).toPNG();
+};
+let sessionStore: SessionStore | null = null;
+const sessions = () =>
+  (sessionStore ??= (() => {
+    const s = new SessionStore(path.join(app.getPath('userData'), 'sessions'), encodeRegion);
+    s.enabled = debugDefault(app.getVersion(), !app.isPackaged);
+    return s;
+  })());
 // Whether the control window should be capturing the game (see CHANNELS.captureState). With a real game this stays
 // false until `probeShopScreen` sees the draft screen, and goes back to false when the control window says the draft
 // and its tip are over. Test mode and the e2e harness (`probe` false) capture whenever the game window exists.
@@ -444,6 +465,7 @@ function startRectPolling() {
     if (!rectsEqual(found, lastRect)) {
       lastRect = found;
       log('electron-main', 'info', found ? 'window.found' : 'window.lost', found ?? undefined);
+      sessions().endMatch(); // a window lost and found is a new match
       sendControl(CHANNELS.gameRect, found);
       if (found && alive(overlay)) overlay.setBounds(toDipBounds(found));
       syncOverlay();
@@ -780,6 +802,20 @@ function setupIpc() {
       log('electron-main', 'warn', 'detect.frame.failed', { message: String(e) });
     }
   });
+  ipcMain.on(CHANNELS.debugState, (_e, on: boolean) => {
+    sessions().enabled = !!on;
+    if (!on) sessions().discard();
+  });
+  ipcMain.on(CHANNELS.sessionFrame, (_e, frame: FrameShot) => sessions().addFrame(frame));
+  ipcMain.on(CHANNELS.sessionDraft, (_e, rec: DraftRecord) => {
+    sessions()
+      .finishDraft(rec)
+      .catch((e) => log('electron-main', 'warn', 'session.write.failed', { message: String(e) }));
+  });
+  ipcMain.handle(CHANNELS.sessionList, () => sessions().list());
+  ipcMain.handle(CHANNELS.sessionMark, (_e, matchId: string, n: number, wrong: boolean) =>
+    sessions().mark(matchId, n, wrong),
+  );
   ipcMain.on(CHANNELS.captureResult, (_e, ok: boolean) => {
     captureFailed = !ok;
     refreshDot();
@@ -883,6 +919,7 @@ app.whenReady().then(() => {
   if (process.env.BRAWL_E2E) {
     (globalThis as Record<string, unknown>).__brawlE2E = {
       getControl: () => control,
+      sessionsDir: () => sessions().dir,
       toggleDebugFromTray: toggleDebugPanel,
       getOverlay: () => overlay,
       get overlayIgnoresMouseEvents() {
