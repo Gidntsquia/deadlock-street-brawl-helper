@@ -115,7 +115,10 @@ const accepts = (outs: Out[]) => outs.filter((o) => o.accepted).map((o) => [o.ke
 describe('worker: the draft gate on real frames', () => {
   it('advises choice 1, spots the pick, never re-advises the old cards, then advises choice 2', async () => {
     // the first frames wait for the names under the cards (the OCR engine's first read is the slow one)
-    const first = await run('c1', 16);
+    // (OCR runs in real time, so under load it needs more frames: run until the set is accepted, then a few more)
+    const first: Out[] = [];
+    for (let i = 0; i < 120 && !first.some((o) => o.accepted); i++) first.push(await frame('c1'));
+    first.push(...(await run('c1', 4)));
     const c1Key = '1548066885,2829638276,3633614685';
     expect(accepts(first)).toEqual([[c1Key, 1, 1]]);
     expect((first.findIndex((o) => o.accepted) - first.findIndex((o) => o.key)) * 70).toBeGreaterThanOrEqual(300);

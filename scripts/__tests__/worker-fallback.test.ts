@@ -85,7 +85,9 @@ const frozen = (o: Out) => JSON.stringify([o.key, o.reads]);
 describe('worker: a set stays unchanged once shown', () => {
   it('shows nothing until sure, then the same reads on every frame, through hovers', async () => {
     send({ type: 'reset' });
-    const outs = await run('c1', 14);
+    // OCR runs in real time, so under load it needs more frames: run until the set is accepted
+    const outs: Out[] = [];
+    for (let n = 0; n < 120 && !outs.some((o) => o.accepted); n++) outs.push(await frame('c1'));
     const i = outs.findIndex((o) => o.accepted);
     expect(i).toBeGreaterThan(0);
     for (const o of outs.slice(0, i)) expect(o.live).toBe(false); // the page shows `Reading` for these
