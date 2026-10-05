@@ -96,6 +96,19 @@ exclusive fullscreen is told apart by the GDI probe region reading black 3 polls
 is an instruction with no tick. Strings: no `!`, emoji, em dashes, arrows or middle dots in `src/`, `electron/` or README
 (`scripts/__tests__/strings.test.ts`; the wiki is checked by hand).
 
+## Overlay look (clearer overlay)
+
+Only the advised card is teal. The other plates are charcoal with a 1 px grey border (`--overlay-grey`), grey badge and text, drawn at
+`--overlay-dim` (0.6) opacity, and a `--overlay-veil` (black 35 %) circle sits over each non-advised card under the plates; hover and
+`ScoreTip` still work on a veiled card. A `?` card is grey and veiled; with no best card and no re-roll nothing is veiled. An enhanced card
+has a right-end cell `Enhanced +n` (`Enh +n` when plates would touch), n = `RankedOffer.enhancedBonus` (score minus the same card not
+enhanced, carried as `OverlayAdviceCard.enhancedBonus`, `bonusesFromAdvice`), and the tooltip Enhanced row equals it (`breakdownRows`). Geometry
+is shared in `plateGeometry` (`draw.ts`); the `Reading` sign sits above the middle plate by max(6 px, 0.35 plate height), below it if clamped.
+A re-roll call is a filled teal `RE-ROLL` plate (card-plate size) centred above the button plus a 4 px teal outline, and all cards go grey and veiled.
+`scripts/render-ux.ts` (with `scripts/lib/svgCtx.ts`) renders before/after pictures into `plans/eval-artifacts/ux-pass/`; it needs the old
+drawing as `src/brawl/draw.before.ts` (`git show b4c0e95:src/brawl/draw.ts`, not committed). The wiki page was not updated: do it by hand.
+The e2e debug checks follow `debugDefault`: off at start in a final version, on in dev or `-rc`; the harness then turns it on to reach test mode.
+
 ## Window and overlay look
 
 The control window is frameless with an app-drawn 32 px strip (`TitleBar.tsx`, `-webkit-app-region: drag`; buttons `no-drag`, minimise/close over IPC), no menu bar. Size/position persist to `userData/window-state.json` (`electron/windowBounds.ts` validates; off-screen -> centred on the primary display; skipped under `BRAWL_E2E` and while test mode's temporary bounds are active). The identity (charcoal, teal `#2ec4b6`, warm off-white, <=4 px corners) lives once in `src/index.css` variables; `readTheme()` in `draw.ts` reads them for the canvas. The overlay draws a plate (tier letter + `Score: n`) above each card; hovering a plate shows `ScoreTip` (rows from `breakdownRows`, in `OverlayAdvice.rows`, summing to the score). The overlay stays click-through (`setIgnoreMouseEvents(true, {forward:true})`); hover is hit-tested in the overlay renderer and only while a draft shows. Under DPI scaling like 125 %, `getBounds` after `setBounds` differs by 1-2 px (rounding); the e2e allows that and checks for drift.
