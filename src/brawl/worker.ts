@@ -151,11 +151,16 @@ const nameSig = (c: NameCrop): Uint8Array => {
   return out;
 };
 /** Same lettering: at most a few grid cells moved by more than a sixth. */
-const sameName = (a: Uint8Array, b: Uint8Array) => {
+const nameCellsMoved = (a: Uint8Array, b: Uint8Array) => {
   let changed = 0;
-  for (let i = 0; i < a.length; i++) if (Math.abs(a[i]! - b[i]!) > 42 && ++changed > 4) return false;
-  return true;
+  for (let i = 0; i < a.length; i++) if (Math.abs(a[i]! - b[i]!) > 42) changed++;
+  return changed;
 };
+const sameName = (a: Uint8Array, b: Uint8Array) => nameCellsMoved(a, b) <= 4;
+/** Different lettering, not a hover over the same name: well over the hover tolerance moved, as when a re-roll prints
+ *  another item. With no icon to tell, this is what makes a slot unsettled at once. */
+const otherName = (a: Uint8Array, b: Uint8Array) => a.length === b.length && nameCellsMoved(a, b) > OTHER_NAME_CELLS;
+const OTHER_NAME_CELLS = 6;
 /** A line with almost no ink shows no name (hidden, or the screen is mid-swap): nothing to read. */
 const hasInk = (s: Uint8Array) => s.reduce((n, v) => n + v, 0) > 255 * 2;
 
@@ -166,7 +171,7 @@ const applyNames = (
   img: Parameters<typeof cardNameCrop>[0],
   raw: CardRead[],
   choice: number,
-): { reads: CardRead[]; waiting: boolean; pending: boolean; slotSure: boolean[] } => {
+): { reads: CardRead[]; waiting: boolean; pending: boolean; slotSure: boolean[]; changed: boolean; inked: boolean } => {
   const squares = cardSquares(img.width, img.height);
   // The RARE / ENHANCED marks are read at the fixed card square too: the icon search's wobble (an enhanced icon
   // matches poorly) must not move the box off the label.
@@ -176,7 +181,16 @@ const applyNames = (
     const mk = readMarkers(img, match);
     return { ...r, match, rare: mk.rare, enhanced: mk.enhanced };
   });
-  if (!names) return { reads: pinned, waiting: false, pending: false, slotSure: pinned.map((r) => r.present) };
+  const iconless = raw.every((r) => !r.present && r.match.score === 0); // see squareReads
+  if (!names)
+    return {
+      reads: pinned,
+      waiting: false,
+      pending: false,
+      slotSure: pinned.map((r) => r.present),
+      changed: false,
+      inked: false,
+    };
   if (choice !== nameChoice) {
     forgetNames(); // the next choice's cards
     nameChoice = choice;
@@ -184,12 +198,15 @@ const applyNames = (
   const list = names;
   const now = performance.now();
   let waiting = false,
-    pending = false;
+    pending = false,
+    changed = false,
+    inked = true;
   // A slot is sure when its name is locked, or (no lock yet) its icon is a clear match. The fallback shows the rest as `?`.
   const slotSure = [false, false, false];
   const out = pinned.map((r, slot) => {
     const crop = cardNameCrop(img, r.match);
     const sig = crop ? nameSig(crop) : null;
+    if (!sig || !hasInk(sig)) inked = false;
     const lock = locks[slot];
     const sure = r.present && r.match.score >= SURE_SCORE && r.match.margin >= SURE_MARGIN;
     const asLock = (l: SlotLock): CardRead => ({
@@ -202,7 +219,7 @@ const applyNames = (
       match: { ...r.match, itemId: l.id },
     });
     // A mark that shows up after the lock (the label draws a beat after the card) is added to it, never removed.
-    if (lock && r.present && r.itemId === lock.id) {
+    if (lock && (r.present ? r.itemId === lock.id : iconless)) {
       lock.enhanced ||= r.enhanced;
       lock.rare ||= r.rare;
     }
@@ -245,8 +262,9 @@ const applyNames = (
     if (lock) {
       // A changed line under a lock is a hover/tooltip far more often than a new card. Only an icon that surely shows
       // another item (a re-roll) makes the slot unsettled until its name is read.
-      if (sure && r.itemId !== lock.id) {
+      if ((sure && r.itemId !== lock.id) || (iconless && sig && hasInk(sig) && otherName(lock.sig, sig))) {
         waiting = true;
+        changed = true;
         return r;
       }
       slotSure[slot] = true;
@@ -266,8 +284,25 @@ const applyNames = (
     else slotSure[slot] = true;
     return r;
   });
-  return { reads: out, waiting, pending, slotSure };
+  return { reads: out, waiting, pending, slotSure, changed, inked };
 };
+/** The three cards at their fixed squares with no icon search: the item comes from the name lock alone (the name
+ *  under a card is exact; the icon search was the slowest part of the first read). Only the RARE / ENHANCED marks are
+ *  read here, from the fixed square. */
+const squareReads = (img: Parameters<typeof cardNameCrop>[0]): CardRead[] =>
+  cardSquares(img.width, img.height).map((sq, i) => {
+    const match = { itemId: 0, score: 0, margin: 0, ...sq };
+    const mk = readMarkers(img, match);
+    return {
+      card: ['left', 'top', 'right'][i]!,
+      match,
+      present: false,
+      itemId: 0,
+      tier: 0,
+      rare: mk.rare,
+      enhanced: mk.enhanced,
+    };
+  });
 let lastKey = '',
   acceptedKey = '';
 let lastInv = '',
@@ -544,12 +579,22 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
   // A frame that looks the same as the one that just produced a full set of cards (and carries the same choice
   // label) confirms that read without repeating the expensive icon search: a new screen is accepted a frame sooner.
   const confirmed = lastKey !== '' && pendingChoice === labels.choice && sameSig(pendingSig, sig);
-  const raw = confirmed ? pendingReads : stage('cards', () => readDraftScreen(img, idx, (id) => tiers[id] ?? 0));
+  const raw = names
+    ? stage('cards', () => squareReads(img))
+    : confirmed
+      ? pendingReads
+      : stage('cards', () => readDraftScreen(img, idx, (id) => tiers[id] ?? 0));
   const named = applyNames(img, raw, labels.choice);
   const reads = named.reads;
   const seen = reads.filter((r) => r.present).length;
   // A set with a shaky card whose name is still being read is not a full set yet: the gate must not settle on it.
   const key = seen === 3 && !named.waiting ? reads.map((r) => `${r.itemId}${r.enhanced ? '+' : ''}`).join(',') : '';
+  // While the names are still being read, the gate already gets the set with a `?` for each unread slot, so its settle
+  // time runs alongside the OCR instead of starting after it (a `?` stands for whatever the slot turns out to be).
+  const provisionalKey =
+    names && !gate.live && !key && named.inked && !named.changed
+      ? reads.map((r) => (r.present ? `${r.itemId}${r.enhanced ? '+' : ''}` : '?')).join(',')
+      : '';
   const nowMs = performance.now();
   if (gate.live) readingFirst = readingCardsSig = null;
   else {
@@ -605,8 +650,9 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
   // The gate decides when this screen is settled enough to advise on, and spots the player's selection.
   const inFallback = !!gate.last && gate.live && gate.last.key.includes('?');
   const g = stepGate(gate, {
+    changed: named.changed,
     ready: !named.pending && (!set || (rr.set === set && rr.value !== null)),
-    key: fbDue ? fbKey : key,
+    key: fbDue ? fbKey : key || provisionalKey,
     force: fbDue,
     present: reads.filter((r, i) => r.present && (!inFallback || named.slotSure[i])).map((r) => r.itemId),
     round: labels.round,
