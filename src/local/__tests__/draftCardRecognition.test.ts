@@ -17,7 +17,183 @@ const flush = async () => {
 };
 const invoke = (reader: DraftCardRecognition, img = image(), candidate = 'capture1:offer1') =>
   reader.read(img, index, names, {}, candidate, visual);
+const textImage = () => {
+  const img = image();
+  for (const region of cardNameRegions(img.width, img.height, cardAnchors(img.width, img.height)))
+    for (let y = 20; y < 40; y++)
+      for (let x = 200; x < 210; x++)
+        if (x < 203 || y < 23 || y >= 37)
+          img.data.set([220, 220, 220, 255], ((region.y + y) * img.width + region.x + x) * 4);
+  return img;
+};
+const wordBounds = (crop: import('../../brawl/ocr').NameCrop, text: string) => {
+  let x0 = crop.width,
+    y0 = crop.height,
+    x1 = 0,
+    y1 = 0;
+  for (let y = 0; y < crop.height; y++)
+    for (let x = 0; x < crop.width; x++)
+      if (crop.data[(y * crop.width + x) * 4] === 0) {
+        x0 = Math.min(x0, x);
+        y0 = Math.min(y0, y);
+        x1 = Math.max(x1, x + 1);
+        y1 = Math.max(y1, y + 1);
+      }
+  crop.onWords?.([{ text, bbox: { x0, y0, x1, y1 } }], 1, 1);
+};
 describe('upstream OCR is the live primary', () => {
+  it.each(['7', 'A'])('excludes corrected OCR insertion %s from the matched name geometry', async (noise) => {
+    const primary = vi.fn(async (crop: import('../../brawl/ocr').NameCrop, slot = 0) => {
+      const capture = crop.onWords;
+      crop.onWords = (words, sx, sy) => {
+        const b = words[0]!.bbox;
+        capture?.(
+          [...words, { text: noise, bbox: { x0: b.x0 - 150, x1: b.x0 - 142, y0: b.y0 - 20, y1: b.y0 - 12 } }],
+          sx,
+          sy,
+        );
+      };
+      wordBounds(crop, Object.values(names)[slot]!);
+      return `${Object.values(names)[slot]} ${noise}`;
+    });
+    const reader = new DraftCardRecognition(primary, vi.fn(), vi.fn());
+    const original = textImage();
+    invoke(reader, original);
+    await flush();
+    const moving = { ...original, data: original.data.slice() };
+    for (const r of cardNameRegions(original.width, original.height, cardAnchors(original.width, original.height)))
+      for (let y = 0; y < 8; y++)
+        for (let x = 50; x < 58; x++) moving.data.set([230, 230, 230, 255], ((r.y + y) * moving.width + r.x + x) * 4);
+    expect(invoke(reader, moving).reads.map((r) => r.itemId)).toEqual([1, 2, 3]);
+    expect(primary).toHaveBeenCalledTimes(3);
+  });
+  it('finishes an obsolete soft-source read but never publishes it after the actual name changed', async () => {
+    const finish: ((text: string) => void)[] = [];
+    const primary = vi.fn((crop: import('../../brawl/ocr').NameCrop, slot = 0) => {
+      wordBounds(crop, Object.values(names)[slot]!);
+      return new Promise<string>((resolve) => finish.push(resolve));
+    });
+    const reader = new DraftCardRecognition(primary, vi.fn(), vi.fn());
+    const original = textImage();
+    invoke(reader, original);
+    const changed = { ...original, data: original.data.slice() };
+    const r = cardNameRegions(original.width, original.height, cardAnchors(original.width, original.height))[0]!;
+    for (let y = 23; y < 37; y++)
+      for (let x = 200; x < 203; x++) changed.data.set([0, 0, 0, 255], ((r.y + y) * changed.width + r.x + x) * 4);
+    invoke(reader, changed);
+    finish.forEach((done, slot) => done(Object.values(names)[slot]!));
+    await flush();
+    expect(invoke(reader, changed).reads.map((read) => read.itemId)).toEqual([0, 2, 3]);
+    expect(primary).toHaveBeenCalledTimes(4);
+    finish[3]?.('Superior Duration');
+    await flush();
+  });
+  it('uses successful local fallback geometry and caches it through moving bright backgrounds', async () => {
+    const primary = vi.fn(async (crop: import('../../brawl/ocr').NameCrop) => {
+      crop.onWords?.([{ text: 'partial', bbox: { x0: 12, y0: 12, x1: 20, y1: 20 } }], 1, 1);
+      return 'partial';
+    });
+    let slot = 0;
+    const fallback = vi.fn(async (crop: import('../cardNameOcr').ItemNameOcrCrop) => {
+      const text = Object.values(names)[slot++ % 3]!;
+      crop.onWords?.([{ text, bbox: { x0: 208, y0: 28, x1: 218, y1: 48 } }], 1, 1);
+      return { text, confidence: 0 };
+    });
+    const reader = new DraftCardRecognition(primary, fallback, vi.fn());
+    const original = textImage();
+    invoke(reader, original);
+    await flush();
+    expect(invoke(reader, original).reads.map((r) => r.itemId)).toEqual([1, 2, 3]);
+    const regions = cardNameRegions(original.width, original.height, cardAnchors(original.width, original.height));
+    for (let frame = 1; frame <= 12; frame++) {
+      const moving = { ...original, data: original.data.slice() };
+      for (const r of regions)
+        for (let y = 0; y < 8; y++)
+          for (let x = 0; x < 8; x++)
+            moving.data.set([230, 230, 230, 255], ((r.y + y) * moving.width + r.x + 20 + frame * 11 + x) * 4);
+      expect(invoke(reader, moving).complete).toBe(true);
+    }
+    expect(primary).toHaveBeenCalledTimes(3);
+    expect(fallback).toHaveBeenCalledTimes(3);
+    const changed = { ...original, data: original.data.slice() };
+    for (let y = 23; y < 37; y++)
+      changed.data.set([220, 220, 220, 255], ((regions[0]!.y + y) * changed.width + regions[0]!.x + 208) * 4);
+    expect(invoke(reader, changed).reads[0]!.itemId).toBe(0); // failed primary's partial box cannot authorize this suffix
+    await flush();
+  });
+  it('ignores moving small art for a catalogue extension family but rereads a full added word', async () => {
+    const catalog = { ...names, 4: 'Tankbuster Extra' };
+    const primary = vi.fn(async (crop: import('../../brawl/ocr').NameCrop, slot = 0) => {
+      wordBounds(crop, Object.values(names)[slot]!);
+      return Object.values(names)[slot]!;
+    });
+    const reader = new DraftCardRecognition(primary, vi.fn(), vi.fn());
+    const original = textImage();
+    const read = (img: RGBImage) => reader.read(img, index, catalog, {}, 'capture1', visual);
+    read(original);
+    await flush();
+    const regions = cardNameRegions(original.width, original.height, cardAnchors(original.width, original.height));
+    for (let frame = 1; frame <= 10; frame++) {
+      const moving = { ...original, data: original.data.slice() };
+      for (const r of regions)
+        for (let y = 20; y < 28; y++)
+          for (let x = 0; x < 8; x++)
+            moving.data.set([230, 230, 230, 255], ((r.y + y) * moving.width + r.x + 300 + frame * 11 + x) * 4);
+      expect(read(moving).complete).toBe(true);
+    }
+    expect(primary).toHaveBeenCalledTimes(3);
+    const extension = { ...original, data: original.data.slice() };
+    for (let y = 20; y < 40; y++)
+      for (let x = 300; x < 310; x++)
+        extension.data.set([220, 220, 220, 255], ((regions[0]!.y + y) * extension.width + regions[0]!.x + x) * 4);
+    expect(read(extension).reads.map((r) => r.itemId)).toEqual([0, 2, 3]);
+    expect(primary).toHaveBeenCalledTimes(4);
+    await flush();
+  });
+  it('finishes immutable jobs and caches their matched text while bright decorations move outside the words', async () => {
+    const finish: ((text: string) => void)[] = [];
+    const primary = vi.fn((crop: import('../../brawl/ocr').NameCrop, slot = 0) => {
+      wordBounds(crop, Object.values(names)[slot]!);
+      return new Promise<string>((resolve) => finish.push(resolve));
+    });
+    const reader = new DraftCardRecognition(primary, vi.fn(), vi.fn());
+    const original = textImage();
+    const regions = cardNameRegions(original.width, original.height, cardAnchors(original.width, original.height));
+    const moving = (frame: number) => {
+      const img = { ...original, data: original.data.slice() };
+      for (const region of regions)
+        for (let y = 0; y < 8; y++)
+          for (let x = 0; x < 8; x++)
+            img.data.set([230, 230, 230, 255], ((region.y + y) * img.width + region.x + 30 + frame * 11 + x) * 4);
+      return img;
+    };
+    invoke(reader, original);
+    for (let frame = 1; frame <= 8; frame++) expect(invoke(reader, moving(frame)).complete).toBe(false);
+    finish.forEach((done, slot) => done(Object.values(names)[slot]!));
+    await flush();
+    for (let frame = 9; frame <= 40; frame++)
+      expect(invoke(reader, moving(frame)).reads.map((r) => r.itemId)).toEqual([1, 2, 3]);
+    expect(primary).toHaveBeenCalledTimes(3);
+  });
+  it('vetoes old completed text when the current word loses or gains significant strokes', async () => {
+    const primary = vi.fn(async (crop: import('../../brawl/ocr').NameCrop, slot = 0) => {
+      wordBounds(crop, Object.values(names)[slot]!);
+      return Object.values(names)[slot]!;
+    });
+    const reader = new DraftCardRecognition(primary, vi.fn(), vi.fn());
+    const original = textImage();
+    invoke(reader, original);
+    await flush();
+    expect(invoke(reader, original).complete).toBe(true);
+    const changed = { ...original, data: original.data.slice() };
+    const region = cardNameRegions(original.width, original.height, cardAnchors(original.width, original.height))[0]!;
+    for (let y = 23; y < 37; y++)
+      for (let x = 203; x < 210; x++)
+        changed.data.set([220, 220, 220, 255], ((region.y + y) * changed.width + region.x + x) * 4);
+    expect(invoke(reader, changed).reads.map((r) => r.itemId)).toEqual([0, 2, 3]);
+    expect(primary).toHaveBeenCalledTimes(4);
+    await flush();
+  });
   it('finishes slow reads while live icon and text luminance shimmer within the same immutable source', async () => {
     const finish: ((text: string) => void)[] = [];
     const primary = vi.fn(
@@ -112,7 +288,9 @@ describe('upstream OCR is the live primary', () => {
     }
     finish.forEach((done, slot) => done(Object.values(names)[slot]!));
     await flush();
-    expect(invoke(reader, original).complete).toBe(false);
+    const drifted = { ...original, data: original.data.slice() };
+    for (const r of regions) drifted.data.set([190, 190, 190, 255], (r.y * drifted.width + r.x) * 4);
+    expect(invoke(reader, drifted).complete).toBe(false);
     expect(primary).toHaveBeenCalledTimes(6);
     finish.slice(3).forEach((done, slot) => done(Object.values(names)[slot]!));
     await flush();

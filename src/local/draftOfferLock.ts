@@ -78,6 +78,7 @@ export class DraftOfferLock {
     }
     const round =
       proposed.round ||
+      (this.phase && proposed.choice === this.phase.choice ? this.phase.round : 0) ||
       (current && proposed.choice === 1 && current.choice > 1 ? Math.min(5, current.round + 1) : (current?.round ?? 0));
     const next = { ...proposed, round };
     const sameLabels = !!current && next.round === current.round && next.choice === current.choice;
@@ -85,8 +86,51 @@ export class DraftOfferLock {
     const forward =
       !!current &&
       ((next.round === current.round && next.choice > current.choice) ||
-        (next.round === current.round + 1 && next.choice === 1) ||
+        (next.round > current.round && current.round > 0) ||
         (current.round === 0 && proposed.round > 0 && next.choice > current.choice));
+    const confirmForwardLabels = () => {
+      const label = `${round}:${next.choice}`;
+      if (label === this.label && this.labelFrame !== (evidence.frame ?? now)) this.labelHits++;
+      else if (label !== this.label) {
+        this.label = label;
+        this.labelHits = 1;
+        this.labelSince = now;
+      }
+      this.labelFrame = evidence.frame ?? now;
+      return this.labelHits >= 2;
+    };
+    // A same-round visual correction can begin while ROUND is unread. Two fresh
+    // forward label reads must supersede it, rather than being rejected by that old phase.
+    if (this.phase && forward && (round !== this.phase.round || next.choice !== this.phase.choice)) {
+      if (
+        round < this.phase.round ||
+        (round === this.phase.round && next.choice < this.phase.choice) ||
+        !confirmForwardLabels()
+      ) {
+        this.clearCandidate();
+        return false;
+      }
+      this.phase = {
+        round,
+        choice: next.choice,
+        since: this.labelSince,
+        reason: this.spent || this.phase.reason === 'reroll' ? 'reroll' : round !== current!.round ? 'round' : 'choice',
+      };
+      this.clearCandidate();
+    }
+    // An absent ROUND cannot turn a newly observed later-round label back into
+    // a same-round correction while its second positive read is still pending.
+    const pendingLabel = this.label.split(':').map(Number);
+    if (
+      !proposed.round &&
+      current &&
+      pendingLabel[0]! > current.round &&
+      pendingLabel[1] === proposed.choice &&
+      (!this.phase || this.phase.round < pendingLabel[0]!)
+    ) {
+      this.clearCandidate();
+      return false;
+    }
     if (this.phase && this.phase.reason !== 'reacquire' && this.phase.reason !== 'reroll' && sameLabels) {
       this.phase = null;
       this.clearCandidate();
@@ -123,15 +167,7 @@ export class DraftOfferLock {
         this.phase = { round, choice: next.choice, since: now, reason: 'reacquire' };
         this.clearCandidate();
       } else if (forward) {
-        const label = `${round}:${next.choice}`;
-        if (label === this.label && this.labelFrame !== (evidence.frame ?? now)) this.labelHits++;
-        else if (label !== this.label) {
-          this.label = label;
-          this.labelHits = 1;
-          this.labelSince = now;
-        }
-        this.labelFrame = evidence.frame ?? now;
-        if (this.labelHits < 2) {
+        if (!confirmForwardLabels()) {
           this.clearCandidate();
           return false;
         }

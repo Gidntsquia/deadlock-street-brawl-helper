@@ -1,4 +1,5 @@
 import { createWorker, PSM, type Worker } from 'tesseract.js';
+import type { NameWord } from '../brawl/ocr';
 
 /** Includes queue wait, image encoding, cold initialization, parameter updates and recognition. */
 export const ITEM_NAME_OCR_TIMEOUT_MS = 10_000;
@@ -8,6 +9,7 @@ export interface ItemNameOcrCrop {
   height: number;
   scale?: number;
   interpolation?: 'nearest';
+  onWords?: (words: readonly NameWord[], scaleX: number, scaleY: number) => void;
 }
 interface Engine {
   generation: number;
@@ -145,8 +147,22 @@ export function readItemName(crop: ItemNameOcrCrop, digitsOnly = false) {
           : "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 '-&",
       });
       assertGeneration(session);
-      const result = await instance.recognize(png as unknown as Buffer);
+      const result = crop.onWords
+        ? await instance.recognize(png as unknown as Buffer, {}, { text: true, blocks: true })
+        : await instance.recognize(png as unknown as Buffer);
       assertGeneration(session); // late recognition after Stop/timeout must never become usable card evidence
+      if (crop.onWords)
+        crop.onWords(
+          result.data.blocks
+            ?.flatMap((block) => block.paragraphs.flatMap((paragraph) => paragraph.lines.flatMap((line) => line.words)))
+            .map((word) => ({
+              text: word.text,
+              bbox: { ...word.bbox },
+              symbols: word.symbols?.map((symbol) => ({ text: symbol.text, bbox: { ...symbol.bbox } })),
+            })) ?? [],
+          crop.scale ?? 3,
+          crop.scale ?? 3,
+        );
       return { text: result.data.text, confidence: result.data.confidence };
     })
     .catch((error) => {

@@ -51,7 +51,13 @@ export function itemNameCrop(img: RGBImage, region: Region) {
       data[i + 3] = 255;
       hash = Math.imul(hash ^ lum, 16777619);
     }
-  return { data, width, height, key: `${width}:${height}:${hash}` };
+  return {
+    data,
+    width,
+    height,
+    key: `${width}:${height}:${hash}`,
+    origin: { x: region.x - margin, y: region.y - margin },
+  };
 }
 
 /** Preserve the edges of thin glyphs on a second pass, using the bright text to exclude nearby card art. */
@@ -90,7 +96,14 @@ export function itemNameSoftCrop(img: RGBImage, region: Region) {
     }
   // Integer nearest enlargement preserves these antialiased pixels equally in Canvas and Sharp.
   // Browser bilinear enlargement can blur two neighboring narrow glyphs into a low-confidence word.
-  return { data, width, height, scale: 4, interpolation: 'nearest' as const };
+  return {
+    data,
+    width,
+    height,
+    scale: 4,
+    interpolation: 'nearest' as const,
+    origin: { x: region.x + left - margin, y: region.y + top - margin },
+  };
 }
 
 /** Confidence is diagnostic; only complete, distinctive catalogue text resolves an identity. */

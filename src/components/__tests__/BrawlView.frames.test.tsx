@@ -13,9 +13,11 @@ import { useAutoHero } from '../../hooks/useAutoHero';
 const readJson = (rel: string) =>
   JSON.parse(readFileSync(path.resolve(__dirname, '../../../public/data', rel), 'utf8'));
 let delayedTierData: Promise<unknown> | null = null;
+const delayedAnalytics = new Map<string, Promise<unknown>>();
 vi.mock('../../data/load', () => ({
   j: (rel: string) =>
-    rel === 'analytics/brawl/tier-list.json' && delayedTierData ? delayedTierData : Promise.resolve(readJson(rel)),
+    delayedAnalytics.get(rel) ??
+    (rel === 'analytics/brawl/tier-list.json' && delayedTierData ? delayedTierData : Promise.resolve(readJson(rel))),
   img: (p?: string) => p,
 }));
 let listener: ((event: MessageEvent<WorkerOut>) => void) | undefined;
@@ -91,6 +93,7 @@ it('applies confirmed identity while cards are blocked, preserves manual choice 
   render(<Harness />);
   fireEvent.click(screen.getByRole('button', { name: /start capture/i }));
   await waitFor(() => expect(listener).toBeTypeOf('function'));
+  await screen.findByText('Capturing: no draft on screen');
   const packet = (
     self: number,
     foes: number[],
@@ -157,9 +160,66 @@ afterEach(() => {
   detectRun = undefined;
   listener = undefined;
   delayedTierData = null;
+  delayedAnalytics.clear();
   captureProbe = false;
   captureIdle.mockClear();
   vi.useRealTimers();
+});
+
+it('keeps accepted advice and its capture loop when obsolete hero analytics arrive last', async () => {
+  const heroes = readJson('heroes.json') as Hero[],
+    items = readJson('items.json') as Item[],
+    abilities = readJson('abilities.json') as Ability[];
+  let finishOld!: (value: unknown) => void;
+  delayedAnalytics.set(
+    'analytics/brawl/1.json',
+    new Promise((resolve) => {
+      finishOld = resolve;
+    }),
+  );
+  const track = { stop: vi.fn(), addEventListener: vi.fn(), applyConstraints: () => Promise.resolve() };
+  (navigator as unknown as { mediaDevices: unknown }).mediaDevices = {
+    getDisplayMedia: () => Promise.resolve({ getTracks: () => [track], getVideoTracks: () => [track] }),
+  };
+  vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue();
+  const props = { heroes, items, abilities, onHero: vi.fn() };
+  const view = render(<BrawlView {...props} hero={heroes.find((h) => h.id === 1)!} />);
+  fireEvent.click(screen.getByRole('button', { name: /start capture/i }));
+  await waitFor(() => expect(listener).toBeTypeOf('function'));
+  await screen.findByText('Capturing: no draft on screen');
+  const originalListener = listener;
+  view.rerender(<BrawlView {...props} hero={heroes.find((h) => h.id === 2)!} />);
+  const ids = ['Colossus', 'Plated Armor', 'Shadow Strike'].map((name) => items.find((i) => i.name === name)!.id);
+  const frame: FrameResult = {
+    type: 'result',
+    shop: true,
+    round: 5,
+    choice: 1,
+    accepted: true,
+    live: true,
+    transition: 'initial',
+    key: ids.join(','),
+    inventory: null,
+    ms: 0,
+    reads: ids.map((itemId, slot) => ({
+      card: String(slot),
+      itemId,
+      present: true,
+      tier: 4,
+      rare: false,
+      enhanced: false,
+      match: { itemId, x: slot * 200, y: 200, edge: 185, score: 1, margin: 1 },
+    })),
+    meta: { self: 0, round: 5, choice: 1, rerollsRemaining: 1, bar: { left: [], right: [] } },
+  };
+  await act(async () => listener!({ data: frame } as MessageEvent<WorkerOut>));
+  await waitFor(() => expect(sent.at(-1)?.advice?.ranked).toHaveLength(3));
+  await act(async () => finishOld(readJson('analytics/brawl/1.json')));
+  expect(sent.at(-1)?.advice?.ranked).toHaveLength(3);
+  expect(sent.at(-1)?.reading).toBe(false);
+  expect(listener).toBe(originalListener);
+  expect(workerMessages.filter((message) => message.type === 'init')).toHaveLength(1);
+  expect(track.stop).not.toHaveBeenCalled();
 });
 
 it('clears old item advice after a debounced closed screen and before the ability-tip debounce, while retaining long tooltips', async () => {
@@ -180,6 +240,7 @@ it('clears old item advice after a debounced closed screen and before the abilit
   const view = render(<BrawlView hero={hero} heroes={heroes} items={items} abilities={abilities} onHero={() => {}} />);
   fireEvent.click(screen.getByRole('button', { name: /start capture/i }));
   await waitFor(() => expect(listener).toBeTypeOf('function'));
+  await screen.findByText('Capturing: no draft on screen');
   const complete: FrameResult = {
     type: 'result',
     shop: true,
@@ -272,6 +333,36 @@ it('clears old item advice after a debounced closed screen and before the abilit
   now = 15_000;
   await deliver(tooltip);
   expect(sent.at(-1)?.advice?.ranked).toHaveLength(3);
+  const readyStatus = 'Draft: round 3, choice 2';
+  expect(screen.getByRole('status').textContent).toBe(readyStatus);
+  const diagnostics = vi.spyOn(console, 'info').mockImplementation(() => {});
+  const softPending = {
+    ...tooltip,
+    reads: [],
+    pending: true,
+    pendingTransition: false,
+    live: false,
+    itemReadStatus: { confirmed: 0, phase: 'reading' as const, unresolved: [0, 1, 2] },
+  };
+  for (let index = 0; index < 30; index++) await deliver(softPending);
+  expect(sent.at(-1)?.advice?.ranked).toHaveLength(3);
+  expect(sent.at(-1)?.reading).toBe(false);
+  expect(screen.getByRole('status').textContent).toBe(readyStatus);
+  await deliver({ ...softPending, identityOnly: true });
+  expect(screen.getByRole('status').textContent).toBe(readyStatus);
+  await deliver({ ...softPending, shop: false, pending: false, reads: [], key: '', round: 0, choice: 0 });
+  expect(screen.getByRole('status').textContent).toBe(readyStatus); // A single probe blink is still held by the gate.
+  const presentation = diagnostics.mock.calls
+    .map(([line]) => JSON.parse(String(line)))
+    .filter((line) => line.msg === 'draft.presentation');
+  expect(presentation.length).toBeLessThanOrEqual(1); // Retry pulses cannot produce unbounded presentation logs.
+  await deliver({ ...softPending, pendingTransition: true });
+  expect(sent.at(-1)?.advice?.ranked ?? []).toHaveLength(0);
+  expect(sent.at(-1)?.reads).toHaveLength(0);
+  expect(screen.getByRole('status').textContent).toContain('reading items');
+  await deliver({ ...complete, transition: 'metadata' });
+  expect(sent.at(-1)?.advice?.ranked).toHaveLength(3);
+  expect(screen.getByRole('status').textContent).toBe(readyStatus);
   const ended = { ...complete, shop: false, accepted: false, round: 0, choice: 0, key: '', reads: [], meta: null };
   now = 15_100;
   await deliver(ended);
@@ -350,6 +441,7 @@ it('F8 clears current advice immediately, forces independent reset reads, and re
   );
   fireEvent.click(screen.getByRole('button', { name: /start capture/i }));
   await waitFor(() => expect(listener).toBeTypeOf('function'));
+  await screen.findByText('Capturing: no draft on screen');
   const initialEpoch = (workerMessages.find((m) => m.type === 'init') as Extract<WorkerIn, { type: 'init' }>)
     .captureEpoch!;
   const full: FrameResult = {
@@ -473,6 +565,7 @@ it.each([
   );
   fireEvent.click(screen.getByRole('button', { name: /start capture/i }));
   await waitFor(() => expect(listener).toBeTypeOf('function'));
+  await screen.findByText('Capturing: no draft on screen');
   vi.useFakeTimers();
   await act(async () => detectRun!());
   const epoch = workerMessages
@@ -532,6 +625,7 @@ it('keeps capture alive beyond the idle grace while a draft is pending, then sto
   );
   fireEvent.click(screen.getByRole('button', { name: /start capture/i }));
   await waitFor(() => expect(listener).toBeTypeOf('function'));
+  await screen.findByText('Capturing: no draft on screen');
   const pending: FrameResult = {
     type: 'result',
     shop: true,
@@ -595,6 +689,7 @@ it('publishes first preparation and a partial roster before item acceptance, the
   const view = render(<BrawlView {...props} />);
   fireEvent.click(screen.getByRole('button', { name: /start capture/i }));
   await waitFor(() => expect(listener).toBeTypeOf('function'));
+  await screen.findByText('Capturing: no draft on screen');
   const pending: FrameResult = {
     type: 'result',
     shop: true,
@@ -667,6 +762,7 @@ it('retains the first-round team panel through the real preparation phase while 
   const view = render(<BrawlView {...props} />);
   fireEvent.click(screen.getByRole('button', { name: /start capture/i }));
   await waitFor(() => expect(listener).toBeTypeOf('function'));
+  await screen.findByText('Capturing: no draft on screen');
   const draft: FrameResult = {
     type: 'result',
     shop: true,
@@ -731,26 +827,33 @@ it('retains the first-round team panel through the real preparation phase while 
   now = 11_000;
   await deliver(countdown);
   expect(sent.at(-1)?.teamEdge).toEqual(edge);
+  now = 17_000;
+  await deliver({ ...countdown, roundCountdown: false, preparationRound: 0, cueCovered: false, preparationSample: 9 });
+  expect(sent.at(-1)?.teamEdge).toEqual(edge);
   view.rerender(<BrawlView {...props} overlaySettings={{ ...DEFAULT_OVERLAY_SETTINGS, showTeamWinRates: false }} />);
   await waitFor(() => expect(sent.at(-1)?.teamEdge).toBeNull());
   view.rerender(<BrawlView {...props} overlaySettings={DEFAULT_OVERLAY_SETTINGS} />);
   await waitFor(() => expect(sent.at(-1)?.teamEdge).toEqual(edge));
   // F8 during preparation re-reads fresh cue evidence and keeps the same confirmed roster.
   await act(async () => detectRun!());
-  now = 11_100;
+  expect(sent.at(-1)?.teamEdge).toEqual(edge);
+  now = 17_100;
   await deliver(countdown);
   expect(sent.at(-1)?.teamEdge).toEqual(edge);
   const gameplay = { ...countdown, roundCountdown: false, preparationRound: 0 };
-  now = 11_400;
+  now = 17_400;
   await deliver(gameplay);
   expect(sent.at(-1)?.teamEdge).toEqual(edge);
-  now = 11_700;
+  now = 17_700;
+  await deliver(gameplay);
+  expect(sent.at(-1)?.teamEdge).toEqual(edge);
+  now = 18_400;
   await deliver(gameplay);
   expect(sent.at(-1)?.teamEdge ?? null).toBeNull();
-  now = 11_800;
+  now = 18_500;
   await deliver(countdown);
   expect(sent.at(-1)?.teamEdge).toEqual(edge);
-  now = 12_000;
+  now = 18_700;
   await deliver({ ...countdown, preparationRound: 2, preparationSample: 10 });
   await deliver({ ...countdown, preparationRound: 2, preparationSample: 11 });
   expect(sent.at(-1)?.teamEdge ?? null).toBeNull();

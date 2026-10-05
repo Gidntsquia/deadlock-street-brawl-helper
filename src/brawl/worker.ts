@@ -20,6 +20,7 @@ import {
 import { readHeroName, terminateOCR, warmOCR } from './ocr';
 import { matchItemName, nameList } from './names';
 import { DraftCardRecognition } from '../local/draftCardRecognition';
+import { cardNameRegions, hasItemNameInk } from '../local/cardNames';
 import { refreshCardMarkers } from '../local/settledCardMarkers';
 import { HudOcrFallback, HudTextJobs } from '../local/hudOcrFallback';
 import { RerollCounterReader } from '../local/rerollCounter';
@@ -131,6 +132,8 @@ export interface FrameResult {
   preparationRound?: number;
   /** Distinct full capture sample, so repeated delivery cannot confirm a contradictory ROUND glyph. */
   preparationSample?: number;
+  /** True only when this capture covered the round and countdown cues. Probes cannot show cue absence. */
+  cueCovered?: boolean;
   captureEpoch?: number;
   teamRoster?: TeamRoster | null;
   transition?: 'initial' | 'choice' | 'round' | 'reroll' | 'metadata' | 'reacquire' | 'hero';
@@ -138,6 +141,8 @@ export interface FrameResult {
   pending?: boolean;
   /** Current candidate progress only; contains no tentative IDs or recommendations. */
   itemReadStatus?: ItemReadStatus;
+  /** Diagnostic qualification stage; contains no tentative card identity. */
+  blockedReason?: 'labels' | 'name-pending' | 'name-unknown' | 'texture' | 'offer-settle' | 'spent';
   live?: boolean;
   picked?: number | null;
   spent?: boolean;
@@ -165,6 +170,7 @@ const preparation = new FirstRoundPreparation();
 let frameCountdown = false;
 let preparationRound = 0;
 let preparationSample = 0;
+let frameHadCueCoverage = false;
 const selfHeroConfirmation = new SelfHeroConfirmation();
 let lastRosterReadFrame = -1;
 let nextTeamRetryAt = 0;
@@ -321,6 +327,7 @@ let acceptedRound = 0,
   acceptedChoice = 0;
 let previousBarSig: Uint8Array | null = null;
 let previousRound = 0;
+let observedNameRound = 0;
 
 const forgetDraft = () => {
   roundOcr.reset();
@@ -364,6 +371,7 @@ const forgetDraft = () => {
   acceptedRound = acceptedChoice = 0;
   previousBarSig = null;
   previousRound = 0;
+  observedNameRound = 0;
 };
 // Dev builds only (`import.meta.env.DEV` is false in a production build, so this all folds away): milliseconds per
 // recogniser stage, sent back on each result for the page's perf summary.
@@ -435,10 +443,17 @@ const post = (m: WorkerOut) => {
         countdown: frameCountdown,
         confirmedRound: m.shop && m.accepted,
         sample: preparationSample,
+        cueCovered: frameHadCueCoverage,
       },
       performance.now(),
     );
-    if (wasPreparation && !preparation.visible && !preparation.needsFullFrame(performance.now()) && !m.shop)
+    if (
+      frameHadCueCoverage &&
+      wasPreparation &&
+      !preparation.visible &&
+      !preparation.needsFullFrame(performance.now()) &&
+      !m.shop
+    )
       teamRoster.reset();
     m = {
       ...m,
@@ -449,6 +464,7 @@ const post = (m: WorkerOut) => {
       roundCountdown: frameCountdown,
       preparationRound,
       preparationSample,
+      cueCovered: frameHadCueCoverage,
       metadataSample: captureSequence,
     };
   }
@@ -583,6 +599,7 @@ self.addEventListener(
       const idx = index; // narrowed for the stage closures below
       const t0 = performance.now();
       frameHadRecognition = false;
+      frameHadCueCoverage = msg.type === 'frame';
       if (msg.type === 'probe') {
         frameCountdown = false;
         preparationRound = 0;
@@ -614,6 +631,7 @@ self.addEventListener(
       // Skip card/inventory recognition entirely off the shop screen (menus, gameplay, the round-end transition
       // into the next shop) -- isShopScreen is one small glyph read instead of three full icon searches.
       const labels = readRoundChoice(img);
+      if (labels.round > 0) observedNameRound = labels.round;
       frameCountdown = stage('countdown', () => hasRoundCountdown(img));
       const fallbackRound = roundOcr.observe(
         img,
@@ -707,7 +725,7 @@ self.addEventListener(
             round: acceptedRound,
             choice: acceptedChoice,
             pending: awaitingNames || offerLock.awaitingReroll || offerLock.settling || undefined,
-            pendingTransition: awaitingNames || offerLock.settling || undefined,
+            pendingTransition: offerLock.settling || offerLock.awaitingReroll || selectionSpent || undefined,
             reads: awaitingNames || offerLock.awaitingReroll || offerLock.settling ? [] : settledReads,
             key: awaitingNames || offerLock.awaitingReroll || offerLock.settling ? '' : acceptedKey,
             accepted: false,
@@ -717,6 +735,35 @@ self.addEventListener(
             stages,
           });
           tick(SETTLED_INTERVAL_MS, true);
+          return;
+        }
+        // An unread CHOICE glyph is absence of label evidence. Three visible card cores and
+        // name bands keep immutable OCR work alive, but cannot authorize advice themselves.
+        if (
+          wasShop &&
+          cardSignatures(img).every(hasCardTexture) &&
+          cardNameRegions(img.width, img.height, cardAnchors(img.width, img.height)).every((region) =>
+            hasItemNameInk(img, region),
+          )
+        ) {
+          closedSince = null;
+          post({
+            type: 'result',
+            shop: true,
+            round: observedNameRound,
+            choice: 0,
+            accepted: false,
+            pending: true,
+            blockedReason: 'labels',
+            reads: [],
+            key: '',
+            meta: settledMeta,
+            teamRoster: teamRoster.value,
+            inventory: null,
+            ms: performance.now() - t0,
+            stages,
+          });
+          tick(intervalMs, true);
           return;
         }
         post(nonShopResult(t0));
@@ -941,7 +988,10 @@ self.addEventListener(
         !selectionSpent &&
         changedSlots === 0
       ) {
-        offerLock.observe({ key: acceptedKey, round: acceptedRound, choice: acceptedChoice }, performance.now());
+        // Retained metadata is not a fresh label observation. An unread ROUND
+        // must not erase a later-round label waiting for independent confirmation.
+        if (labels.round)
+          offerLock.observe({ key: acceptedKey, ...labels }, performance.now(), false, { frame: captured });
         let recoveredMeta = !!heroTransition || recoveredMarkers;
         if (!completeMetadata(settledMeta) && performance.now() >= nextMetaRetryAt) {
           const previouslyKnownSelf = settledMeta?.self ?? 0;
@@ -1021,7 +1071,7 @@ self.addEventListener(
         tick(SETTLED_INTERVAL_MS, true);
         return;
       }
-      const nameCandidate = `${captureEpoch}:${offerEpoch}:${labels.round}:${labels.choice}`;
+      const nameCandidate = `${captureEpoch}:${offerEpoch}:${labels.round || observedNameRound}:${labels.choice}`;
       const nameEpoch = offerEpoch;
       const nameCapture = captureEpoch;
       const named = stage('names', () =>
@@ -1042,7 +1092,9 @@ self.addEventListener(
           ? reads.map((r) => `${r.itemId}${r.enhanced ? '+' : ''}${r.rare ? 'r' : ''}`).join(',')
           : '';
       const namesVisible = named.outcome.slots.every((slot) => slot.reason !== 'empty-text');
-      const itemReadStatus = named.pending ? readingItemStatus(strong) : completedItemStatus(named.outcome);
+      const itemReadStatus = named.pending
+        ? readingItemStatus(named.outcome.slots.map((slot) => !!slot.itemId))
+        : completedItemStatus(named.outcome);
       const wasAwaitingNames = awaitingNames;
       awaitingNames = !named.complete;
       // Anchor the resolved tuple, so a weak raw misidentification cannot reset exact-name stability on rereads.
@@ -1136,8 +1188,25 @@ self.addEventListener(
         type: 'result',
         shop: true,
         pending: !acceptedKey || awaitingNames || offerLock.awaitingReroll || offerLock.settling || undefined,
-        pendingTransition: awaitingNames || offerLock.settling || undefined,
+        pendingTransition:
+          offerLock.settling ||
+          offerLock.awaitingReroll ||
+          selectionSpent ||
+          (!!acceptedKey && changedSlots === 3 && samePendingIcons && pendingChoice === labels.choice) ||
+          undefined,
         itemReadStatus: !acceptedKey || awaitingNames || offerLock.settling ? itemReadStatus : undefined,
+        blockedReason:
+          selectionSpent || offerLock.awaitingReroll
+            ? 'spent'
+            : named.pending
+              ? 'name-pending'
+              : !named.complete
+                ? 'name-unknown'
+                : !textured
+                  ? 'texture'
+                  : offerLock.settling || !acceptedKey
+                    ? 'offer-settle'
+                    : undefined,
         round: acceptedKey ? acceptedRound : labels.round,
         choice: acceptedKey ? acceptedChoice : labels.choice,
         reads:
@@ -1162,8 +1231,8 @@ self.addEventListener(
 );
 
 const nonShopResult = (t0: number): FrameResult => {
-  closedSince ??= t0;
-  if (t0 - closedSince >= 250) {
+  if (frameHadCueCoverage) closedSince ??= t0;
+  if (frameHadCueCoverage && closedSince !== null && t0 - closedSince >= 250) {
     if (acceptedKey) offerEpoch++;
     lastKey = acceptedKey = '';
     offerLock.reset();

@@ -9,6 +9,94 @@ const locked = () => {
   return lock;
 };
 describe('committed draft transitions', () => {
+  it('keeps independently confirmed forward-round labels through unread round glyphs during item OCR', () => {
+    const lock = new DraftOfferLock();
+    for (const time of [0, 250, 500]) lock.observe({ ...initial, choice: 1 }, time);
+    const next = { round: 5, choice: 1, key: '4,5,6' };
+    lock.observe({ ...next, key: '' }, 1000, false, { frame: 1, labelsOnly: true });
+    lock.observe({ ...next, key: '' }, 1100, false, { frame: 2, labelsOnly: true });
+    expect(lock.pendingLabels).toMatchObject({ round: 5, choice: 1 });
+    expect(
+      lock.observe({ ...next, round: 0 }, 1200, false, { frame: 3, nameCorroborated: true, changedSlots: 3 }),
+    ).toBe(false);
+    expect(
+      lock.observe({ ...next, round: 0 }, 1400, false, { frame: 4, nameCorroborated: true, changedSlots: 3 }),
+    ).toBe(false);
+    expect(
+      lock.observe({ ...next, round: 0 }, 1600, false, { frame: 5, nameCorroborated: true, changedSlots: 3 }),
+    ).toBe(true);
+    expect(lock.current).toEqual(next);
+    expect(lock.transition).toBe('round');
+  });
+  it('supersedes a stale same-round reacquisition with two fresh forward-round labels and never commits at the old round', () => {
+    const lock = new DraftOfferLock();
+    const old = { ...initial, choice: 1 };
+    for (const time of [0, 250, 500]) lock.observe(old, time);
+    const next = { key: '4,5,6', round: 5, choice: 1 };
+    const evidence = { nameCorroborated: true, changedSlots: 3, visual: 2 };
+    expect(lock.observe({ ...next, round: 0 }, 1000, false, { ...evidence, frame: 1 })).toBe(false);
+    expect(lock.pendingLabels).toMatchObject({ round: 3, reason: 'reacquire' });
+    expect(lock.observe(next, 1100, false, { ...evidence, frame: 2 })).toBe(false);
+    expect(lock.observe(next, 1200, false, { ...evidence, frame: 3 })).toBe(false);
+    expect(lock.pendingLabels).toMatchObject({ round: 5, reason: 'round' });
+    expect(lock.observe({ ...next, round: 0 }, 1400, false, { ...evidence, frame: 4 })).toBe(false);
+    expect(lock.observe({ ...next, round: 0 }, 1700, false, { ...evidence, frame: 5 })).toBe(true);
+    expect(lock.current).toEqual(next);
+  });
+  it('withholds an old-round correction after one positive later-round label while subsequent ROUND glyphs are unread', () => {
+    const lock = new DraftOfferLock();
+    const old = { ...initial, choice: 1 };
+    for (const time of [0, 250, 500]) lock.observe(old, time);
+    const next = { key: '4,5,6', round: 5, choice: 1 };
+    const evidence = { nameCorroborated: true, changedSlots: 3 };
+    expect(lock.observe(next, 1000, false, { ...evidence, frame: 1 })).toBe(false);
+    for (const frame of [2, 3, 4, 5])
+      expect(lock.observe({ ...next, round: 0 }, 1000 + frame * 250, false, { ...evidence, frame })).toBe(false);
+    expect(lock.current).toEqual(old);
+    expect(lock.observe(next, 2500, false, { ...evidence, frame: 6 })).toBe(false);
+    expect(lock.pendingLabels).toMatchObject({ round: 5 });
+  });
+  it('keeps the highest confirmed pending labels and preserves reroll spending when the target advances', () => {
+    const lock = locked();
+    lock.armReroll();
+    const next = { key: '4,5,6', round: 5, choice: 3 };
+    lock.observe({ ...next, key: '' }, 1000, false, { frame: 1, labelsOnly: true });
+    lock.observe({ ...next, key: '' }, 1100, false, { frame: 2, labelsOnly: true });
+    expect(lock.pendingLabels).toMatchObject({ round: 5, choice: 3, reason: 'reroll' });
+    for (const [frame, round, choice] of [
+      [3, 4, 3],
+      [4, 4, 3],
+      [5, 5, 2],
+      [6, 5, 2],
+    ])
+      expect(lock.observe({ ...next, round: round!, choice: choice! }, 1100 + frame! * 100, false, { frame })).toBe(
+        false,
+      );
+    expect(lock.pendingLabels).toMatchObject({ round: 5, choice: 3, reason: 'reroll' });
+    for (const [frame, time] of [
+      [7, 2000],
+      [8, 2200],
+      [9, 2500],
+    ])
+      lock.observe({ ...next, round: 0 }, time!, false, { frame });
+    expect(lock.current).toEqual(next);
+    expect(lock.transition).toBe('reroll');
+    expect(lock.awaitingReroll).toBe(false);
+  });
+  it.each([
+    { round: 5, choice: 1 },
+    { round: 4, choice: 3 },
+  ])('reacquires a later round after unobserved draft choices: %j', (labels) => {
+    const lock = locked();
+    const next = { ...labels, key: '4,5,6' };
+    expect(lock.observe({ ...next, key: '' }, 1000, false, { frame: 1, labelsOnly: true })).toBe(false);
+    expect(lock.observe({ ...next, key: '' }, 1100, false, { frame: 2, labelsOnly: true })).toBe(false);
+    expect(lock.settling).toBe(true);
+    expect(lock.observe(next, 1200, false, { frame: 3, nameCorroborated: true, changedSlots: 3 })).toBe(false);
+    expect(lock.observe(next, 1400, false, { frame: 4, nameCorroborated: true, changedSlots: 3 })).toBe(false);
+    expect(lock.observe(next, 1600, false, { frame: 5, nameCorroborated: true, changedSlots: 3 })).toBe(true);
+    expect(lock.current).toEqual(next);
+  });
   it('requires a complete initial tuple with fresh stable pixels for500ms before publishing', () => {
     const lock = new DraftOfferLock();
     expect(lock.observe({ ...initial, key: '' }, 0)).toBe(false);

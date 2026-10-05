@@ -16,7 +16,8 @@ export function roundCountdownRegion(width: number, height: number) {
   return {
     x,
     y,
-    width: Math.max(0, Math.min(width, Math.ceil(width - (CAPTION.right - CAPTION.width - 10) * s)) - x),
+    // This caption can shift to the physical right edge as its countdown layout changes.
+    width: Math.max(0, width - x),
     height: Math.max(0, Math.min(height, Math.ceil((CAPTION.top + CAPTION.height + 7) * s)) - y),
   };
 }
@@ -97,7 +98,7 @@ export function hasRoundCountdown(img: RGBImage): boolean {
   return false;
 }
 
-/** Missing cues hide the panel, but fresh ROUND 1 plus the fixed caption may recover it. Only verified
+/** Fresh covered cue absence hides the panel, but fresh ROUND 1 plus the fixed caption may recover it. Only verified
  * later-round evidence ends preparation permanently until a new match or capture restart. */
 export class FirstRoundPreparation {
   visible = false;
@@ -106,16 +107,26 @@ export class FirstRoundPreparation {
   private laterRound = 0;
   private laterSamples = 0;
   private lastLaterSample: number | undefined;
-  /** Keep copying cue regions briefly after a dropout; ordinary gameplay returns to cheap probes. */
+  private lastCueSample: number | undefined;
+  private missingSince: number | null = null;
+  private missingSamples = 0;
+  /** Keep copying cue regions throughout preparation and briefly after a covered dropout. */
   needsFullFrame(now: number): boolean {
-    return !this.ended && this.lastSeen !== null && now - this.lastSeen < 4000;
+    return !this.ended && (this.visible || (this.lastSeen !== null && now - this.lastSeen < 4000));
   }
   reset() {
     this.visible = false;
     this.ended = false;
     this.lastSeen = null;
+    this.reacquire();
+  }
+  /** A new capture has new sample IDs; preserve match phase but discard old-stream confirmations. */
+  reacquire() {
     this.laterRound = this.laterSamples = 0;
     this.lastLaterSample = undefined;
+    this.lastCueSample = undefined;
+    this.missingSince = null;
+    this.missingSamples = 0;
   }
   observe(
     {
@@ -124,16 +135,20 @@ export class FirstRoundPreparation {
       countdown,
       confirmedRound = false,
       sample,
+      cueCovered = true,
     }: {
       shop: boolean;
       round: number;
       countdown: boolean;
       confirmedRound?: boolean;
       sample?: number;
+      /** False when this frame/probe did not include the round and fixed-caption pixels. */
+      cueCovered?: boolean;
     },
     now: number,
   ): boolean {
     if (round > 1) {
+      if (!cueCovered && !confirmedRound) return this.visible;
       if (round !== this.laterRound) {
         this.laterRound = round;
         this.laterSamples = 0;
@@ -154,13 +169,22 @@ export class FirstRoundPreparation {
     this.laterRound = this.laterSamples = 0;
     this.lastLaterSample = undefined;
     if (this.ended) return false;
+    const freshCue = cueCovered && (sample === undefined || sample !== this.lastCueSample);
+    if (freshCue) this.lastCueSample = sample;
     const recovering = !this.visible && this.lastSeen !== null;
-    if (round === 1 && (countdown || (shop && (!recovering || confirmedRound)))) {
+    if (round === 1 && ((countdown && freshCue) || (shop && (!recovering || confirmedRound)))) {
       this.lastSeen = now;
       this.visible = true;
-    } else if (this.visible && countdown) this.lastSeen = now;
-    else if (this.visible && this.lastSeen !== null && now - this.lastSeen >= 600) {
-      this.visible = false;
+      this.missingSince = null;
+      this.missingSamples = 0;
+    } else if (this.visible && countdown && freshCue) {
+      this.lastSeen = now;
+      this.missingSince = null;
+      this.missingSamples = 0;
+    } else if (this.visible && !shop && !countdown && freshCue) {
+      this.missingSince ??= now;
+      this.missingSamples++;
+      if (this.missingSamples >= 3 && now - this.missingSince >= 1000) this.visible = false;
     }
     return this.visible;
   }

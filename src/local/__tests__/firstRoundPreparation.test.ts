@@ -47,6 +47,17 @@ describe('fixed round preparation caption', () => {
     expect(ultra.x - normal.x).toBe(879);
     expect(ultra.width).toBe(normal.width);
   });
+  it('reads a fixed caption shifted to the screen right edge without clipping its final letters', async () => {
+    expect(hasRoundCountdown(await captionFrame(3439, 1439, 40))).toBe(true);
+    for (const [width, height] of [
+      [3439, 1439],
+      [1920, 1080],
+      [3840, 2160],
+    ]) {
+      const region = roundCountdownRegion(width!, height!);
+      expect(region.x + region.width).toBe(width);
+    }
+  });
   it('rejects blank, solid tooltip ink, and the changing green seconds without the phrase', async () => {
     const image = await captionFrame();
     expect(hasRoundCountdown({ ...image, data: new Uint8Array(image.data.length) })).toBe(false);
@@ -77,8 +88,9 @@ describe('first round preparation lifetime', () => {
     expect(phase.observe(draft, 0)).toBe(true);
     expect(phase.observe(countdown, 11000)).toBe(true);
     expect(phase.observe(absent, 11300)).toBe(true);
-    expect(phase.observe(absent, 11600)).toBe(false);
-    expect(phase.observe(countdown, 12000)).toBe(true);
+    expect(phase.observe(absent, 11600)).toBe(true);
+    expect(phase.observe(absent, 12300)).toBe(false);
+    expect(phase.observe(countdown, 12400)).toBe(true);
   });
   it('tolerates a brief tooltip/dropout, then ends on sustained blank or gameplay', () => {
     const phase = new FirstRoundPreparation();
@@ -88,23 +100,29 @@ describe('first round preparation lifetime', () => {
     expect(phase.observe(countdown, 600)).toBe(true);
     expect(phase.observe(absent, 900)).toBe(true);
     expect(phase.observe(countdown, 1000)).toBe(true);
-    expect(phase.observe(absent, 1600)).toBe(false);
+    expect(phase.observe(absent, 1600)).toBe(true);
+    expect(phase.observe(absent, 1900)).toBe(true);
+    expect(phase.observe(absent, 2600)).toBe(false);
   });
   it('recovers from a sustained cue dropout only with fresh first-round screen evidence', () => {
     const phase = new FirstRoundPreparation();
     phase.observe(countdown, 0);
-    expect(phase.observe(absent, 600)).toBe(false);
+    expect(phase.observe(absent, 600)).toBe(true);
+    expect(phase.observe(absent, 900)).toBe(true);
+    expect(phase.observe(absent, 1600)).toBe(false);
     expect(phase.needsFullFrame(900)).toBe(true);
-    expect(phase.observe(draft, 1000)).toBe(false); // uncommitted raw shop labels are insufficient to recover
-    expect(phase.observe({ ...countdown, round: 0 }, 1100)).toBe(false);
-    expect(phase.observe(countdown, 1200)).toBe(true);
-    expect(phase.observe(absent, 1800)).toBe(false);
-    expect(phase.needsFullFrame(5199)).toBe(true);
-    expect(phase.needsFullFrame(5200)).toBe(false);
-    expect(phase.observe({ ...draft, confirmedRound: true }, 5300)).toBe(true);
-    phase.observe({ ...draft, round: 2, confirmedRound: true }, 5400);
-    expect(phase.needsFullFrame(5401)).toBe(false);
-    expect(phase.observe(countdown, 5500)).toBe(false);
+    expect(phase.observe(draft, 2000)).toBe(false); // uncommitted raw shop labels are insufficient to recover
+    expect(phase.observe({ ...countdown, round: 0 }, 2100)).toBe(false);
+    expect(phase.observe(countdown, 2200)).toBe(true);
+    expect(phase.observe(absent, 2800)).toBe(true);
+    expect(phase.observe(absent, 3100)).toBe(true);
+    expect(phase.observe(absent, 3800)).toBe(false);
+    expect(phase.needsFullFrame(6199)).toBe(true);
+    expect(phase.needsFullFrame(6200)).toBe(false);
+    expect(phase.observe({ ...draft, confirmedRound: true }, 6300)).toBe(true);
+    phase.observe({ ...draft, round: 2, confirmedRound: true }, 6400);
+    expect(phase.needsFullFrame(6401)).toBe(false);
+    expect(phase.observe(countdown, 6500)).toBe(false);
   });
   it('suppresses later rounds and naked countdown, and resets for capture stop/new match', () => {
     const phase = new FirstRoundPreparation();
@@ -125,5 +143,36 @@ describe('first round preparation lifetime', () => {
     expect(phase.observe({ ...countdown, round: 2, sample: 4 }, 400)).toBe(true); // duplicate delivery is not fresh evidence
     expect(phase.observe({ ...countdown, round: 2, sample: 5 }, 500)).toBe(false);
     expect(phase.observe({ ...countdown, sample: 6 }, 600)).toBe(false);
+  });
+  it('keeps checking preparation after probe gaps and requires fresh covered samples to hide or refresh it', () => {
+    const phase = new FirstRoundPreparation();
+    expect(phase.observe({ ...countdown, sample: 1 }, 0)).toBe(true);
+    expect(phase.observe({ ...absent, cueCovered: false, sample: 1 }, 5000)).toBe(true);
+    expect(phase.observe({ ...absent, round: 2, cueCovered: false, sample: 2 }, 5001)).toBe(true);
+    expect(phase.observe({ ...absent, round: 2, cueCovered: false, sample: 3 }, 5002)).toBe(true);
+    expect(phase.needsFullFrame(5000)).toBe(true);
+    expect(phase.observe({ ...absent, sample: 2 }, 5100)).toBe(true);
+    expect(phase.observe({ ...absent, sample: 2 }, 7000)).toBe(true);
+    expect(phase.observe({ ...absent, sample: 3 }, 7100)).toBe(true);
+    expect(phase.observe({ ...absent, sample: 4 }, 7200)).toBe(false);
+    expect(phase.observe({ ...countdown, sample: 5 }, 10000)).toBe(true);
+    expect(phase.observe({ ...countdown, sample: 5 }, 14000)).toBe(true);
+    expect(phase.observe({ ...absent, sample: 6 }, 15000)).toBe(true);
+    expect(phase.observe({ ...absent, sample: 7 }, 16000)).toBe(true);
+    expect(phase.observe({ ...absent, sample: 8 }, 16100)).toBe(false);
+    expect(phase.needsFullFrame(16101)).toBe(false); // A duplicate caption never refreshed lastSeen.
+  });
+  it('preserves confirmed preparation across F8 without carrying old capture misses into the new stream', () => {
+    const phase = new FirstRoundPreparation();
+    phase.observe({ ...countdown, sample: 1 }, 0);
+    phase.observe({ ...absent, sample: 2 }, 500);
+    phase.observe({ ...absent, sample: 3 }, 1000);
+    phase.reacquire();
+    expect(phase.visible).toBe(true);
+    expect(phase.observe({ ...absent, sample: 1 }, 2000)).toBe(true);
+    expect(phase.observe({ ...countdown, sample: 2 }, 2200)).toBe(true);
+    phase.observe({ ...draft, round: 2, confirmedRound: true }, 2300);
+    phase.reacquire();
+    expect(phase.observe({ ...countdown, sample: 1 }, 2500)).toBe(false);
   });
 });

@@ -93,6 +93,7 @@ function readName(
   slot = 0,
   profile: OcrProfile = 'item-name',
   current?: () => boolean,
+  onWords?: (words: readonly NameWord[]) => void,
 ): Promise<string> {
   const generation = nameGeneration;
   const signal = nameCancellation.signal;
@@ -116,8 +117,20 @@ function readName(
           profile === 'digits' ? '0123456789' : "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 -'&",
       });
       assertCurrent();
-      const result = await worker.recognize(pixels as unknown as Buffer);
+      const result = onWords
+        ? await worker.recognize(pixels as unknown as Buffer, {}, { text: true, blocks: true })
+        : await worker.recognize(pixels as unknown as Buffer);
       assertCurrent();
+      if (onWords)
+        onWords(
+          result.data.blocks
+            ?.flatMap((block) => block.paragraphs.flatMap((paragraph) => paragraph.lines.flatMap((line) => line.words)))
+            .map((word) => ({
+              text: word.text,
+              bbox: { ...word.bbox },
+              symbols: word.symbols?.map((symbol) => ({ text: symbol.text, bbox: { ...symbol.bbox } })),
+            })) ?? [],
+        );
       return result.data.text.trim();
     });
   let timer: ReturnType<typeof setTimeout>;
@@ -180,12 +193,32 @@ export function warmOCR(): void {
 
 /** A card's name line (cardNameCrop), already copied out of the frame: the worker reuses its frame buffer for the
  *  next frame while the OCR read is still running. */
-export type NameCrop = NonNullable<ReturnType<typeof cardNameCrop>>;
+export interface NameWord {
+  text: string;
+  bbox: { x0: number; y0: number; x1: number; y1: number };
+  symbols?: readonly { text: string; bbox: { x0: number; y0: number; x1: number; y1: number } }[];
+}
+export type NameCrop = NonNullable<ReturnType<typeof cardNameCrop>> & {
+  onWords?: (words: readonly NameWord[], scaleX: number, scaleY: number) => void;
+};
 
 /** OCR of a card's item name line; the raw text, '' when nothing reads. */
 export async function readCardName(crop: NameCrop, slot = 0, current?: () => boolean): Promise<string> {
   const scale = Math.max(1, NAME_PX / crop.line);
-  return readName(() => upscaledPng(crop.data, crop.width, crop.height, scale), slot, 'item-name', current);
+  return readName(
+    () => upscaledPng(crop.data, crop.width, crop.height, scale),
+    slot,
+    'item-name',
+    current,
+    crop.onWords
+      ? (words) =>
+          crop.onWords!(
+            words,
+            Math.round(crop.width * scale) / crop.width,
+            Math.round(crop.height * scale) / crop.height,
+          )
+      : undefined,
+  );
 }
 
 /** OCR of the loading screen's big hero name (loadingNameRect crop); the raw text, '' when nothing reads. The name

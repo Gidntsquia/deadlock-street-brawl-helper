@@ -43,7 +43,7 @@ import {
   type TipState,
 } from '../brawl';
 import { createPerf } from '../perf';
-import type { FrameRegion, WorkerIn, WorkerOut } from '../brawl/worker';
+import type { FrameRegion, FrameResult, WorkerIn, WorkerOut } from '../brawl/worker';
 import {
   BLANK_OVERLAY,
   bonusesFromAdvice,
@@ -308,9 +308,17 @@ export function BrawlView({
       .catch((e) => setError(String(e)));
   }, []);
   useEffect(() => {
+    let current = true;
     j<BrawlAnalytics>(`analytics/brawl/${hero.id}.json`)
-      .then((a) => setLoaded({ heroId: hero.id, analytics: a }))
-      .catch((e) => setError(String(e)));
+      .then((a) => {
+        if (current) setLoaded({ heroId: hero.id, analytics: a });
+      })
+      .catch((e) => {
+        if (current) setError(String(e));
+      });
+    return () => {
+      current = false;
+    };
   }, [hero.id]);
   // tagged with the hero it was fetched for, so switching hero shows the loader again instead of the old hero's numbers
   const analytics = loaded?.heroId === hero.id ? loaded.analytics : null;
@@ -334,6 +342,41 @@ export function BrawlView({
     () => (analytics && config ? { hero, abilities, items, analytics, config } : null),
     [hero, abilities, items, analytics, config],
   );
+  const inputReadyRef = useRef(false);
+  inputReadyRef.current = !!input;
+  const captureFramesRef = useRef({ seen: 0, copied: 0, sent: 0, vfc: false });
+  const presentationLogRef = useRef({ stage: '', at: -Infinity });
+  const presentationWorkerRef = useRef<FrameResult | null>(null);
+  const notePresentation = useCallback((stage: string, result?: FrameResult) => {
+    const now = performance.now(),
+      last = presentationLogRef.current;
+    if (last.stage === stage || now - last.at < 2000) return;
+    result ??= presentationWorkerRef.current ?? undefined;
+    presentationLogRef.current = { stage, at: now };
+    log('brawl-view', 'info', 'draft.presentation', {
+      stage,
+      captureEpoch: captureGenRef.current,
+      frame: frameDimsRef.current,
+      frames: captureFramesRef.current,
+      inputReady: inputReadyRef.current,
+      cards: cardsRef.current.length,
+      reads: readsRef.current.filter((read) => read.present).length,
+      ranked: rankedRef.current.length,
+      ...(result && {
+        worker: {
+          accepted: result.accepted,
+          live: result.live,
+          pending: result.pending,
+          pendingTransition: result.pendingTransition,
+          blockedReason: result.blockedReason,
+          round: result.round,
+          choice: result.choice,
+          transition: result.transition,
+          sample: result.preparationSample,
+        },
+      }),
+    });
+  }, []);
   const byId = useMemo(() => new Map(items.map((i) => [i.id, i])), [items]);
   const catalog = useMemo(
     () =>
@@ -377,7 +420,7 @@ export function BrawlView({
   }, [abilityTarget]);
   /** Sends the overlay what it may draw, only when that changed since the last send (the overlay is blank unless a
    *  draft screen is up or the tip is running). */
-  const pushOverlay = () => {
+  const pushOverlay = useCallback(() => {
     const api = window.brawlAPI;
     if (!api) return;
     const draft = draftRef.current || itemDraftRef.current,
@@ -428,7 +471,9 @@ export function BrawlView({
     if (json === lastOverlayJsonRef.current) return;
     lastOverlayJsonRef.current = json;
     api.sendOverlayState(state);
-  };
+    if (state.reading) notePresentation(readsRef.current.length === 3 ? 'awaiting-advice' : 'awaiting-cards');
+    else if (state.reads.length === 3) notePresentation('published');
+  }, [notePresentation]);
   useEffect(() => {
     draftRef.current = draftOpen;
     tipRef.current = tip;
@@ -554,11 +599,12 @@ export function BrawlView({
     // a new worker and icon index; 'stop' frees its OCR engine.
     workerRef.current?.postMessage({ type: 'stop' } satisfies WorkerIn);
     tipStateRef.current = initialTip();
-    preparationRef.current.reset();
+    if (preserveTeam) preparationRef.current.reacquire();
+    else preparationRef.current.reset();
     itemDraftRef.current = false;
     setDraftPresent(false);
     setItemReadStatus(null);
-    setPreparationOpen(false);
+    setPreparationOpen(preserveTeam && preparationRef.current.visible);
     if (!preserveTeam) {
       refreshIdentityRef.current = null;
       teamRosterRef.current = null;
@@ -930,15 +976,18 @@ export function BrawlView({
         this.want = null;
         if (f) {
           this.copied = this.seen;
+          captureFramesRef.current.copied = this.copied;
           f();
         }
       },
     };
+    captureFramesRef.current = { seen: 0, copied: 0, sent: 0, vfc: frames.supported };
     const frameGate = new DraftFrameGate();
     let vfcId = 0;
     if (vid && frames.supported) {
       const loop = () => {
         frames.seen++;
+        captureFramesRef.current.seen = frames.seen;
         if (frames.want) frames.run();
         vfcId = vid.requestVideoFrameCallback(loop);
       };
@@ -1024,6 +1073,7 @@ export function BrawlView({
         return;
       }
       frameDimsRef.current = { w: srcW, h: srcH };
+      captureFramesRef.current.sent++;
       if (usesPoints() && tipStateRef.current.tip && (!frames.supported || frames.seen !== pointsFrameSeen)) {
         pointsFrameSeen = frames.seen;
         const rect = abilityPointsRect(srcW, srcH);
@@ -1178,7 +1228,10 @@ export function BrawlView({
         setFps(lastShop);
         return;
       }
-      if (ev.data.captureEpoch !== undefined && ev.data.captureEpoch !== captureGenRef.current) return;
+      if (ev.data.captureEpoch !== undefined && ev.data.captureEpoch !== captureGenRef.current) {
+        if (ev.data.type === 'result' && ev.data.shop) notePresentation('stale-capture', ev.data);
+        return;
+      }
       if (ev.data.type === 'tick') {
         if (ev.data.full) setFps(true); // the probe saw a draft screen: raise the frame rate before the first full read
         const full = ev.data.full;
@@ -1190,6 +1243,7 @@ export function BrawlView({
           frames.timer = setTimeout(() => frames.run(), FRAME_WAIT_MS);
         } else {
           frames.copied = frames.seen;
+          captureFramesRef.current.copied = frames.copied;
           sendFrame(full);
         }
         return;
@@ -1260,11 +1314,13 @@ export function BrawlView({
       }
       let pinForFrame = pinned;
       const r = ev.data;
+      if (!r.identityOnly) presentationWorkerRef.current = r;
       itemDraftRef.current = r.shop;
       setDraftPresent(r.shop);
-      if (!r.shop || r.accepted) setItemReadStatus(null);
-      else if (r.itemReadStatus) setItemReadStatus(r.itemReadStatus);
-      else if (r.pendingTransition) setItemReadStatus(null);
+      // Item progress belongs to the current offer. Metadata and uncertain reads cannot replace
+      // the status of a tuple the presentation gate still retains.
+      if (!r.identityOnly && r.shop && cardsRef.current.length === 0 && !r.accepted)
+        setItemReadStatus(r.itemReadStatus ?? null);
       // Game evidence is independent of whether a tooltip currently hides the offered cards.
       const rosterSample =
         r.metadataSample === undefined ? '' : `${r.captureEpoch ?? captureGenRef.current}:${r.metadataSample}`;
@@ -1334,6 +1390,7 @@ export function BrawlView({
             countdown: !!r.roundCountdown,
             confirmedRound: r.shop && r.accepted && frameGate.acceptsContext(r),
             sample: r.preparationSample,
+            cueCovered: r.cueCovered,
           },
           performance.now(),
         );
@@ -1401,6 +1458,8 @@ export function BrawlView({
         }
       }
       if (r.pendingTransition) {
+        setItemReadStatus(r.itemReadStatus ?? null);
+        notePresentation('worker-pending', r);
         frameGate.invalidate();
         prevCardsRef.current = cardsRef.current.length ? cardsRef.current : prevCardsRef.current;
         cardsRef.current = [];
@@ -1414,8 +1473,16 @@ export function BrawlView({
         pushOverlay();
         return;
       }
-      if (!frameGate.publish(r, performance.now())) return;
+      if (!frameGate.publish(r, performance.now())) {
+        if (r.shop)
+          notePresentation(
+            r.accepted ? 'gate-rejected' : cardsRef.current.length === 3 ? 'holding-accepted' : 'awaiting-worker',
+            r,
+          );
+        return;
+      }
       if (!r.shop) {
+        setItemReadStatus(null);
         // The item panel closes after the short screen debounce; the ability tip has its own longer debounce.
         prevCardsRef.current = cardsRef.current.length ? cardsRef.current : prevCardsRef.current;
         cardsRef.current = [];
@@ -1439,6 +1506,7 @@ export function BrawlView({
       readsRef.current = (r.live ?? !!r.key) ? stableRef.current.reads : [];
       const seen = r.reads.filter((x) => x.present).length;
       if (r.accepted) {
+        setItemReadStatus(null);
         const previousRound = roundRef.current;
         const offers = r.reads.map(toOffer);
         for (const o of offers) offeredRef.current.add(o.itemId);
@@ -1576,7 +1644,7 @@ export function BrawlView({
       if (vid && frames.supported) vid.cancelVideoFrameCallback(vfcId);
       w.removeEventListener('message', onMessage);
     };
-  }, [capture, setRound, setEnemies]);
+  }, [capture, setRound, setEnemies, notePresentation, pushOverlay]);
 
   const took = (r: RankedOffer) => {
     const acquired = matchMemoryRef.current.observeInventory([r.item.id], items, Date.now()).owned;
@@ -1624,9 +1692,10 @@ export function BrawlView({
     if (status === 'Detecting…') return status;
     if (capture === 'starting') return 'Capture starting…';
     if (capture === 'on') {
+      if ((draftPresent || draftOpen) && cards.length === 3)
+        return input && ranked.length === 3 ? `Draft: round ${round}, choice ${choice}` : 'Draft: reading items…';
       if (draftPresent && itemReadStatus) return itemReadStatusText(itemReadStatus);
-      if (draftOpen) return `Draft: round ${round}, choice ${choice}`;
-      if (draftPresent) return 'Draft: reading items…';
+      if (draftPresent || draftOpen) return 'Draft: reading items…';
       return testMode.on ? 'Test mode on' : 'Capturing: no draft on screen';
     }
     if (testMode.on) return 'Test mode on';
