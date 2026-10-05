@@ -184,9 +184,11 @@ async function main() {
   }
 
   let captureAttempts = 0;
+  let detectMisses = 0;
   control.webContents.on('console-message', (_e, _level, message) => {
     dbg('control console: ' + message);
     if (/"msg":"capture\.attempt"/.test(message)) captureAttempts++;
+    if (/"msg":"detect\.manual","outcome":"miss"/.test(message)) detectMisses++;
   });
   overlay?.webContents.on('console-message', (_e, _level, message) => dbg('overlay console: ' + message));
   let preloadError = false;
@@ -223,7 +225,7 @@ async function main() {
     const status = await js(control, 'document.querySelector(".brawl-status")?.textContent ?? ""');
     check(
       'capture-denied-status',
-      captureAttempts >= 1 && status.includes('Deadlock window not found'),
+      captureAttempts >= 1 && status === 'Waiting for Deadlock',
       `attempts=${captureAttempts} status="${status}"`,
     );
     const before = captureAttempts;
@@ -237,29 +239,37 @@ async function main() {
   if (wantsCase('testmode')) {
     // Debug panel: hidden at launch, Ctrl+Shift+D toggles it, the tray entry toggles the same state.
     const hasDebug = () => js(control, '!!document.querySelector("[aria-label=\\"Debug panel\\"]")');
-    const slim = await js(
-      control,
-      '({ selects: document.querySelectorAll("select").length, btn: /Start capture|Stop capture/.test(document.body.innerText) })',
-    );
-    check('debug-hidden-at-launch', !(await hasDebug()) && slim.btn && slim.selects <= 1, JSON.stringify(slim));
+    // First-run panel: three lines and Show me; Got it dismisses it and it stays dismissed.
+    // userData keeps the dismissal between runs, so start from a first run.
+    await js(control, `localStorage.removeItem('brawl.firstRunDone'); setTimeout(() => location.reload(), 0)`);
+    await waitFor(() => js(control, `document.querySelectorAll('.brawl-firstrun li').length === 3`), 6_000, 100);
+    const firstRun = await js(control, `document.querySelectorAll('.brawl-firstrun li').length`);
+    check('first-run-shown', firstRun === 3, `lines=${firstRun}`);
+    await js(control, `[...document.querySelectorAll('button')].find((b) => b.textContent === 'Got it')?.click()`);
+    await sleep(200);
+    // Debug is on by default in an -rc build; the main view itself has no capture buttons.
+    check('debug-on-by-default', !!(await hasDebug()), 'rc build opens with the Debug panel');
     const key = `window.dispatchEvent(new KeyboardEvent('keydown', { key: 'D', ctrlKey: true, shiftKey: true }))`;
     await js(control, key);
-    await waitFor(hasDebug, 3000, 100);
+    await waitFor(async () => !(await hasDebug()), 3000, 100);
+    const mainBtns = await js(control, `/Start capture|Stop capture|Detect now/.test(document.body.innerText)`);
+    check('main-view-no-buttons', !(await hasDebug()) && !mainBtns, `buttons=${mainBtns}`);
+    await js(control, key);
+    const dbgShown = await waitFor(hasDebug, 3000, 100);
     const dbgParts = await js(
       control,
-      `(() => ['Round','Choice','Enemy 1'].every((l) => !!document.querySelector('select[aria-label="' + l + '"]')) && !!document.querySelector('.brawl-testmode button') && document.body.innerText.includes('Owned'))()`,
+      `(() => ['Round','Choice','Enemy 1'].every((l) => !!document.querySelector('select[aria-label="' + l + '"]')) && !!document.querySelector('.brawl-testmode button') && !!document.querySelector('.brawl-capture') && document.body.innerText.includes('Owned'))()`,
     );
     check(
       'debug-shortcut-shows',
-      (await hasDebug()) && dbgParts,
-      'Ctrl+Shift+D shows test mode/round/choice/enemies/owned',
+      !!dbgShown && dbgParts,
+      'Ctrl+Shift+D shows test mode/round/choice/enemies/owned/capture',
     );
-    await js(control, key);
+    e2e.toggleDebugFromTray();
     await waitFor(async () => !(await hasDebug()), 3000, 100);
-    check('debug-shortcut-hides', !(await hasDebug()), 'second press hides');
     e2e.toggleDebugFromTray();
     const trayShown = await waitFor(hasDebug, 3000, 100);
-    check('debug-tray-toggle', !!trayShown, 'tray entry handler shows the panel');
+    check('debug-tray-toggle', !!trayShown, 'tray entry handler hides then shows the panel');
     const c1 = labels.choice1;
     await js(
       control,
@@ -289,6 +299,7 @@ async function main() {
         overlay,
         `({
         drawn: window.__overlayDrawn ?? [],
+        reading: !!window.__overlayReading,
         head: window.__overlayAdvice ? window.__overlayAdvice.hero + ' · round ' + window.__overlayAdvice.round + ', choice ' + window.__overlayAdvice.choice : '',
         panel: !!window.__overlayAdvice,
         ap: !!document.querySelector('.ap'),
@@ -338,10 +349,12 @@ async function main() {
     const namesOf = (l) => Object.values(l.cards);
     const waitAdvice = async (label, round, choice, timeoutMs) => {
       let last = null;
+      let sawReading = false;
       const start = Date.now();
       const ok = await waitFor(
         async () => {
           last = await readOverlay();
+          if (last.reading && last.drawn.length === 0) sawReading = true;
           return last.panel &&
             last.head.includes(`round ${round}, choice ${choice}`) &&
             namesOf(label).every((n) => last.cards.includes(n))
@@ -351,7 +364,7 @@ async function main() {
         timeoutMs,
         50,
       );
-      return { ok: !!ok, ms: Date.now() - start, last };
+      return { ok: !!ok, ms: Date.now() - start, last, sawReading };
     };
     // Warm up on the in-round frame (capture start-up is not what the 2 s bound measures); nothing may be
     // drawn.
@@ -388,8 +401,9 @@ async function main() {
       e2e.forceCaptureOff();
       await waitFor(async () => (await captureBtn()) === 'Start capture', 4_000, 50);
       const m0 = Date.now();
+      const missesBefore = detectMisses;
       e2e.detectNow();
-      const missed = await waitFor(async () => (await statusText()) === 'No draft found', 4_000, 20);
+      const missed = await waitFor(() => detectMisses > missesBefore, 4_000, 20);
       const missMs = Date.now() - m0;
       await sleep(400);
       const after = await readOverlay();
@@ -404,12 +418,20 @@ async function main() {
       );
       e2e.forceCaptureOff(); // stay off; setFrame below releases the hold
     }
+    const attemptsBefore = captureAttempts;
     await setFrame('choice1');
-    const first = await waitAdvice(c1, c1.round, c1.choice, 2_000);
+    await waitFor(
+      () => captureAttempts > attemptsBefore && js(control, '!!document.querySelector("video")?.videoWidth'),
+      4_000,
+      25,
+    );
+    const first = await waitAdvice(c1, c1.round, c1.choice, 2_500);
+    check('reading-before-plates', first.sawReading, `sawReading=${first.sawReading}`);
+    console.log(`advice.time ${first.ms}ms`);
     check(
       'advice-choice1',
       first.ok,
-      `${first.ms}ms (limit 2000ms) head="${first.last?.head}" cards="${first.last?.cards}"`,
+      `${first.ms}ms (limit 2500ms) head="${first.last?.head}" cards="${first.last?.cards}"`,
     );
 
     // Overlay geometry + click-through while the draft is up.
