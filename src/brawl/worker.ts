@@ -224,7 +224,7 @@ const applyNames = (
         t = now,
         enhanced = r.enhanced,
         rare = r.rare;
-      readCardName(crop)
+      readCardName(crop, slot)
         .then((text) => {
           const m = matchItemName(text, list);
           const ms = performance.now() - t;
@@ -377,6 +377,7 @@ let readingCardsSig: Uint8Array | null = null; // the card pictures at readingSi
 /** The fallback clock restarts while the three card pictures are still changing (the swap animation after a pick or
  *  re-roll), but never runs past this long from the first sight. */
 const FALLBACK_MAX_MS = 6000;
+let earlyMeta: { sig: Uint8Array; meta: DraftMeta } | null = null; // the hero bar read before the accept
 let frozenReads: CardRead[] | null = null; // the accepted set's reads, sent unchanged for as long as the set is live
 
 const forgetDraft = () => {
@@ -388,7 +389,7 @@ const forgetDraft = () => {
   settledSig = pendingSig = null;
   knownHero = null;
   acceptedRound = acceptedChoice = 0;
-  readingSince = readingFirst = readingCardsSig = frozenReads = null;
+  readingSince = readingFirst = readingCardsSig = frozenReads = earlyMeta = null;
   gate = initialGate();
   stableInv = null;
 };
@@ -582,6 +583,18 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
     if (ik === lastInv) stableInv = ids;
     lastInv = ik;
   } else if (!key) lastInv = '';
+  // Read the hero bar while the set is still settling (a first draft of a match has no cached bar), so the accept does
+  // not wait for it. Only once the same three cards are up on two frames, so a transition frame never pays for it.
+  if (
+    key &&
+    key === lastKey &&
+    !gate.live &&
+    !earlyMeta &&
+    !(knownHero ?? (matchBar && sameBar(matchBar.sig, barSig(img))))
+  ) {
+    const sig = barSig(img);
+    earlyMeta = { sig, meta: stage('meta', () => readDraftMeta(img, idx, undefined, true)) };
+  }
   // The re-roll caption is read for every full set (its own key: the '+' flags wobble), and the gate holds the accept
   // until it is in, so the first advice already knows whether a re-roll is left.
   const set = key ? `${labels.choice}|${key.replace(/\+/g, '')}` : '';
@@ -612,8 +625,11 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
     acceptedRound = labels.round;
     const bsig = barSig(img);
     if (!knownHero && matchBar && sameBar(matchBar.sig, bsig)) knownHero = matchBar;
-    meta = stage('meta', () => readDraftMeta(img, idx, knownHero ?? undefined, true));
+    // The hero bar read is the slowest step on a slow PC: when a settling frame already did it, reuse that read.
+    const early = earlyMeta && sameBar(earlyMeta.sig, bsig) ? earlyMeta.meta : null;
+    meta = early ?? stage('meta', () => readDraftMeta(img, idx, knownHero ?? undefined, true));
     if (meta.self) matchBar = { bar: meta.bar, self: meta.self, sig: bsig };
+    earlyMeta = null;
     // the hero bar is constant while the draft screen stays up; keep it until the screen closes (nonShopResult)
     knownHero = meta.self ? { bar: meta.bar, self: meta.self } : null;
     meta.rerollsRemaining = rr.value ?? meta.rerollsRemaining;

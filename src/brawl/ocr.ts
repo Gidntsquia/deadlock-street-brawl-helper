@@ -13,7 +13,10 @@ const UPSCALE = 8;
 let workerPromise: Promise<TesseractWorker> | null = null;
 // A second engine for the item names under the cards: the digit engine's whitelist and page mode are set once, and
 // switching them per call would race the two kinds of read.
-let nameWorkerPromise: Promise<TesseractWorker> | null = null;
+// One engine per card slot: the three name lines are read at the same time instead of queueing behind one engine,
+// which is what held the first advice back on a slow PC. Slot 0 also serves the loading-screen hero name.
+const NAME_ENGINES = 3;
+const nameWorkerPromises: (Promise<TesseractWorker> | null)[] = Array(NAME_ENGINES).fill(null);
 /** The name crop is scaled so its text line is about this tall before OCR (it is ~25 px tall in a 1280 px frame). */
 const NAME_PX = 64;
 
@@ -33,9 +36,10 @@ function browserOcrOpts() {
   return { workerPath: `${base}/worker.min.js`, corePath: base, langPath: base, gzip: true };
 }
 
-async function getNameWorker(): Promise<TesseractWorker> {
-  if (!nameWorkerPromise) {
-    nameWorkerPromise = (async () => {
+async function getNameWorker(slot = 0): Promise<TesseractWorker> {
+  const k = slot % NAME_ENGINES;
+  if (!nameWorkerPromises[k]) {
+    nameWorkerPromises[k] = (async () => {
       const opts = isNode ? { langPath: await nodeOcrDir(), gzip: true } : browserOcrOpts();
       const worker = await createWorker('eng', 1 /* OEM.LSTM_ONLY */, opts);
       await worker.setParameters({
@@ -46,7 +50,7 @@ async function getNameWorker(): Promise<TesseractWorker> {
       return worker;
     })();
   }
-  return nameWorkerPromise;
+  return nameWorkerPromises[k]!;
 }
 
 async function getWorker(): Promise<TesseractWorker> {
@@ -99,9 +103,10 @@ export function warmOCR(): void {
   void getWorker().catch(() => {
     workerPromise = null;
   });
-  void getNameWorker().catch(() => {
-    nameWorkerPromise = null;
-  });
+  for (let k = 0; k < NAME_ENGINES; k++)
+    void getNameWorker(k).catch(() => {
+      nameWorkerPromises[k] = null;
+    });
 }
 
 /** A card's name line (cardNameCrop), already copied out of the frame: the worker reuses its frame buffer for the
@@ -109,10 +114,10 @@ export function warmOCR(): void {
 export type NameCrop = NonNullable<ReturnType<typeof cardNameCrop>>;
 
 /** OCR of a card's item name line; the raw text, '' when nothing reads. */
-export async function readCardName(crop: NameCrop): Promise<string> {
+export async function readCardName(crop: NameCrop, slot = 0): Promise<string> {
   const scale = Math.max(1, NAME_PX / crop.line);
   const png = await upscaledPng(crop.data, crop.width, crop.height, scale);
-  const worker = await getNameWorker();
+  const worker = await getNameWorker(slot);
   const {
     data: { text },
   } = await worker.recognize(png as unknown as Buffer);
@@ -157,8 +162,9 @@ export async function readRerollsRemaining(img: RGBImage): Promise<number> {
 /** Releases the OCR worker (and its wasm/model memory). Call on app/window teardown; a new call to
  *  readRerollsRemaining after this spins up a fresh worker on demand. */
 export async function terminateOCR(): Promise<void> {
-  const pending = [workerPromise, nameWorkerPromise];
-  workerPromise = nameWorkerPromise = null;
+  const pending = [workerPromise, ...nameWorkerPromises];
+  workerPromise = null;
+  nameWorkerPromises.fill(null);
   for (const p of pending) {
     if (!p) continue;
     try {
