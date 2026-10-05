@@ -27,6 +27,7 @@ export default function App() {
   const [debug, setDebug] = useState(() => debugDefault(__APP_VERSION__, import.meta.env.DEV)); // Debug panel: on in dev and rc builds
   const [now] = useState(Date.now);
   const [changeHero, setChangeHero] = useState(false);
+  const [heroPinned, setHeroPinned] = useState(false); // the user chose a hero: the scoreboard read no longer overrides it
   const [heroSource, setHeroSource] = useState<'detected' | 'manual'>('manual');
   const handleHero = (id: number, source: 'detected' | 'manual' = 'manual') => {
     setHeroId(id);
@@ -102,18 +103,34 @@ export default function App() {
                 change
               </button>
             ) : (
-              <select
-                className="hero-select"
-                value={heroId}
-                onChange={(e) => handleHero(Number(e.target.value), 'manual')}
-                aria-label="Select hero"
-              >
-                {heroes.map((h) => (
-                  <option key={h.id} value={h.id}>
-                    {h.name}
-                  </option>
-                ))}
-              </select>
+              <>
+                <select
+                  className="hero-select"
+                  value={heroId}
+                  onChange={(e) => {
+                    setHeroPinned(true);
+                    handleHero(Number(e.target.value), 'manual');
+                  }}
+                  aria-label="Select hero"
+                >
+                  {heroes.map((h) => (
+                    <option key={h.id} value={h.id}>
+                      {h.name}
+                    </option>
+                  ))}
+                </select>
+                {heroPinned && (
+                  <button
+                    className="link-btn"
+                    onClick={() => {
+                      setHeroPinned(false);
+                      setChangeHero(false);
+                    }}
+                  >
+                    auto-detect
+                  </button>
+                )}
+              </>
             )
           ) : (
             <div className="sub">
@@ -143,7 +160,15 @@ export default function App() {
       </nav>
       {/* BrawlView stays mounted on both tabs: it owns the capture loop and the hidden <video>. */}
       <div hidden={tab !== 'advisor'}>
-        <BrawlView hero={hero} heroes={heroes} items={items} abilities={abilities} onHero={handleHero} debug={debug} />
+        <BrawlView
+          pinned={heroPinned}
+          hero={hero}
+          heroes={heroes}
+          items={items}
+          abilities={abilities}
+          onHero={handleHero}
+          debug={debug}
+        />
       </div>
       {/* Kept mounted too: unmounting refetched the tier list, flashed "Loading…" and reset its filters on every switch. */}
       <div hidden={tab !== 'tiers'}>
