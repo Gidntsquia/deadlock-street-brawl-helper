@@ -12,9 +12,8 @@ const ok: Env = {
 };
 
 describe('problems', () => {
-  it('finds each of the four problems and gives its sentence', () => {
+  it('finds confirmed size, capture and hotkey problems', () => {
     expect(problemFor(ok)).toBeNull();
-    expect(problemFor({ ...ok, black: true })).toBe('fullscreen');
     expect(problemFor({ ...ok, width: 1024, height: 576 })).toBe('small');
     expect(problemFor({ ...ok, denied: true })).toBe('denied');
     expect(problemFor({ ...ok, f8InUse: true })).toBe('f8');
@@ -24,7 +23,6 @@ describe('problems', () => {
       expect(t.split('. ').length).toBeLessThanOrEqual(2);
       expect(t).not.toMatch(/[!—→·]/);
     }
-    expect(PROBLEM_TEXT.fullscreen).toContain('Borderless Windowed');
     expect(PROBLEM_TEXT.f8).toContain('F8');
   });
   it('maps state to the four status sentences', () => {
@@ -37,5 +35,13 @@ describe('problems', () => {
     expect(firstRunLines(ok).map((l) => l.ok)).toEqual([true, true, true]);
     expect(firstRunLines({ ...ok, borderless: null })[1]!.ok).toBeNull();
     expect(firstRunLines({ ...ok, found: false }).map((l) => l.ok)).toEqual([false, false, false]);
+  });
+  it('does not infer fullscreen or capture failure from a dark loading-scene probe', () => {
+    for (const borderless of [true, false, null]) {
+      expect(problemFor({ ...ok, borderless, black: true })).toBeNull();
+    }
+    expect(firstRunLines({ ...ok, black: true })[1]!.ok).toBe(true);
+    expect(firstRunLines({ ...ok, borderless: null, black: true })[1]!.ok).toBeNull();
+    expect(problemFor({ ...ok, black: true, denied: true })).toBe('denied');
   });
 });

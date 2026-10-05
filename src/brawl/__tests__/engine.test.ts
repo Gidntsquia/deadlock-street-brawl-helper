@@ -10,6 +10,8 @@ import {
   unknownCeiling,
 } from '../engine';
 import { heroByName, inputFor, itemByName, items } from './testData';
+import { createUniformDropDistribution } from '../../local/dropDistribution';
+import { evaluateReroll } from '../../local/rerollModel';
 
 const infernus = inputFor(heroByName('Infernus').id);
 
@@ -40,6 +42,47 @@ describe('scoreOffer: enhanced', () => {
 });
 
 describe('adviseDraft: reroll', () => {
+  it('matches full display-scorer reroll decisions with owned, enemy and enhanced override context', () => {
+    for (const statMultiplier of [0.5, 2]) {
+      const input = { ...infernus, enhancedScoring: { statMultiplier, scoreBonus: 0.17 } };
+      const offers = ['Capacitor', 'Spirit Rend', 'Cultist Sacrifice'].map((name) => ({
+        itemId: itemByName(name).id,
+        enhanced: name === 'Spirit Rend',
+      }));
+      const state = {
+        round: 2,
+        choice: 3,
+        rerollsRemaining: 2,
+        owned: [itemByName('Improved Spirit').id, itemByName('Extra Charge').id],
+        enemies: [heroByName('Seven').id],
+        sets: [[], [], offers],
+      };
+      const bases = baseScores(input, state.enemies, state.round);
+      const pair = pairLifts(input);
+      const reference = evaluateReroll({
+        choices: roundTiers(input, state.round).map((tier, i) => ({
+          normalTier: tier.normal,
+          rareTier: tier.rare,
+          offers: state.sets[i],
+        })),
+        choiceIndex: 2,
+        rerollsRemaining: state.rerollsRemaining,
+        itemTier: (id) => bases.get(id)?.item.item_tier,
+        scoreOffer: (offer) => scoreOffer(input, bases, pair, state, offer).score,
+        distribution: createUniformDropDistribution(
+          [...bases.values()].map(({ item }) => ({ itemId: item.id, tier: item.item_tier })),
+        ),
+      })!;
+      const advice = adviseDraft(input, state);
+      expect(!!advice.reroll).toBe(reference.shouldReroll);
+      if (advice.reroll) {
+        expect(advice.reroll.currentBest).toBe(reference.currentBest);
+        expect(advice.reroll.expectedBest).toBe(reference.expectedBest);
+        expect(advice.reroll.decisionAdvantage).toBe(reference.decisionAdvantage);
+      }
+    }
+  });
+
   it('suggests a reroll with positive gain when the set is far below its tier median', () => {
     const bases = baseScores(infernus);
     const layout = roundTiers(infernus, 2);

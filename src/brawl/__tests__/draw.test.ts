@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { drawReads, itemCircle, type OverlayTheme } from '../draw';
 import type { CardRead } from '../recognise';
+import { cardSlotSelection } from '../../local/cardSlotSelection';
 
 const read = (itemId: number, x: number): CardRead => ({
   card: 'x',
@@ -18,6 +19,9 @@ const THEME: OverlayTheme = {
   tealInk: '#06201d',
   text: '#ece6da',
   muted: '#a39e92',
+  take: '#52e38b',
+  takeInk: '#092416',
+  reroll: '#f3c969',
   grey: '#8a9092',
   veil: 'rgba(0,0,0,0.35)',
   dim: 0.6,
@@ -68,18 +72,65 @@ const run = (ctx: CanvasRenderingContext2D, reroll = false, sx = 1, sy = 1) =>
   drawReads(ctx, [read(1, 10), read(2, 200)], 1, sx, sy, 2560, 1440, reroll, SCORES, null, GRADES, THEME);
 
 describe('drawReads', () => {
-  it('outlines only the best card, as a circle, and veils the other card only', () => {
+  it('draws at most one TAKE for duplicated IDs with legacy item-ID-only callers', () => {
+    const ctx = stubCtx();
+    const drawn = drawReads(ctx, [read(1, 10), read(1, 200)], 1, 1, 1, 2560, 1440, false, SCORES, null, GRADES, THEME);
+    expect(drawn.map((rect) => rect.kind)).toEqual(['best', 'card']);
+    expect(drawn.map((rect) => rect.readIndex)).toEqual([0, 1]);
+    expect(ctx.ellipse).toHaveBeenCalledTimes(1);
+    expect(ctx.texts.filter((text) => text.text === 'TAKE')).toHaveLength(1);
+  });
+
+  it('draws each duplicate variant score and tier on its own plate and recommends only the stronger enhanced slot', () => {
+    const ctx = stubCtx();
+    const reads = [
+      { ...read(1, 10), card: 'left' },
+      { ...read(1, 200), card: 'right', enhanced: true },
+    ];
+    const card = {
+      itemId: 1,
+      name: 'Item',
+      enhanced: false,
+      score: 2,
+      grade: 'B',
+      usage: 0,
+      winRate: null,
+      enhancedBonus: 0,
+      rows: [],
+    };
+    const advice = {
+      hero: 'Graves',
+      round: 4,
+      choice: 3,
+      reroll: null,
+      status: 'Ready',
+      ranked: [{ ...card, enhanced: true, score: 5, grade: 'S', enhancedBonus: 3 }, card],
+    };
+    const slots = cardSlotSelection(reads, 1, advice);
+    const drawn = drawReads(ctx, reads, 1, 1, 1, 2560, 1440, false, SCORES, null, GRADES, THEME, slots);
+    expect(drawn.map((rect) => [rect.kind, rect.score])).toEqual([
+      ['card', 2],
+      ['best', 5],
+    ]);
+    expect(ctx.texts.map((text) => text.text)).toEqual(['B', 'Score: 2.00', 'S', 'Score: 5.00', 'TAKE', 'Enh +3.00']);
+    expect(ctx.ellipse).toHaveBeenCalledTimes(1);
+    const rerolled = drawReads(ctx, reads, 1, 1, 1, 2560, 1440, true, SCORES, null, GRADES, THEME, slots);
+    expect(rerolled.filter((rect) => rect.kind === 'best')).toHaveLength(0);
+    expect(rerolled.filter((rect) => rect.kind === 'reroll')).toHaveLength(1);
+  });
+
+  it('outlines only the best card, as a circle, and leaves other cards unobscured', () => {
     const ctx = stubCtx();
     const drawn = run(ctx);
-    expect(ctx.ellipse).toHaveBeenCalledTimes(2); // one veil, one outline
-    expect(ctx.ellipseFills).toEqual([THEME.veil]);
-    expect(drawn.map((d) => d.veiled)).toEqual([false, true]);
+    expect(ctx.ellipse).toHaveBeenCalledTimes(1); // one veil, one outline
+    expect(ctx.ellipseFills).toEqual([]);
+    expect(drawn.map((d) => d.veiled)).toEqual([false, false]);
   });
 
   it('puts a plate above each card, centred on it, with the tier letter and "Score: <n>"', () => {
     const ctx = stubCtx();
     const drawn = run(ctx);
-    expect(ctx.texts.map((t) => t.text)).toEqual(['S', 'Score: 3.14', 'B', 'Score: 2.50']);
+    expect(ctx.texts.map((t) => t.text)).toEqual(['S', 'Score: 3.14', 'TAKE', 'B', 'Score: 2.50']);
     const { cx, cy, r } = itemCircle({ x: 10, y: 100, edge: 50 });
     const plate = drawn[0].plate!;
     expect((plate.x0 + plate.x1) / 2).toBeCloseTo(cx, 0);
@@ -87,32 +138,29 @@ describe('drawReads', () => {
     expect(drawn.map((d) => d.score)).toEqual([3.14159, 2.5]);
   });
 
-  it('fills the best plate teal with dark text and a 3 px outline; the other plate is grey, dimmed and has no teal', () => {
+  it('fills the best plate green with TAKE; other plates keep a thin teal border and their scores', () => {
     const ctx = stubCtx();
     const drawn = run(ctx);
     expect(drawn.map((d) => d.kind)).toEqual(['best', 'card']);
-    expect(ctx.strokes[0]).toEqual({ color: THEME.teal, width: 3 }); // card outline
-    expect(ctx.strokes.slice(1)).toEqual([{ color: THEME.grey, width: 1 }]); // the other plate's border only
-    expect(ctx.fills).toContain(THEME.teal);
-    expect(ctx.texts[1].color).toBe(THEME.tealInk);
-    expect(ctx.texts[3].color).toBe(THEME.muted);
-    // everything drawn for the non-best plate (after the best plate's three fills) is at the dim opacity, no teal
-    const i = ctx.fills.indexOf(THEME.veil) + 1;
-    const rest = ctx.fills.slice(i + 2); // skip best plate + badge
-    expect(rest).not.toContain(THEME.teal);
-    expect(ctx.alphas.slice(i + 2).every((a) => a === THEME.dim)).toBe(true);
-    expect(ctx.texts.filter((t) => t.color === THEME.teal || t.color === THEME.tealInk).length).toBe(2);
+    expect(ctx.strokes[0]).toEqual({ color: THEME.take, width: 3 }); // card outline
+    expect(ctx.strokes.slice(1)).toEqual([{ color: THEME.teal, width: 1 }]); // the other plate's border only
+    expect(ctx.fills).toContain(THEME.take);
+    expect(ctx.texts[1].color).toBe(THEME.takeInk);
+    expect(ctx.texts[2]).toEqual({ text: 'TAKE', color: THEME.takeInk });
+    expect(ctx.texts[4].color).toBe(THEME.muted);
+    expect(ctx.fills).not.toContain(THEME.veil);
+    expect(ctx.alphas.every((a) => a === 1)).toBe(true);
   });
 
-  it('shows a ? card grey and veiled next to a best card', () => {
+  it('shows a ? card without inventing its item identity', () => {
     const ctx = stubCtx();
     const unsure = { ...read(3, 400), unsure: true } as CardRead;
     const drawn = drawReads(ctx, [read(1, 10), unsure], 1, 1, 1, 2560, 1440, false, SCORES, null, GRADES, THEME);
-    expect(drawn[1]).toMatchObject({ kind: 'unknown', veiled: true });
+    expect(drawn[1]).toMatchObject({ kind: 'unknown', itemId: null, veiled: false });
     expect(ctx.texts.map((t) => t.text)).toContain('?');
   });
 
-  it('greys every plate and veils nothing when there is no best card and no re-roll', () => {
+  it('keeps every plate neutral and unobscured when there is no best card and no re-roll', () => {
     const ctx = stubCtx();
     const drawn = drawReads(
       ctx,
@@ -129,10 +177,10 @@ describe('drawReads', () => {
       THEME,
     );
     expect(drawn.map((d) => d.veiled)).toEqual([false, false]);
-    expect(ctx.fills).not.toContain(THEME.teal);
+    expect(ctx.fills).not.toContain(THEME.take);
   });
 
-  it('adds an Enhanced cell only to enhanced cards, keeps the plate centred, and shows it on grey plates', () => {
+  it('adds an Enhanced cell only to enhanced cards, keeps the plate centred, and shows it on neutral plates', () => {
     const ctx = stubCtx();
     const enh = { ...read(2, 700), enhanced: true };
     const drawn = drawReads(ctx, [read(1, 10), enh], 1, 1, 1, 2560, 1440, false, SCORES, null, GRADES, THEME, {
@@ -146,14 +194,14 @@ describe('drawReads', () => {
     const { cx } = itemCircle({ x: 700, y: 100, edge: 50 });
     expect((p.x0 + p.x1) / 2).toBeCloseTo(cx, 0);
     expect(drawn[1].chip!.x1).toBeCloseTo(p.x1, 5);
-    expect(drawn[1].veiled).toBe(true);
+    expect(drawn[1].veiled).toBe(false);
     const r = drawReads(stubCtx(), [enh], 1, 1, 1, 2560, 1440, true, SCORES, null, GRADES, THEME, { 2: 0.7391 });
     expect(r[0].chipText).toBe('Enhanced +0.74');
   });
 
   it('shortens the cell to Enh when full cells would make neighbouring plates touch', () => {
     const a = { ...read(1, 10), enhanced: true };
-    const b = { ...read(2, 280), enhanced: true };
+    const b = { ...read(2, 310), enhanced: true };
     const drawn = drawReads(stubCtx(), [a, b], 1, 1, 1, 2560, 1440, false, SCORES, null, GRADES, THEME, {
       1: 0.5,
       2: 0.5,
@@ -170,14 +218,15 @@ describe('drawReads', () => {
     expect(Number(/(\d+)px/.exec(ctx.font)![1])).toBeGreaterThanOrEqual(14);
   });
 
-  it('on a re-roll call: no best, every card veiled and grey, a teal plate of card-plate height and a 4 px outline', () => {
+  it('on a re-roll call: no best, every card unobscured and neutral, an amber plate of card-plate height and a 4 px outline', () => {
     const ctx = stubCtx();
     const drawn = run(ctx, true);
     expect(drawn.filter((d) => d.kind === 'best')).toHaveLength(0);
-    expect(drawn.filter((d) => d.kind !== 'reroll').every((d) => d.veiled)).toBe(true);
-    expect(ctx.strokes.filter((s) => s.width === 4)).toEqual([{ color: THEME.teal, width: 4 }]);
-    expect(ctx.strokes.filter((s) => s.color === THEME.teal)).toHaveLength(1);
-    expect(ctx.texts.filter((t) => t.text === 'RE-ROLL')).toEqual([{ text: 'RE-ROLL', color: THEME.tealInk }]);
+    expect(drawn.filter((d) => d.kind !== 'reroll').every((d) => !d.veiled)).toBe(true);
+    expect(ctx.strokes.filter((s) => s.width === 4)).toEqual([{ color: THEME.reroll, width: 4 }]);
+    expect(ctx.strokes.filter((s) => s.color === THEME.reroll)).toHaveLength(1);
+    expect(ctx.texts.filter((t) => t.text === 'TAKE')).toHaveLength(0);
+    expect(ctx.texts.filter((t) => t.text === 'RE-ROLL')).toEqual([{ text: 'RE-ROLL', color: THEME.takeInk }]);
     const rr = drawn.find((d) => d.kind === 'reroll')!;
     const card = drawn[0].plate!;
     expect(rr.plate!.y1 - rr.plate!.y0).toBe(card.y1 - card.y0);

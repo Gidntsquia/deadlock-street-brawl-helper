@@ -67,7 +67,7 @@ describe('worker: the name under a card overrides a wrong icon guess', () => {
       names.push(...posted.filter((m): m is Extract<WorkerOut, { type: 'name' }> => m.type === 'name'));
     }
     const top = names.find((n) => n.slot === 1)!;
-    expect(top.icon).not.toBe(HIDDEN); // the icon search really guessed wrong
+    expect(top.icon).toBe(0); // upstream OCR resolves it without searching the damaged icon
     expect(top.itemId).toBe(HIDDEN);
     const accepted = results.filter((r) => r.accepted);
     expect(accepted.map((r) => r.key)).toEqual([CHOICE1.join(',')]);

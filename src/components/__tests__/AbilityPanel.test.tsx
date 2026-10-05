@@ -13,7 +13,11 @@ describe('AbilityPanel evidence line', () => {
     const panel = abilityPanelFor(brawlAbilityOrder(input), hero, input.abilities, 2);
     render(<AbilityPanel panel={panel} />);
     expect(screen.getByText('Round 2: 6 points')).toBeTruthy();
-    expect(screen.getByText(/^\d+ matches, \d+% win rate$/)).toBeTruthy();
+    expect(
+      screen.getByText(
+        /^\d+ matches, \d+% win rate(?:; first \d+ upgrades supported, remaining upgrades use fallback order)?$/,
+      ),
+    ).toBeTruthy();
   });
 
   it('shows No reliable order when data is thin', () => {
@@ -21,5 +25,13 @@ describe('AbilityPanel evidence line', () => {
     const panel = abilityPanelFor(brawlAbilityOrder(thin), hero, input.abilities, 1);
     render(<AbilityPanel panel={panel} />);
     expect(screen.getByText('No reliable order')).toBeTruthy();
+  });
+
+  it('shows Reading and withholds current upgrades while the HUD counter is unresolved', () => {
+    const panel = { ...abilityPanelFor(brawlAbilityOrder(input), hero, input.abilities, 2), availablePoints: null };
+    const { container } = render(<AbilityPanel panel={panel} />);
+    expect(screen.getByText(/Reading/)).toBeTruthy();
+    expect(container.querySelectorAll('.ap-now')).toHaveLength(0);
+    expect(container.querySelectorAll('.ap-done')).not.toHaveLength(0);
   });
 });

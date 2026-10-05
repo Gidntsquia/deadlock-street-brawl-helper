@@ -64,6 +64,7 @@ const accept = (round: number, choice: number, self: number, inventory: number[]
     reads: cardIds.map((c) => read(c.id)),
     key: cardIds.map((c) => c.id).join(','),
     accepted: true,
+    transition: 'initial',
     live: true,
     picked: null,
     spent: false,
@@ -84,7 +85,7 @@ async function start() {
     />,
   );
   fireEvent.click(screen.getByRole('button', { name: /start capture/i }));
-  await waitFor(() => expect(listeners.length).toBeGreaterThan(0));
+  await waitFor(() => expect(listeners.length).toBeGreaterThan(1));
 }
 
 describe('BrawlView with an accepted draft', () => {
@@ -99,11 +100,11 @@ describe('BrawlView with an accepted draft', () => {
     await waitFor(() => expect(screen.queryByText(/^Hero not read/)).toBeNull());
   });
 
-  it('starts the owned list empty at round 1 choice 1', async () => {
+  it('keeps match inventory through an unconfirmed round 1 label', async () => {
     await start();
     accept(2, 1, 1, [cardIds[0]!.id]);
     await waitFor(() => expect(screen.getByText(/^Owned \(1\)/)).toBeTruthy());
     accept(1, 1, 1);
-    await waitFor(() => expect(screen.getByText(/^Owned \(0\)/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/^Owned \(1\)/)).toBeTruthy());
   });
 });

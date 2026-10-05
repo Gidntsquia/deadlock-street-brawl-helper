@@ -23,7 +23,53 @@ vi.mock('../../data/load', () => ({
 afterEach(cleanup);
 
 describe('App Debug panel', () => {
-  it('is on at start in dev, shows the DEBUG tag, and Ctrl+Shift+D toggles it', async () => {
+  it('persists detailed/Off advice and both ability-tip time controls across launches', async () => {
+    localStorage.removeItem('brawl.overlaySettings');
+    const first = render(<App />);
+    await screen.findByRole('button', { name: 'Overlay settings' });
+    fireEvent.change(screen.getByLabelText('Item advice box'), { target: { value: 'off' } });
+    fireEvent.change(screen.getByLabelText('Ability upgrade tip'), { target: { value: 'fixed' } });
+    fireEvent.change(screen.getByLabelText('Fixed time / unreadable HUD fallback (seconds)'), {
+      target: { value: '25' },
+    });
+    fireEvent.change(screen.getByLabelText('Maximum time in HUD points mode (seconds)'), { target: { value: '80' } });
+    first.unmount();
+    render(<App />);
+    await screen.findByRole('button', { name: 'Overlay settings' });
+    expect((screen.getByLabelText('Item advice box') as HTMLSelectElement).value).toBe('off');
+    expect((screen.getByLabelText('Ability upgrade tip') as HTMLSelectElement).value).toBe('fixed');
+    expect((screen.getByLabelText('Fixed time / unreadable HUD fallback (seconds)') as HTMLInputElement).value).toBe(
+      '25',
+    );
+    expect((screen.getByLabelText('Maximum time in HUD points mode (seconds)') as HTMLInputElement).value).toBe('80');
+    localStorage.removeItem('brawl.overlaySettings');
+  });
+  it('migrates compact advice to Off while keeping custom ability and team preferences', async () => {
+    localStorage.setItem(
+      'brawl.overlaySettings',
+      JSON.stringify({
+        detail: 'compact',
+        abilityTipMode: 'fixed',
+        tipSeconds: 25,
+        pointLimitSeconds: 80,
+        showTeamWinRates: false,
+      }),
+    );
+    render(<App />);
+    await screen.findByRole('button', { name: 'Overlay settings' });
+    expect((screen.getByLabelText('Item advice box') as HTMLSelectElement).value).toBe('off');
+    expect((screen.getByLabelText('Ability upgrade tip') as HTMLSelectElement).value).toBe('fixed');
+    expect((screen.getByLabelText('Show team hero win rates') as HTMLInputElement).checked).toBe(false);
+    expect(JSON.parse(localStorage.getItem('brawl.overlaySettings')!)).toEqual({
+      detail: 'off',
+      abilityTipMode: 'fixed',
+      tipSeconds: 25,
+      pointLimitSeconds: 80,
+      showTeamWinRates: false,
+    });
+    localStorage.removeItem('brawl.overlaySettings');
+  });
+  it('is on at start in dev and Ctrl+Shift+D toggles it', async () => {
     render(<App />);
     await screen.findByLabelText('Debug panel');
     expect(screen.getByLabelText('Round')).toBeTruthy();

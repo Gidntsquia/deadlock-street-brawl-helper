@@ -7,7 +7,7 @@ const infernus = inputFor(heroByName('Infernus').id);
 describe('brawlAbilityOrder', () => {
   it("returns a sequence covering most of the game, only the hero's own abilities, tiers in order, no unlocks", () => {
     const order = brawlAbilityOrder(infernus);
-    expect(order.steps.length).toBeGreaterThanOrEqual(7);
+    expect(order.steps).toHaveLength(12);
 
     const sigIds = new Set(
       infernus.abilities.filter((a) => infernus.hero.abilities.includes(a.class_name)).map((a) => a.id),
@@ -44,7 +44,9 @@ describe('step-by-step order', () => {
         { abilities: [a, c, c], wins: 90, matches: 150 },
       ]),
     );
-    expect(order.steps.map((s) => s.ability.id)).toEqual([a, b]);
+    expect(order.steps.slice(0, order.supportedSteps).map((s) => s.ability.id)).toEqual([a, b]);
+    expect(order.supportedSteps).toBe(2);
+    expect(order.steps).toHaveLength(12);
     expect(order.support).toEqual({ matches: 680, winRate: 340 / 680 });
   });
 
@@ -61,7 +63,9 @@ describe('step-by-step order', () => {
     for (const r of [1, 2, 3, 4, 5]) {
       const p = abilityPanelFor(order, hero, base.abilities, r);
       expect(p.round).toBe(r);
-      expect(p.evidence).toMatch(/^\d+ matches, \d+% win rate$/);
+      expect(p.evidence).toMatch(
+        /^\d+ matches, \d+% win rate(?:; first \d+ upgrades supported, remaining upgrades use fallback order)?$/,
+      );
     }
   });
 });

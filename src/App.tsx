@@ -5,7 +5,12 @@ import { BrawlView } from './components/BrawlView';
 import { TierList } from './components/TierList';
 import { debugDefault } from './brawl/debugMode';
 import { TitleBar } from './components/TitleBar';
+import { DataUpdates } from './components/DataUpdates';
+import { OverlaySettingsPanel } from './local/OverlaySettingsPanel';
+import { isOverlaySettings, readMigratedOverlaySettings } from './local/overlaySettings';
 import { usePersisted, isNumber, isString } from './hooks/usePersisted';
+import './local/CompactHeader.css';
+import { useAutoHero } from './hooks/useAutoHero';
 
 const INFERNUS = 1;
 
@@ -24,15 +29,34 @@ export default function App() {
   const [heroId, setHeroId] = usePersisted('heroId', isNumber, INFERNUS);
   const [tab, setTab] = usePersisted<Tab>('tab', isTab, 'advisor');
   const [error, setError] = useState<string | null>(null);
-  const [debug, setDebug] = useState(() => debugDefault(__APP_VERSION__, import.meta.env.DEV)); // Debug panel: on in dev and rc builds
-  const [now] = useState(Date.now);
-  const [changeHero, setChangeHero] = useState(false);
-  const [heroPinned, setHeroPinned] = useState(false); // the user chose a hero: the scoreboard read no longer overrides it
-  const [heroSource, setHeroSource] = useState<'detected' | 'manual'>('manual');
-  const handleHero = (id: number, source: 'detected' | 'manual' = 'manual') => {
-    setHeroId(id);
-    setHeroSource(source);
+  const [debug, setDebug] = useState(() => debugDefault(__APP_VERSION__, import.meta.env.DEV));
+  const [initialOverlaySettings] = useState(readMigratedOverlaySettings);
+  const [overlaySettings, setOverlaySettings] = usePersisted(
+    'overlaySettings',
+    isOverlaySettings,
+    initialOverlaySettings,
+  );
+  const [now, setNow] = useState(Date.now);
+  const [dataRevision, setDataRevision] = useState(0);
+  const applyData = async () => {
+    const [i, h, a, m] = await loadCore();
+    setItems(i);
+    setHeroes(h);
+    setAbilities(a);
+    setManifest(m);
+    setNow(Date.now());
+    if (!h.some((hero) => hero.id === heroId)) setHeroId(h[0].id);
+    setDataRevision((n) => n + 1);
+    await window.brawlAPI?.activateDataSnapshot();
   };
+  const [changeHero, setChangeHero] = useState(false);
+  const {
+    source: heroSource,
+    pinned: heroPinned,
+    choose: handleHero,
+    newMatch: onNewMatch,
+    resumeAuto,
+  } = useAutoHero(setHeroId);
 
   useEffect(() => {
     loadCore()
@@ -88,7 +112,7 @@ export default function App() {
       <TitleBar debug={debug} />
       <header className="app-header">
         {tab === 'advisor' && <img className="hero-portrait" src={img(hero.images.small)} alt="" />}
-        <div>
+        <div className="hero-identity">
           <h1>
             {tab === 'advisor' ? hero.name : 'Street Brawl Tier List'}
             {tab === 'advisor' && heroSource === 'detected' && (
@@ -108,7 +132,6 @@ export default function App() {
                   className="hero-select"
                   value={heroId}
                   onChange={(e) => {
-                    setHeroPinned(true);
                     handleHero(Number(e.target.value), 'manual');
                   }}
                   aria-label="Select hero"
@@ -123,7 +146,7 @@ export default function App() {
                   <button
                     className="link-btn"
                     onClick={() => {
-                      setHeroPinned(false);
+                      resumeAuto();
                       setChangeHero(false);
                     }}
                   >
@@ -134,7 +157,10 @@ export default function App() {
             )
           ) : (
             <div className="sub">
-              Heroes and items graded by win rate and usage, data from the 30 days to {fetchedDate}
+              Heroes and items graded by win rate and usage, data{' '}
+              {manifest?.brawl?.since_patch
+                ? `since patch ${manifest.brawl.since_patch.slice(0, 10)} to ${fetchedDate}`
+                : `from the ${manifest?.brawl?.window_days ?? 30} days to ${fetchedDate}`}
               {ageDays !== null && (
                 <span className={stale ? 'stale' : ''}>
                   {' '}
@@ -143,6 +169,10 @@ export default function App() {
               )}
             </div>
           )}
+        </div>
+        <div className="header-actions" aria-label="App actions">
+          <DataUpdates manifest={manifest} onApply={applyData} />
+          <OverlaySettingsPanel settings={overlaySettings} onChange={setOverlaySettings} />
         </div>
       </header>
       <nav className="tabs" role="tablist" aria-label="View">
@@ -161,18 +191,20 @@ export default function App() {
       {/* BrawlView stays mounted on both tabs: it owns the capture loop and the hidden <video>. */}
       <div hidden={tab !== 'advisor'}>
         <BrawlView
+          key={dataRevision}
           pinned={heroPinned}
           hero={hero}
           heroes={heroes}
           items={items}
           abilities={abilities}
           onHero={handleHero}
+          onNewMatch={onNewMatch}
           debug={debug}
+          overlaySettings={overlaySettings}
         />
       </div>
-      {/* Kept mounted too: unmounting refetched the tier list, flashed "Loading…" and reset its filters on every switch. */}
       <div hidden={tab !== 'tiers'}>
-        <TierList heroes={heroes} items={items} />
+        <TierList key={dataRevision} heroes={heroes} items={items} />
       </div>
       <footer>
         Data: deadlock-api.com (aggregate analytics, assets). See the{' '}

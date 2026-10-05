@@ -2,6 +2,8 @@ import type { CardRead } from './recognise';
 import { rerollButtonRect } from './recognise';
 import type { AbilityPanelData } from './abilities';
 import type { DotState } from './lobbyDot';
+import type { TeamWinRateEdge } from '../local/teamWinRate';
+import { cardSlotSelection, type CardSlotSelection } from '../local/cardSlotSelection';
 
 export interface OverlayAdviceCard {
   itemId: number;
@@ -21,6 +23,10 @@ export interface OverlayAdviceCard {
 /** Everything the overlay panel needs to render the same advice as the pop-out, without alt-tabbing:
  *  names not ids, since the overlay window has no access to the item/ability catalog. */
 export interface OverlayAdvice {
+  detail?: 'detailed' | 'off';
+  rerollsRemaining?: number | null;
+  status: string;
+  confidence?: string;
   hero: string;
   round: number;
   choice: number;
@@ -47,6 +53,8 @@ export interface OverlayState {
   dot?: DotState | null;
   /** A one-sentence problem the overlay shows for a few seconds. */
   notice?: string | null;
+  teamEdge?: TeamWinRateEdge | null;
+  teamVisible?: boolean;
 }
 
 /** The blank state: nothing to draw. */
@@ -63,7 +71,7 @@ export const BLANK_OVERLAY: OverlayState = {
 
 export { overlayHasContent } from './overlayContent';
 
-/** One shape `drawReads` actually stroked, in capture-frame px (unscaled by scaleX/scaleY) — so a caller that
+/** One shape `drawReads` actually stroked, in capture-frame px (unscaled by scaleX/scaleY), so a caller that
  *  knows the canvas's own scale relative to the frame can turn these back into canvas px, and something that
  *  only has frame-px labels (e.g. the e2e harness comparing against `scripts/win/frames/labels.json`) can
  *  compare directly without redoing the scale math. For cards the rect is the bounding box of the large
@@ -81,6 +89,8 @@ export interface DrawnRect {
   plate: FrameRect | null;
   /** The card sits under the dark veil and has the grey plate (every card but the one to take). */
   veiled?: boolean;
+  /** Original capture index, including duplicate item IDs. */
+  readIndex?: number;
   /** The `Enhanced +n` cell on the plate (frame px) and its text; null without one. For `reroll`, `plate` is the teal label. */
   chip?: FrameRect | null;
   chipText?: string | null;
@@ -115,6 +125,9 @@ export interface OverlayTheme {
   tealInk: string;
   text: string;
   muted: string;
+  take?: string;
+  takeInk?: string;
+  reroll?: string;
   /** Border and badge of a non-advised plate. */
   grey: string;
   /** Veil over a non-advised card's circle. */
@@ -128,6 +141,9 @@ const DEFAULT_THEME: OverlayTheme = {
   tealInk: '#06201d',
   text: '#ece6da',
   muted: '#a39e92',
+  take: '#52e38b',
+  takeInk: '#092416',
+  reroll: '#f3c969',
   grey: '#8a9092',
   veil: 'rgba(0,0,0,0.35)',
   dim: 0.6,
@@ -142,6 +158,9 @@ function readTheme(): OverlayTheme {
     tealInk: v('--teal-ink', DEFAULT_THEME.tealInk),
     text: v('--text', DEFAULT_THEME.text),
     muted: v('--muted', DEFAULT_THEME.muted),
+    take: v('--overlay-take', DEFAULT_THEME.take!),
+    takeInk: v('--overlay-take-ink', DEFAULT_THEME.takeInk!),
+    reroll: v('--overlay-reroll', DEFAULT_THEME.reroll!),
     grey: v('--overlay-grey', DEFAULT_THEME.grey),
     veil: v('--overlay-veil', DEFAULT_THEME.veil),
     dim: Number(v('--overlay-dim', String(DEFAULT_THEME.dim))) || DEFAULT_THEME.dim,
@@ -189,6 +208,7 @@ interface PlateOpts {
   badge: string;
   label: string;
   chip: string | null;
+  take?: boolean;
 }
 
 /** Measures a plate (no drawing) for the given chip text. */
@@ -203,7 +223,10 @@ function measurePlate(
 ) {
   const font = Math.max(14, Math.round(edge * 0.2 * scaleY));
   ctx.font = `bold ${font}px sans-serif`;
-  const textW = o.mode === 'unknown' ? 0 : ctx.measureText(o.label).width;
+  const textW =
+    o.mode === 'unknown'
+      ? 0
+      : ctx.measureText(o.label).width + (o.take ? ctx.measureText('TAKE').width + Math.round(font * 0.5) * 2 : 0);
   const pad = Math.round(font * 0.5);
   const chipW = o.chip ? Math.round(ctx.measureText(o.chip).width + pad * 2) : 0;
   const g = plateGeometry(edge, cx, top, scaleX, scaleY, o.mode === 'unknown' ? -pad * 2 : textW, chipW);
@@ -211,8 +234,7 @@ function measurePlate(
 }
 
 /** One plate above a card: a tier badge, a label and, for an enhanced card, an `Enhanced +n` cell at the right end.
- *  `isBest` fills it teal (the item to take); every other plate is charcoal with a grey border, grey badge and text, drawn
- *  at the theme's dim opacity. Returns the plate and chip rectangles in frame px. */
+ *  `isBest` fills it green with TAKE; every other plate is charcoal with a thin teal border and muted text. Returns the plate and chip rectangles in frame px. */
 function drawPlate(
   ctx: CanvasRenderingContext2D,
   g: ReturnType<typeof measurePlate>,
@@ -223,39 +245,42 @@ function drawPlate(
 ): { plate: FrameRect; chip: FrameRect | null } {
   const { x, y, w, h, pad, chipW } = g;
   const { isBest, mode } = o;
+  const take = theme.take ?? DEFAULT_THEME.take!;
+  const takeInk = theme.takeInk ?? DEFAULT_THEME.takeInk!;
   ctx.save();
-  if (!isBest) ctx.globalAlpha = theme.dim;
+  ctx.globalAlpha = 1;
   ctx.font = `bold ${g.font}px sans-serif`;
-  ctx.fillStyle = isBest ? theme.teal : theme.panel;
+  ctx.fillStyle = isBest ? take : theme.panel;
   roundedRect(ctx, x, y, w, h, 4);
   ctx.fill();
   if (!isBest) {
     ctx.lineWidth = 1;
-    ctx.strokeStyle = theme.grey;
+    ctx.strokeStyle = theme.teal;
     roundedRect(ctx, x + 0.5, y + 0.5, w - 1, h - 1, 4);
     ctx.stroke();
   }
   // tier badge: a square at the left end, a darker cell so the letter reads at a glance
-  ctx.fillStyle = isBest ? theme.tealInk : theme.grey;
+  ctx.fillStyle = isBest ? takeInk : theme.teal;
   roundedRect(ctx, x + 2, y + 2, h - 4, h - 4, 3);
   ctx.fill();
   ctx.textBaseline = 'middle';
   ctx.textAlign = 'center';
-  ctx.fillStyle = isBest ? theme.teal : theme.panel;
+  ctx.fillStyle = isBest ? take : theme.panel;
   ctx.fillText(o.badge, x + h / 2, y + h / 2 + 1);
   ctx.textAlign = 'start';
-  const ink = isBest ? theme.tealInk : theme.muted;
+  const ink = isBest ? takeInk : theme.muted;
   if (mode === 'item') {
     ctx.fillStyle = ink;
     ctx.fillText(o.label, x + h + pad, y + h / 2 + 1);
+    if (o.take) ctx.fillText('TAKE', x + h + pad * 3 + ctx.measureText(o.label).width, y + h / 2 + 1);
   }
   let chip: FrameRect | null = null;
   if (o.chip && chipW) {
     const cx0 = x + w - chipW;
     ctx.fillStyle = ink;
-    ctx.globalAlpha = (isBest ? 1 : theme.dim) * 0.5;
+    ctx.globalAlpha = 0.5;
     ctx.fillRect(cx0, y + 4, 1, h - 8);
-    ctx.globalAlpha = isBest ? 1 : theme.dim;
+    ctx.globalAlpha = 1;
     ctx.fillText(o.chip, cx0 + pad, y + h / 2 + 1);
     chip = { x0: cx0 / scaleX, y0: y / scaleY, x1: (x + w) / scaleX, y1: (y + h) / scaleY };
   }
@@ -314,11 +339,19 @@ export function drawReads(
   rerollRect: FrameRect | null = null,
   grades: Record<number, string> = {},
   theme: OverlayTheme = readTheme(),
+  selectionOrBonuses?: CardSlotSelection | Record<number, number>,
   bonuses: Record<number, number> = {},
 ): DrawnRect[] {
+  const selection =
+    selectionOrBonuses && 'cards' in selectionOrBonuses
+      ? (selectionOrBonuses as CardSlotSelection)
+      : cardSlotSelection(reads, bestId, null, reroll);
+  if (selectionOrBonuses && !('cards' in selectionOrBonuses)) bonuses = selectionOrBonuses as Record<number, number>;
   const drawn: DrawnRect[] = [];
   interface Slot {
     read: CardRead;
+    readIndex: number;
+    score: number | null;
     unknown: boolean;
     isBest: boolean;
     veiled: boolean;
@@ -326,28 +359,36 @@ export function drawReads(
     o: PlateOpts | null;
     bonus: number | null;
   }
-  const cards = reads.filter((r) => r.unsure || r.present);
-  const hasBest = !reroll && cards.some((r) => !r.unsure && r.itemId === bestId);
-  const slots: Slot[] = cards.map((read) => {
+  const cards = reads.map((read, readIndex) => ({ read, readIndex })).filter(({ read }) => read.unsure || read.present);
+  const hasBest =
+    !reroll &&
+    selection.bestIndex !== null &&
+    cards.some(({ read, readIndex }) => readIndex === selection.bestIndex && !read.unsure && read.itemId === bestId);
+  const slots: Slot[] = cards.map(({ read, readIndex }) => {
     const circle = itemCircle(read.match);
     if (read.unsure)
       return {
         read,
+        readIndex,
+        score: null,
         unknown: true,
         isBest: false,
-        veiled: hasBest || reroll,
+        veiled: false,
         circle,
         o: { isBest: false, mode: 'unknown', badge: '?', label: '?', chip: null },
         bonus: null,
       };
-    const isBest = hasBest && read.itemId === bestId;
-    const score = scores[read.itemId];
-    const bonus = read.enhanced && bonuses[read.itemId] !== undefined ? bonuses[read.itemId]! : null;
+    const isBest = hasBest && readIndex === selection.bestIndex;
+    const card = selection.cards[readIndex];
+    const score = card?.score ?? scores[read.itemId];
+    const bonus = read.enhanced ? (card?.enhancedBonus ?? bonuses[read.itemId] ?? null) : null;
     return {
       read,
+      readIndex,
+      score: score ?? null,
       unknown: false,
       isBest,
-      veiled: !isBest && (hasBest || reroll),
+      veiled: false,
       circle,
       o:
         score === undefined
@@ -355,14 +396,15 @@ export function drawReads(
           : {
               isBest,
               mode: 'item',
-              badge: grades[read.itemId] ?? '-',
+              badge: card?.grade ?? grades[read.itemId] ?? '-',
+              take: isBest,
               label: `Score: ${score.toFixed(2)}`,
               chip: null,
             },
       bonus,
     };
   });
-  // veils first, so every plate is drawn over every veil
+  // Retained geometry metadata supports hover hit testing; fork cards stay unobscured.
   for (const sl of slots) {
     if (!sl.veiled) continue;
     const { cx, cy, r } = sl.circle;
@@ -373,7 +415,7 @@ export function drawReads(
   }
   // chips: the full text unless two neighbouring plates would touch, then the short one for all of them
   const chipText = (short: boolean, b: number) =>
-    `${short ? 'Enh' : 'Enhanced'} +${(Math.round(b * 100) / 100).toFixed(2)}`;
+    `${short ? 'Enh' : 'Enhanced'} ${b < 0 ? '-' : '+'}${(Math.round(Math.abs(b) * 100) / 100).toFixed(2)}`;
   const layout = (short: boolean) =>
     slots.map((sl) => {
       if (!sl.o) return null;
@@ -401,18 +443,19 @@ export function drawReads(
     const box = { x0: cx - r, y0: cy - r, x1: cx + r, y1: cy + r };
     if (sl.isBest) {
       ctx.lineWidth = 3;
-      ctx.strokeStyle = theme.teal;
+      ctx.strokeStyle = theme.take ?? DEFAULT_THEME.take!;
       ctx.beginPath();
       ctx.ellipse(cx * scaleX, cy * scaleY, r * scaleX, r * scaleY, 0, 0, Math.PI * 2);
       ctx.stroke();
     }
     const l = laid[i];
     const res = l ? drawPlate(ctx, l.g, scaleX, scaleY, theme, l.o) : null;
-    const score = sl.unknown ? null : (scores[sl.read.itemId] ?? null);
+    const score = sl.score;
     drawn.push({
       kind: sl.unknown ? 'unknown' : sl.isBest ? 'best' : 'card',
       itemId: sl.unknown ? null : sl.read.itemId,
       card: sl.read.card,
+      readIndex: sl.readIndex,
       ...box,
       score,
       plate: res?.plate ?? null,
@@ -428,21 +471,21 @@ export function drawReads(
       x1 = rect.x1 * scaleX,
       y1 = rect.y1 * scaleY;
     ctx.lineWidth = 4;
-    ctx.strokeStyle = theme.teal;
+    ctx.strokeStyle = theme.reroll ?? DEFAULT_THEME.reroll!;
     roundedRect(ctx, x0, y0, x1 - x0, y1 - y0, 4);
     ctx.stroke();
     // the label is a card plate's size, centred above the button with the gap plates use above cards
-    const edge = cards[0]?.match.edge ?? Math.round(frameH * 0.12);
+    const edge = cards[0]?.read.match.edge ?? Math.round(frameH * 0.12);
     const font = Math.max(14, Math.round(edge * 0.2 * scaleY));
     const h = Math.round(font * 1.7);
     ctx.font = `bold ${font}px sans-serif`;
     const w = Math.round(ctx.measureText('RE-ROLL').width + font * 1.5);
     const lx = Math.round((x0 + x1) / 2 - w / 2);
     const ly = Math.max(2, Math.round(y0 - h - PLATE_GAP(edge, scaleY)));
-    ctx.fillStyle = theme.teal;
+    ctx.fillStyle = theme.reroll ?? DEFAULT_THEME.reroll!;
     roundedRect(ctx, lx, ly, w, h, 4);
     ctx.fill();
-    ctx.fillStyle = theme.tealInk;
+    ctx.fillStyle = theme.takeInk ?? DEFAULT_THEME.takeInk!;
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'center';
     ctx.fillText('RE-ROLL', lx + w / 2, ly + h / 2 + 1);
@@ -496,41 +539,9 @@ const DOT_WORD: Record<DotState, string> = {
   reading: 'Reading the draft',
   failed: 'Capture failed',
 };
-// The app logo from public/favicon.svg (64 x 64 box): four draft-slot circles in a diamond, the pick ringed in teal
-const LOGO_CIRCLES: [number, number, number, string][] = [
-  [32, 16.83, 9.727, '#e6ad5f'],
-  [47.17, 32, 8.477, '#a6cf6e'],
-  [32, 47.17, 9.727, '#62b6c8'],
-  [16.83, 32, 9.727, '#b992e4'],
-];
-
-/** Draws public/favicon.svg at (x, y), `size` px square. */
-function drawLogo(ctx: CanvasRenderingContext2D, x: number, y: number, size: number) {
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.scale(size / 64, size / 64);
-  ctx.fillStyle = '#0e1a19';
-  ctx.beginPath();
-  ctx.roundRect(0, 0, 64, 64, 12);
-  ctx.fill();
-  ctx.strokeStyle = '#62b6c8';
-  ctx.lineWidth = 4;
-  ctx.beginPath();
-  ctx.roundRect(2, 2, 60, 60, 10);
-  ctx.stroke();
-  for (const [cx, cy, r, fill] of LOGO_CIRCLES) {
-    ctx.fillStyle = fill;
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.strokeStyle = '#2ec4b6';
-  ctx.lineWidth = 2.5;
-  ctx.beginPath();
-  ctx.arc(47.17, 32, 8.477, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.restore();
-}
+// Deadlock bolt from public/favicon.svg (48 x 45 box)
+const BOLT =
+  'M25.946 44.938c-.664.845-2.021.375-2.021-.698V33.937a2.26 2.26 0 0 0-2.262-2.262H10.287c-.92 0-1.456-1.04-.92-1.788l7.48-10.471c1.07-1.497 0-3.578-1.842-3.578H1.237c-.92 0-1.456-1.04-.92-1.788L10.013.474c.214-.297.556-.474.92-.474h28.894c.92 0 1.456 1.04.92 1.788l-7.48 10.471c-1.07 1.498 0 3.579 1.842 3.579h11.377c.943 0 1.473 1.088.89 1.83L25.947 44.94z';
 
 /** The lobby badge's rectangle (logo, title and status line around the dot) on a canvas of this height. */
 export function dotBadgeRect(canvasH: number) {
@@ -538,7 +549,7 @@ export function dotBadgeRect(canvasH: number) {
   return { x: 4 * k, y: 1 * k, w: 232 * k, h: 32 * k };
 }
 
-/** Draws the lobby badge: status dot (teal watching / amber reading / grey failed), the app logo, the
+/** Draws the lobby badge: status dot (teal watching / amber reading / grey failed), the bolt logo, the
  *  "STREET BRAWL ADVISOR" title and a status line; returns what it drew (the dot, as before). */
 export function drawDot(
   ctx: CanvasRenderingContext2D,
@@ -578,7 +589,12 @@ export function drawDot(
   }
   // logo
   ctx.globalAlpha = 1;
-  drawLogo(ctx, 27 * k, 6 * k, 22 * k);
+  ctx.save();
+  ctx.translate(28 * k, 6 * k);
+  ctx.scale((20 * k) / 48, (20 * k) / 48);
+  ctx.fillStyle = theme.teal;
+  ctx.fill(new Path2D(BOLT));
+  ctx.restore();
   // title + status line
   ctx.textBaseline = 'alphabetic';
   ctx.fillStyle = theme.text;

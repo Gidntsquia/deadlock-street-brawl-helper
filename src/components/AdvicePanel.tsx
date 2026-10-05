@@ -13,6 +13,7 @@ interface AdvicePanelProps {
   ranked: RankedOffer[];
   reroll: RerollAdvice | null;
   rerolls: number;
+  confidence?: string;
   hero: Hero;
   took: (r: RankedOffer) => void;
   rerolled: () => void;
@@ -31,6 +32,7 @@ export function AdvicePanel({
   ranked,
   reroll,
   rerolls,
+  confidence,
   hero,
   took,
   rerolled,
@@ -44,6 +46,7 @@ export function AdvicePanel({
   }
   return (
     <div className="brawl-advice">
+      {confidence && <div className="muted">{confidence}</div>}
       {reroll && (
         <div className="brawl-reroll-banner">
           Re-roll this set: expected best {reroll.expectedBest.toFixed(2)} vs {reroll.currentBest.toFixed(2)} on screen
@@ -66,7 +69,7 @@ export function AdvicePanel({
       )}
       {ranked.map((r, k) => (
         <button
-          key={r.item.id}
+          key={`slot-${k}`}
           className={`brawl-card ${k === 0 && !reroll ? 'best' : ''}`}
           onClick={() => took(r)}
           title={`score ${r.score.toFixed(2)}, ${

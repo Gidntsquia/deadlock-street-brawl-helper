@@ -10,7 +10,6 @@ const isNode = typeof process !== 'undefined' && !!process.versions?.node && typ
 // unscaled crop reads as empty text with 0 confidence -- verified against screenshots/brawl/reroll-choice*.png).
 const UPSCALE = 8;
 
-let workerPromise: Promise<TesseractWorker> | null = null;
 // A second engine for the item names under the cards: the digit engine's whitelist and page mode are set once, and
 // switching them per call would race the two kinds of read.
 // One engine per card slot: the three name lines are read at the same time instead of queueing behind one engine,
@@ -18,8 +17,22 @@ let workerPromise: Promise<TesseractWorker> | null = null;
 // On a 2 to 4 thread machine three engines (each a wasm model in memory) compete with the game: one engine reads the
 // names one after another instead.
 const cores = (globalThis as { navigator?: { hardwareConcurrency?: number } }).navigator?.hardwareConcurrency ?? 8;
-const NAME_ENGINES = cores <= 4 ? 1 : cores <= 6 ? 2 : 3;
-const nameWorkerPromises: (Promise<TesseractWorker> | null)[] = Array(NAME_ENGINES).fill(null);
+const NAME_ENGINES = cores <= 4 ? 1 : 2;
+interface NameEngine {
+  ready: Promise<TesseractWorker>;
+  instance: TesseractWorker | null;
+  disposed: boolean;
+  queue: Promise<unknown>;
+}
+const nameEngines: (NameEngine | null)[] = Array(NAME_ENGINES).fill(null);
+let nameGeneration = 0;
+let nameCancellation = new AbortController();
+export const CARD_NAME_OCR_TIMEOUT_MS = 10_000;
+const disposeName = (engine: NameEngine) => {
+  if (engine.disposed) return;
+  engine.disposed = true;
+  if (engine.instance) void engine.instance.terminate().catch(() => {});
+};
 /** The name crop is scaled so its text line is about this tall before OCR (it is ~25 px tall in a 1280 px frame). */
 const NAME_PX = 64;
 
@@ -39,35 +52,107 @@ function browserOcrOpts() {
   return { workerPath: `${base}/worker.min.js`, corePath: base, langPath: base, gzip: true };
 }
 
-async function getNameWorker(slot = 0): Promise<TesseractWorker> {
+function getNameEngine(slot = 0): NameEngine {
   const k = slot % NAME_ENGINES;
-  if (!nameWorkerPromises[k]) {
-    nameWorkerPromises[k] = (async () => {
+  if (!nameEngines[k]) {
+    const engine: NameEngine = {
+      ready: null as unknown as Promise<TesseractWorker>,
+      instance: null,
+      disposed: false,
+      queue: Promise.resolve(),
+    };
+    nameEngines[k] = engine;
+    engine.ready = (async () => {
       const opts = isNode ? { langPath: await nodeOcrDir(), gzip: true } : browserOcrOpts();
-      const worker = await createWorker('eng', 1 /* OEM.LSTM_ONLY */, opts);
+      const worker = await createWorker('eng', 1, opts);
+      engine.instance = worker;
+      if (engine.disposed) {
+        void worker.terminate().catch(() => {});
+        throw new Error('Name OCR stopped');
+      }
       await worker.setParameters({
-        tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz -'",
+        tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 -'&",
         tessedit_pageseg_mode: PSM.SINGLE_LINE,
-        user_defined_dpi: '300', // the PNG carries none; without it Tesseract guesses and warns on every read
+        user_defined_dpi: '300',
       });
+      if (engine.disposed) throw new Error('Name OCR stopped');
       return worker;
-    })();
+    })().catch((error) => {
+      if (nameEngines[k] === engine) nameEngines[k] = null;
+      disposeName(engine);
+      throw error;
+    });
   }
-  return nameWorkerPromises[k]!;
+  void nameEngines[k]!.ready.catch(() => {});
+  return nameEngines[k]!;
 }
 
-async function getWorker(): Promise<TesseractWorker> {
-  if (!workerPromise) {
-    workerPromise = (async () => {
-      const opts = isNode ? { langPath: await nodeOcrDir(), gzip: true } : browserOcrOpts();
-      const worker = await createWorker('eng', 1 /* OEM.LSTM_ONLY */, opts);
-      // The crop always shows just "N Re-Roll..."; a digit whitelist means the rest of the caption's
-      // letters are simply not in Tesseract's output alphabet, so they don't need to be cropped out.
-      await worker.setParameters({ tessedit_char_whitelist: '0123456789', tessedit_pageseg_mode: PSM.SINGLE_LINE });
-      return worker;
-    })();
-  }
-  return workerPromise;
+type OcrProfile = 'item-name' | 'hero-name' | 'digits' | 'caption';
+function readName(
+  png: () => Promise<Uint8Array>,
+  slot = 0,
+  profile: OcrProfile = 'item-name',
+  current?: () => boolean,
+  onWords?: (words: readonly NameWord[]) => void,
+): Promise<string> {
+  const generation = nameGeneration;
+  const signal = nameCancellation.signal;
+  const k = slot % NAME_ENGINES;
+  const engine = getNameEngine(slot);
+  const assertCurrent = () => {
+    if (generation !== nameGeneration || engine.disposed || (current && !current()))
+      throw new Error('Name OCR stopped');
+  };
+  const operation = engine.queue
+    .catch(() => {})
+    .then(async () => {
+      assertCurrent();
+      const pixels = await png();
+      assertCurrent();
+      const worker = await engine.ready;
+      assertCurrent();
+      await worker.setParameters({
+        tessedit_pageseg_mode: PSM.SINGLE_LINE,
+        tessedit_char_whitelist:
+          profile === 'digits' ? '0123456789' : "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 -'&",
+      });
+      assertCurrent();
+      const result = onWords
+        ? await worker.recognize(pixels as unknown as Buffer, {}, { text: true, blocks: true })
+        : await worker.recognize(pixels as unknown as Buffer);
+      assertCurrent();
+      if (onWords)
+        onWords(
+          result.data.blocks
+            ?.flatMap((block) => block.paragraphs.flatMap((paragraph) => paragraph.lines.flatMap((line) => line.words)))
+            .map((word) => ({
+              text: word.text,
+              bbox: { ...word.bbox },
+              symbols: word.symbols?.map((symbol) => ({ text: symbol.text, bbox: { ...symbol.bbox } })),
+            })) ?? [],
+        );
+      return result.data.text.trim();
+    });
+  let timer: ReturnType<typeof setTimeout>;
+  let onStop: () => void;
+  const bounded = new Promise<string>((resolve, reject) => {
+    onStop = () => reject(new Error('Name OCR stopped'));
+    signal.addEventListener('abort', onStop, { once: true });
+    timer = setTimeout(() => {
+      reject(new Error('Name OCR timed out'));
+      if (nameEngines[k] === engine) nameEngines[k] = null;
+      disposeName(engine);
+    }, CARD_NAME_OCR_TIMEOUT_MS);
+    operation.then(resolve, reject);
+  }).finally(() => {
+    clearTimeout(timer);
+    signal.removeEventListener('abort', onStop);
+  });
+  engine.queue = bounded.then(
+    () => {},
+    () => {},
+  );
+  return bounded;
 }
 
 /** Upscales the raw RGBA crop with smooth (Lanczos-equivalent) resampling and encodes it as PNG for
@@ -103,77 +188,82 @@ async function upscaledPng(data: Uint8Array, width: number, height: number, scal
  *  OCR can't confidently produce a single digit (so a bad read never gets silently reported as 0). */
 /** Starts loading the OCR engine now, so the first real read does not stall the frames that follow it. */
 export function warmOCR(): void {
-  void getWorker().catch(() => {
-    workerPromise = null;
-  });
-  for (let k = 0; k < NAME_ENGINES; k++)
-    void getNameWorker(k).catch(() => {
-      nameWorkerPromises[k] = null;
-    });
+  for (let k = 0; k < NAME_ENGINES; k++) void getNameEngine(k).ready.catch(() => {});
 }
 
 /** A card's name line (cardNameCrop), already copied out of the frame: the worker reuses its frame buffer for the
  *  next frame while the OCR read is still running. */
-export type NameCrop = NonNullable<ReturnType<typeof cardNameCrop>>;
+export interface NameWord {
+  text: string;
+  bbox: { x0: number; y0: number; x1: number; y1: number };
+  symbols?: readonly { text: string; bbox: { x0: number; y0: number; x1: number; y1: number } }[];
+}
+export type NameCrop = NonNullable<ReturnType<typeof cardNameCrop>> & {
+  onWords?: (words: readonly NameWord[], scaleX: number, scaleY: number) => void;
+};
 
 /** OCR of a card's item name line; the raw text, '' when nothing reads. */
-export async function readCardName(crop: NameCrop, slot = 0): Promise<string> {
+export async function readCardName(crop: NameCrop, slot = 0, current?: () => boolean): Promise<string> {
   const scale = Math.max(1, NAME_PX / crop.line);
-  const png = await upscaledPng(crop.data, crop.width, crop.height, scale);
-  const worker = await getNameWorker(slot);
-  const {
-    data: { text },
-  } = await worker.recognize(png as unknown as Buffer);
-  return text.trim();
+  return readName(
+    () => upscaledPng(crop.data, crop.width, crop.height, scale),
+    slot,
+    'item-name',
+    current,
+    crop.onWords
+      ? (words) =>
+          crop.onWords!(
+            words,
+            Math.round(crop.width * scale) / crop.width,
+            Math.round(crop.height * scale) / crop.height,
+          )
+      : undefined,
+  );
 }
 
 /** OCR of the loading screen's big hero name (loadingNameRect crop); the raw text, '' when nothing reads. The name
  *  is capital letters about a fifth of the crop tall, scaled to the same text height as a card name. */
 export async function readHeroName(crop: RGBImage): Promise<string> {
   const scale = Math.min(1, 160 / crop.height);
-  const png = await upscaledPng(
-    crop.data instanceof Uint8Array ? crop.data : new Uint8Array(crop.data),
-    crop.width,
-    crop.height,
-    scale,
-  );
-  const worker = await getNameWorker();
-  const {
-    data: { text },
-  } = await worker.recognize(png as unknown as Buffer);
-  return text.trim();
+  // Loading reads own their pixels even if the caller reuses its transferred buffer.
+  const pixels = new Uint8Array(crop.data).slice();
+  return readName(() => upscaledPng(pixels, crop.width, crop.height, scale), 0, 'hero-name');
 }
 
 export async function readRerollsRemaining(img: RGBImage): Promise<number> {
   const crop = extractRerollLabelCrop(img);
   if (!crop) return 0;
-  const png = await upscaledPng(crop.data, crop.width, crop.height);
-  const worker = await getWorker();
-  // tesseract.js's types only accept Buffer here, but both its Node and browser loadImage() ultimately just
-  // do `new Uint8Array(data)` on whatever's passed -- a plain Uint8Array works identically at runtime.
-  const {
-    data: { text },
-  } = await worker.recognize(png as unknown as Buffer);
+  const text = await readName(() => upscaledPng(crop.data, crop.width, crop.height), 0, 'digits');
   // Street Brawl gives 0 or 1 re-roll (brawl-config: 1 per round), so only 0/1 are believable reads. Anything
   // else (a "0" read as a letter, a "1" read as 7) falls back to the glyph's shape: a thin upright bar is a 1,
-  // any other glyph is a 0. Returning -1 here left the previous count standing, so a spent re-roll never showed.
+  // other glyphs remain unread. The round-scoped reader retains a confirmed count across covered labels.
   const digits = text.trim().match(/^[01]$/);
   if (digits) return Number(digits[0]);
-  return rerollGlyphIsOne(img) ? 1 : 0;
+  return rerollGlyphIsOne(img) ? 1 : -1;
 }
 
 /** Releases the OCR worker (and its wasm/model memory). Call on app/window teardown; a new call to
  *  readRerollsRemaining after this spins up a fresh worker on demand. */
 export async function terminateOCR(): Promise<void> {
-  const pending = [workerPromise, ...nameWorkerPromises];
-  workerPromise = null;
-  nameWorkerPromises.fill(null);
-  for (const p of pending) {
-    if (!p) continue;
-    try {
-      await (await p).terminate();
-    } catch {
-      /* it never finished loading, or is already gone */
-    }
-  }
+  nameGeneration++;
+  nameCancellation.abort();
+  nameCancellation = new AbortController();
+  for (const engine of nameEngines) if (engine) disposeName(engine);
+  nameEngines.fill(null);
+}
+
+/** Shared primary executor: profile changes and recognize are serialized atomically per engine. */
+export async function readHudText(
+  crop: { data: Uint8Array; width: number; height: number; scale?: number },
+  profile: 'digits' | 'caption',
+  current?: () => boolean,
+) {
+  const pixels = crop.data.slice();
+  const text = await readName(
+    () => upscaledPng(pixels, crop.width, crop.height, crop.scale ?? Math.max(1, 64 / crop.height)),
+    0,
+    profile,
+    current,
+  );
+  return { text, confidence: NaN };
 }

@@ -1,4 +1,7 @@
 import type { Ability, AbilityOrderStat, Hero, Item, ItemStat, PairStat } from '../types';
+import type { PatchAnalytics } from '../data/updateTypes';
+import type { DropDistribution } from '../local/dropDistribution';
+import type { EnhancedScoring } from './kit';
 
 /** Slim item-stats row from the enemy-filtered `item-stats?enemy_hero_ids=<id>` query. */
 interface VsStat {
@@ -8,7 +11,7 @@ interface VsStat {
 }
 
 /** public/data/analytics/brawl/<hero>.json: one all-rank population (the API has no rank filter for Street Brawl). */
-export interface BrawlAnalytics {
+export interface BrawlAnalytics extends PatchAnalytics {
   hero_id: number;
   game_mode: 'street_brawl';
   item_stats: ItemStat[];
@@ -21,6 +24,7 @@ export interface BrawlAnalytics {
 
 /** public/data/brawl-config.json: the `street_brawl` block of the assets API generic data. */
 export interface BrawlConfig {
+  apper_round?: number[];
   gold_per_round: number[];
   buy_time: number[];
   pre_buy_time: number[];
@@ -41,16 +45,21 @@ export interface BrawlInput {
   items: Item[];
   analytics: BrawlAnalytics;
   config: BrawlConfig;
+  dropDistribution?: DropDistribution;
+  enhancedScoring?: EnhancedScoring;
 }
 
 /** One card on the draft screen. `enhanced` = the same item with better numbers. */
 export interface Offer {
   itemId: number;
   enhanced?: boolean;
+  rare?: boolean;
 }
 
 export interface DraftState {
   round: number; // 1..5
+  choice?: number; // 1..3; live capture always supplies it
+  rerollsRemaining?: number | null; // null is unread and cannot authorise spending
   owned: number[]; // item ids already held (not sold)
   enemies: number[]; // enemy hero ids (0..4 known)
   sets: Offer[][]; // 1..3 sets of up to 3 cards
@@ -90,6 +99,9 @@ export interface RerollAdvice {
   gain: number;
   holdValue: number;
   pool: { tier: number; pRare: number; rareTier: number };
+  distributionStatus?: DropDistribution['status'];
+  assumptions?: readonly string[];
+  decisionAdvantage?: number;
 }
 
 export interface DraftAdvice {
@@ -106,4 +118,5 @@ export interface IconIndex {
   extras?: [number, string][]; // extra in-game reference icons: [item id, base64]
   twins?: Record<string, number[]>;
   heroes?: Record<string, string>;
+  names?: Record<string, string>; // local text-recognition fallback; id -> English item name
 } // twins: items whose icon file is identical; heroes: card-art portraits

@@ -7,7 +7,7 @@
 A draft advisor for [Deadlock](https://store.steampowered.com/app/1422450/Deadlock/)'s Street Brawl
 mode. It reads the draft screen while you play, ranks the three cards you're offered, and says whether
 the set is worth a re-roll. The advice shows up directly over the draft screen. Scores are built
-from 30 days of Street Brawl matches from [deadlock-api.com](https://deadlock-api.com).
+from a bundled Street Brawl snapshot or your downloaded post-patch matches from [deadlock-api.com](https://deadlock-api.com).
 
 ## Download
 
@@ -26,10 +26,19 @@ Then:
 2. Run the app. It finds the Deadlock window on its own.
 3. Play a Street Brawl draft. The advice appears over the draft screen.
 
+Double-click the tray icon to bring back the app window, or right-click it and choose **Show interface**.
+
 No game running? Press **Ctrl+Shift+D** in the app window to open the Debug panel and turn on Test mode.
 
-The match data was last refreshed on 2026-10-02 (see `public/data/manifest.json`). To refresh it, run
-`npm run fetch-data` and commit the result.
+Use **Update data** in the app to download a fresh snapshot. The app checks Steam patch announcements
+and shows a notice when a newer patch is found or the data is stale. Confirm the patch time in UTC,
+choose **Add recent data** or **Rebuild all post-patch data**, and follow the download progress.
+A changed patch or hero roster automatically triggers a full rebuild. Click **Apply updated data**
+when ready; the running advisor keeps its current data during the download. Cancelling or a failed
+request leaves the previous snapshot intact. No Python, external Node installation, or mod installer
+is needed. Downloaded data lives in the app's user-data folder, separate from the installed app.
+
+Developers can still use `npm run fetch-data` to refresh the bundled release snapshot.
 
 Developing (needs [Node.js](https://nodejs.org) 20 or newer):
 
@@ -54,10 +63,22 @@ npm run win:dev                    # From WSL: run the Windows app from a synced
 - Re-roll advice compares the best card on screen with what a fresh set is expected to offer, and the
   box moves to the Use Re-Roll button when a re-roll is the better call.
 - The legendary items that only appear in Street Brawl are ranked with everything else.
-- An ability upgrade order for your hero, with the step you're probably on highlighted. In the Windows
-  app a picture of the ability points panel shows this round's points for about 15 seconds after the
-  draft closes.
+- An ability upgrade order for your hero, with the step you're probably on highlighted. After the
+  draft closes, a compact panel shows the suggested allocation and can follow the available HUD points.
 - A second tab grades every hero and every draftable item S, A, B or C.
+- Ultrawide draft layouts are recognized using a centered, height-scaled HUD.
+- If an icon cannot be recognized, offline OCR can recover the English item name. Confirmed cards stay
+  visible through hover tooltips until the choice changes or a re-roll is spent.
+- The **Re-rolls** counter is shown in the advice overlay. Unknown counts disable re-roll suggestions;
+  confirmed counts survive covered labels and are read again when the round changes.
+- **Overlay settings** switches between detailed item advice (hero, all three items, scores, usage,
+  win rates and recognition status) and compact action-only advice. Both keep the re-roll counter.
+- The ability tip is bottom-left and 50% opaque. Choose a fixed display time or HUD points mode;
+  ability-tip settings apply to the next tip. Defaults: 15 seconds fixed/unreadable fallback, 60 seconds maximum
+  in HUD mode. Two matching reads confirm the counter; zero and the lobby infinity hide the tip.
+  Remaining points do not necessarily buy an upgrade: tier costs are 1/2/5, and all four abilities
+  cost 32 in total. The app hides a provably unspendable bank and bounds ambiguous cases with a timeout;
+  it cannot determine every purchased tier from the point counter alone.
 - If the capture misses a card, you can enter the three yourself.
 - A test mode in the Windows app opens a dummy Deadlock window with a real draft screenshot, so you can
   try the overlay without the game running.
@@ -67,6 +88,9 @@ npm run win:dev                    # From WSL: run the Windows app from a synced
 
 More details in the
 [wiki](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki):
+
+The local [scoring assumptions and validation report](docs/algorithm-validation.md) documents evidence semantics,
+reroll approximations, and the reproducible structural audit (`npx tsx scripts/brawl-evaluate.ts`).
 
 - [Street Brawl Advisor](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Street-Brawl-Advisor): the mode's rules, card scoring, re-roll maths
 - [Screen Reader](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Screen-Reader): how cards, tiers, labels and your picks are recognised

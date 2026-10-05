@@ -24,9 +24,11 @@ import {
   sendWindowToBottom,
   type Rect,
 } from './gameWindow';
-import { probeIsBlack, probeLoadingName, probeShopScreen } from './shopProbe';
+import { probeLoadingName, probeShopScreen } from './shopProbe';
 import { PROBLEM_TEXT, problemFor, type Env, type Problem } from '../src/brawl/problems';
 import { CHANNELS } from './channels';
+import { setupDataUpdates } from './update/integration';
+import { installTrayWindowControls } from './trayControls';
 import { SessionStore, type DraftRecord, type FrameShot, type RegionShot } from './sessionStore';
 import { debugDefault } from '../src/brawl/debugMode';
 import { MIN_HEIGHT, MIN_WIDTH, isBounds, validBounds } from './windowBounds';
@@ -76,6 +78,7 @@ const POLL_TICK_SLOW_MS = 40;
 let control: BrowserWindow | null = null;
 let overlay: BrowserWindow | null = null;
 let tray: Tray | null = null;
+let trayMenu: Menu | null = null;
 let lastRect: Rect | null = null;
 
 // Debug-mode recording (see sessionStore.ts): crops as PNG, written by main so the read path never waits on it.
@@ -122,7 +125,6 @@ let f8InUse = false;
 let problem: Problem | null = null;
 let noticeText: string | null = null;
 let noticeTimer: ReturnType<typeof setTimeout> | null = null;
-let blackTicks = 0;
 let lastEnv: Env | null = null;
 const NOTICE_MS = 5000;
 const DETECT_KEY = 'F8';
@@ -392,7 +394,7 @@ function refreshProblem(found: Rect | null) {
     width: found?.width ?? 0,
     height: found?.height ?? 0,
     borderless: found ? gameWindowIsBorderless() : null,
-    black: blackTicks >= 3,
+    black: false, // A dark scene probe cannot establish the window's display mode or capture health.
     denied: captureFailed,
     f8InUse,
   };
@@ -516,9 +518,9 @@ function startRectPolling() {
     const found = findGameWindow(GAME_WINDOW_TITLE, ownWindowHandles());
     let reassert = false;
     if (!rectsEqual(found, lastRect)) {
+      if (!!found !== !!lastRect) sessions().endMatch();
       lastRect = found;
       log('electron-main', 'info', found ? 'window.found' : 'window.lost', found ?? undefined);
-      sessions().endMatch(); // a window lost and found is a new match
       sendControl(CHANNELS.gameRect, found);
       if (found && alive(overlay)) overlay.setBounds(toDipBounds(found));
       syncOverlay();
@@ -527,8 +529,6 @@ function startRectPolling() {
       captureHeld = false;
     }
     syncDetectKey(!!found);
-    blackTicks =
-      found && !alive(testWindow) && isGameForeground() && probeIsBlack(found, grabScreenRegion) ? blackTicks + 1 : 0;
     refreshProblem(found);
     lobby = stepLobby(lobby, { type: 'tick', found: !!found, now: Date.now() });
     refreshDot();
@@ -846,6 +846,11 @@ function platformWarning(): string | null {
 }
 
 function setupIpc() {
+  ipcMain.handle(CHANNELS.dataActivate, (event) => {
+    if (!alive(control) || event.sender !== control.webContents)
+      throw new Error('Only the control window may apply data.');
+    if (alive(overlay)) overlay.webContents.send(CHANNELS.dataActivated);
+  });
   ipcMain.handle(CHANNELS.getGameRect, () => lastRect);
   ipcMain.handle(CHANNELS.captureStateGet, () => captureState());
   ipcMain.on(CHANNELS.captureIdle, () => {
@@ -915,18 +920,16 @@ function appIconPath(): string {
 
 function setupTray() {
   const icon = nativeImage.createFromPath(appIconPath());
-  tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
+  tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon.resize({ width: 16, height: 16 }));
   tray.setToolTip('Deadlock Street Brawl Helper');
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: 'Toggle overlay', click: toggleOverlay },
-      { label: 'Detect now (F8)', click: () => detectNow('tray') },
-      { label: 'Debug panel', click: toggleDebugPanel },
-      { label: 'First-run check', click: () => sendControl(CHANNELS.firstRunOpen) },
-      { label: 'Toggle test mode', click: () => (alive(testWindow) ? stopTestMode() : void startTestMode()) },
-      { label: 'Quit', click: () => app.quit() },
-    ]),
-  );
+  trayMenu = installTrayWindowControls(tray, () => control, [
+    { label: 'Toggle overlay', click: toggleOverlay },
+    { label: 'Detect now (F8)', click: () => detectNow('tray') },
+    { label: 'Debug panel', click: toggleDebugPanel },
+    { label: 'First-run check', click: () => sendControl(CHANNELS.firstRunOpen) },
+    { label: 'Toggle test mode', click: () => (alive(testWindow) ? stopTestMode() : void startTestMode()) },
+    { label: 'Quit', click: () => app.quit() },
+  ]);
 }
 
 function toggleDebugPanel() {
@@ -966,7 +969,10 @@ if (process.env.BRAWL_E2E && !app.isReady()) app.disableHardwareAcceleration();
 // when this module loads) pass the same switch themselves; keep the two in sync (scripts/win/*-main.cjs).
 if (!app.isReady()) app.commandLine.appendSwitch('disable-features', 'AllowWgcWindowCapturer');
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  await setupDataUpdates(path.join(__dirname, DEV_SERVER_URL ? '../public/data' : '../dist/data'), () =>
+    alive(control) ? control.webContents : null,
+  );
   setupDisplayMediaHandler();
   setupIpc();
   createControlWindow();
@@ -992,6 +998,11 @@ app.whenReady().then(() => {
     (globalThis as Record<string, unknown>).__brawlE2E = {
       getControl: () => control,
       sessionsDir: () => sessions().dir,
+      getTray: () => tray,
+      getTrayMenu: () => trayMenu,
+      setInitialTestFrame: (frame: string) => {
+        if (!alive(testWindow) && testFrames().includes(frame)) testFrame = frame;
+      },
       toggleDebugFromTray: toggleDebugPanel,
       getOverlay: () => overlay,
       get overlayIgnoresMouseEvents() {

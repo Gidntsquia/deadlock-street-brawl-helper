@@ -122,4 +122,22 @@ describe('Enhanced cell number', () => {
       expect(Math.abs(fit - plainFit)).toBeLessThanOrEqual(1);
     });
   }
+
+  it('uses the exact same owned-item context and custom enhanced assumptions as both scores', () => {
+    const item = itemByName('Improved Spirit');
+    const owned = ['Improved Spirit', 'Extra Charge'].map((name) => itemByName(name).id);
+    for (const override of [
+      { statMultiplier: 2, scoreBonus: 0.17 },
+      { properties: item.properties, scoreBonus: -0.25 },
+    ]) {
+      const input = { ...infernus, enhancedScoring: { itemOverrides: { [item.id]: override } } };
+      const state = { round: 2, owned, enemies: [heroByName('Seven').id], sets: [] };
+      const plain = scoreOffer(input, bases, pair, state, { itemId: item.id });
+      const enhanced = scoreOffer(input, bases, pair, state, { itemId: item.id, enhanced: true });
+      expect(enhanced.enhancedBonus).toBeCloseTo(enhanced.score - plain.score, 12);
+      const rows = breakdownRows(enhanced.parts, enhanced.score, enhanced.known, enhanced.enhancedBonus);
+      expect(rows.find((row) => row.label === 'Enhanced')?.cents).toBe(Math.round(enhanced.enhancedBonus * 100));
+      expect(rows.reduce((sum, row) => sum + row.cents, 0)).toBe(Math.round(enhanced.score * 100));
+    }
+  });
 });

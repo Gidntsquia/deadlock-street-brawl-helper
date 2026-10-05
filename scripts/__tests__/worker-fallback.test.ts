@@ -17,7 +17,7 @@ const W = 2000,
   H = 1125;
 const regions = draftRegions(W, H);
 const frames: Record<string, Buffer> = {};
-const nameKeys = [...regions.keys()].slice(-6);
+const nameKeys = [...regions.keys()].slice(-4, -1);
 
 async function load(name: string) {
   const { data } = await sharp(`public/demo/${name}.png`).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
@@ -34,7 +34,7 @@ async function frame(name: string): Promise<Out> {
   posted.length = 0;
   send({ type: 'frame', width: W, height: H, regions: msgRegions, prefer: [] });
   clock += 70;
-  const out = posted.find((m): m is Out => m.type === 'result')!;
+  const out = posted.filter((m): m is Out => m.type === 'result' && !m.identityOnly).at(-1)!;
   await new Promise((r) => setTimeout(r, 40));
   return out;
 }
@@ -114,23 +114,13 @@ describe('worker: a set stays unchanged once shown', () => {
   });
 });
 
-describe('worker: the 2.5 s fallback', () => {
+describe('worker: complete tuple fallback safety', () => {
   beforeAll(() => send({ type: 'reset' }));
-  it('turns one unreadable card into a question mark and keeps the others', async () => {
-    const outs = await run('bad', 50); // 3.5 s
-    const acc = outs.filter((o) => o.accepted);
-    expect(acc.length).toBe(1);
-    const first = acc[0]!;
-    const at = outs.indexOf(first) * 70;
-    expect(at).toBeGreaterThanOrEqual(2500);
-    expect(at).toBeLessThan(3200);
-    expect(first.reads[0]!.unsure).toBe(true);
-    expect(first.reads[0]!.itemId).toBe(0);
-    expect(first.reads[1]!.unsure).toBeFalsy();
-    expect(first.reads[2]!.unsure).toBeFalsy();
-    // nothing earlier showed a card at all, and the set then stays unchanged
-    for (const o of outs.slice(0, outs.indexOf(first))) expect(o.live).toBe(false);
-    for (const o of outs.slice(outs.indexOf(first) + 1)) expect(o.live).toBe(true);
+  it('keeps an unreadable slot pending and never publishes a partial tuple', async () => {
+    const outs = await run('bad', 50);
+    expect(outs.every((o) => !o.accepted && !o.live && !o.key && !o.reads.length)).toBe(true);
+    expect(outs.at(-1)!.itemReadStatus?.confirmed).toBe(2);
+    expect(outs.at(-1)!.itemReadStatus?.unresolved).toEqual([0]);
   });
 });
 

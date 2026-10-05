@@ -85,19 +85,21 @@ describe('BrawlView main view (Electron)', () => {
     (window as unknown as { __getDisplayMediaCalls: () => number }).__getDisplayMediaCalls = () => n;
   });
 
-  it('shows Waiting for Deadlock and no capture or Detect buttons', async () => {
+  it('keeps capture controls and hero reference available before Deadlock starts', async () => {
     const { container } = render(<BrawlView {...props()} />);
-    await waitFor(() => expect(screen.getByRole('status').textContent).toBe('Waiting for Deadlock'));
-    expect(screen.queryByRole('button', { name: /start capture|stop capture|detect now/i })).toBeNull();
+    await waitFor(() => expect(screen.getByRole('status').textContent).toBe('Deadlock window not found'));
+    expect(screen.getByRole('button', { name: /start capture/i })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /detect now/i })).toBeTruthy();
     expect(container.querySelectorAll('select').length).toBe(0);
-    expect(container.textContent).not.toMatch(/top items|Owned|Cards on screen|Ability order|Round|Debug/);
+    expect(container.textContent).not.toMatch(/Owned|Cards on screen|Debug/);
+    expect(container.querySelector('.hero-reference')).toBeTruthy();
   });
 
   it('shows Ready once the game window is found', async () => {
     const api = (window as unknown as { brawlAPI: Record<string, unknown> }).brawlAPI;
     api.getGameRect = () => Promise.resolve({ x: 0, y: 0, width: 1920, height: 1080 });
     render(<BrawlView {...props()} />);
-    await waitFor(() => expect(screen.getByRole('status').textContent).toBe('Ready. Open a Street Brawl draft'));
+    await waitFor(() => expect(screen.getByRole('status').textContent).toBe('Deadlock found, capture off'));
     api.getGameRect = () => Promise.resolve(null);
   });
 
@@ -109,15 +111,42 @@ describe('BrawlView main view (Electron)', () => {
     await waitFor(() => expect(calls()).toBe(1));
   });
 
-  it('shows each problem as one sentence with the fix, and clears it', async () => {
+  it('shows each reported problem and clears it without changing controls', async () => {
     render(<BrawlView {...props()} />);
     await waitFor(() => expect(onProblemCb).toBeTypeOf('function'));
-    for (const kind of ['fullscreen', 'small', 'denied', 'f8'] as const) {
+    for (const kind of ['small', 'denied', 'f8'] as const) {
       act(() => onProblemCb!(kind));
       await waitFor(() => expect(screen.getByRole('alert').textContent).toBe(PROBLEM_TEXT[kind]));
     }
     act(() => onProblemCb!(null));
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+    expect(screen.getByRole('button', { name: /start capture/i })).toBeTruthy();
+  });
+
+  it('shows Detect now (F8) beside Start capture, disabled with "Deadlock not found" without a game rect', async () => {
+    const { container } = render(<BrawlView {...props()} />);
+    await new Promise((r) => setTimeout(r, 50));
+    const detect = screen.getByRole('button', { name: /detect now \(f8\)/i }) as HTMLButtonElement;
+    const start = screen.getByRole('button', { name: /start capture/i });
+    expect(detect.disabled).toBe(true);
+    expect(detect.parentElement).toBe(start.parentElement);
+    expect(container.textContent).toContain('Deadlock not found');
+  });
+
+  it('keeps the hero reference under capture controls while Debug is hidden', async () => {
+    const { container } = render(<BrawlView {...props()} />);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.getByRole('button', { name: /start capture/i })).toBeTruthy();
+    expect(screen.getByRole('status')).toBeTruthy();
+    expect(container.querySelectorAll('select').length).toBe(0);
+    expect(container.textContent).not.toMatch(/Owned|Cards on screen|Debug/);
+    expect(screen.getByRole('heading', { name: "Infernus's top items" })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Ability order' })).toBeTruthy();
+    expect(
+      container.querySelector('.hero-reference')?.previousElementSibling?.classList.contains('brawl-controls'),
+    ).toBe(true);
+    expect(container.querySelector('.hero-reference .ap-control')).toBeTruthy();
+    expect(container.querySelector('.chip, canvas, .brawl-preview')).toBeNull();
   });
 });
 
@@ -175,7 +204,7 @@ describe('First-run check (Electron)', () => {
 });
 
 describe('BrawlView Debug panel (Electron)', () => {
-  it('holds the capture and Detect now buttons, and Detect now needs a game', async () => {
+  it('keeps one capture and Detect pair in the main view while Debug is open', async () => {
     const api = (window as unknown as { brawlAPI: Record<string, unknown> }).brawlAPI;
     let runCb: (() => void) | undefined;
     api.getGameRect = () => Promise.resolve({ x: 0, y: 0, width: 1920, height: 1080 });
@@ -189,12 +218,13 @@ describe('BrawlView Debug panel (Electron)', () => {
       getDisplayMedia: vi.fn(() => new Promise(() => {})),
     };
     render(<BrawlView {...props(true)} />);
-    expect(screen.getByRole('button', { name: /start capture/i })).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: /start capture/i })).toHaveLength(1);
+    expect(screen.getByRole('button', { name: /start capture/i }).closest('.brawl-controls')).toBeTruthy();
     const detect = (await screen.findByRole('button', { name: /detect now \(f8\)/i })) as HTMLButtonElement;
     await waitFor(() => expect(detect.disabled).toBe(false));
     detect.click();
     expect(api.detectNow).toHaveBeenCalled();
     runCb!();
-    await waitFor(() => expect(screen.getByRole('status').textContent).not.toBe('Waiting for Deadlock'));
+    await waitFor(() => expect(screen.getByRole('status').textContent).not.toBe('Deadlock window not found'));
   });
 });

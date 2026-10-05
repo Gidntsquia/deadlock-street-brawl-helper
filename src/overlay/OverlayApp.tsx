@@ -14,8 +14,13 @@ import {
 import { cardSquares } from '../brawl/recognise';
 import { ScoreTip } from '../components/ScoreTip';
 import { AbilityPanel } from '../components/AbilityPanel';
+import { OverlayAdvicePanel } from '../local/OverlayAdvicePanel';
+import { OverlayActionCue } from '../local/OverlayActionCue';
+import { TeamHeroWinRatePanel } from '../local/TeamHeroWinRatePanel';
+import { overlayActionCueLayout, overlayDraftAction, type ActionCueLayout } from '../local/overlayCueGeometry';
 import { DOT_TEXT, type DotState } from '../brawl/lobbyDot';
 import { log } from '../log';
+import { cardSlotSelection } from '../local/cardSlotSelection';
 
 declare global {
   interface Window {
@@ -35,11 +40,14 @@ export default function OverlayApp() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const stateRef = useRef<OverlayState | null>(null);
   const [panelState, setPanelState] = useState<OverlayState | null>(null);
+  const [actionCue, setActionCue] = useState<ActionCueLayout | null>(null);
   const drawnRef = useRef<DrawnRect[]>([]);
   const hoverRef = useRef<number | null>(null);
   const dotRef = useRef<DotState | null>(null);
   const [dotTip, setDotTip] = useState<DotState | null>(null);
-  const [hover, setHover] = useState<{ itemId: number; x: number; y: number; flip: boolean } | null>(null);
+  const [hover, setHover] = useState<{ itemId: number; readIndex: number; x: number; y: number; flip: boolean } | null>(
+    null,
+  );
 
   const draw = (state: OverlayState) => {
     const c = canvasRef.current;
@@ -52,6 +60,7 @@ export default function OverlayApp() {
     if (window.brawlAPI?.isE2E) window.__overlayDot = dot;
     if (!overlayHasContent(state) || !state.frameW || !state.frameH) {
       drawnRef.current = [];
+      setActionCue(null);
       if (window.brawlAPI?.isE2E) {
         window.__overlayDrawn = [];
         window.__overlayReading = false;
@@ -62,21 +71,23 @@ export default function OverlayApp() {
     const sx = c.width / state.frameW,
       sy = c.height / state.frameH;
     const drawn: DrawnRect[] = [];
+    const action = overlayDraftAction(state);
     if (state.draft)
       drawn.push(
         ...drawReads(
           ctx,
           state.reads,
-          state.bestId,
+          action.bestId,
           sx,
           sy,
           state.frameW,
           state.frameH,
-          state.reroll,
+          action.reroll,
           scoresFromAdvice(state.advice),
           state.rerollRect ?? null,
           gradesFromAdvice(state.advice),
           undefined,
+          cardSlotSelection(state.reads, action.bestId, state.advice, action.reroll),
           bonusesFromAdvice(state.advice),
         ),
       );
@@ -86,6 +97,7 @@ export default function OverlayApp() {
     // e2e-only: expose exactly what was stroked (frame px) so the harness can verify boxes without
     // re-deriving them from reads (PLAN.md item 3's boxes-<frame> check).
     drawnRef.current = drawn;
+    setActionCue(overlayActionCueLayout(drawn, state.frameW, state.frameH, c.width, c.height));
     if (window.brawlAPI?.isE2E) {
       window.__overlayDrawn = drawn;
       window.__overlayReading = reading;
@@ -126,11 +138,13 @@ export default function OverlayApp() {
       }
       return;
     }
-    if (hoverRef.current === hit.itemId) return;
-    hoverRef.current = hit.itemId;
+    const readIndex = hit.readIndex ?? drawnRef.current.indexOf(hit);
+    if (hoverRef.current === readIndex) return;
+    hoverRef.current = readIndex;
     const flip = hit.plate.x1 * sx + 260 > window.innerWidth;
     setHover({
       itemId: hit.itemId!,
+      readIndex,
       x: flip ? hit.plate.x0 * sx - 8 : hit.plate.x1 * sx + 8,
       y: hit.plate.y0 * sy,
       flip,
@@ -198,18 +212,22 @@ export default function OverlayApp() {
   const c_ = dotTip && canvasRef.current ? dotBadgeRect(canvasRef.current.height) : null;
   const advice = panelState?.draft ? panelState.advice : null;
   const abilityPanel = panelState && !panelState.draft ? panelState.panel : null;
-  const hovered = hover && advice ? advice.ranked.find((r) => r.itemId === hover.itemId) : null;
+  const hovered =
+    hover && advice && panelState
+      ? cardSlotSelection(panelState.reads, panelState.bestId, advice).cards[hover.readIndex]
+      : null;
 
   return (
     <>
       <canvas ref={canvasRef} style={{ position: 'fixed', inset: 0, width: '100vw', height: '100vh' }} />
-      {advice?.reroll && (
-        <div className="overlay-panel">
-          <div className="overlay-panel-reroll">
-            Re-roll: {advice.reroll.expectedBest.toFixed(2)} vs {advice.reroll.currentBest.toFixed(2)}
-          </div>
-        </div>
-      )}
+      <OverlayActionCue cue={actionCue} />
+      <TeamHeroWinRatePanel
+        visible={panelState?.teamVisible}
+        draft={panelState?.draft}
+        round={advice?.round}
+        edge={panelState?.teamEdge}
+      />
+      {advice && <OverlayAdvicePanel advice={advice} />}
       {hover && hovered && (
         <ScoreTip
           card={hovered}

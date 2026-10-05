@@ -1,27 +1,38 @@
 // Web Worker that runs the Street Brawl screen recogniser off the main thread, so the page and the overlay stay
 // responsive while frames are read. It keeps the small amount of state needed to decide when a screen is "new":
-// cards are accepted once the screen has settled and the player has not already picked from them (draftGate.ts), and
-// the expensive labels / hero bar read runs only then.
+// complete card/label tuples are committed after transition evidence, and expensive hero-bar reads are cached.
 import {
-  BRAWL_LAYOUT,
   HERO_BAR,
+  cardAnchors,
+  enemiesFrom,
+  inventoryRegions,
+  roundProbeRect,
   decodeIconIndex,
   isShopScreen,
   readDraftMeta,
   readRoundChoice,
-  readDraftScreen,
+  readPlayerHero,
   readInventory,
-  cardNameCrop,
-  readMarkers,
-  cardSquares,
   type CardRead,
   type DecodedIndex,
   type DraftMeta,
-  type InventoryRead,
 } from './recognise';
-import { readCardName, readRerollsRemaining, terminateOCR, warmOCR, type NameCrop } from './ocr';
-import { matchItemName, nameList, type NameList } from './names';
-import { initialGate, offScreenGate, stepGate } from './draftGate';
+import { readHeroName, terminateOCR, warmOCR } from './ocr';
+import { matchItemName, nameList } from './names';
+import { DraftCardRecognition } from '../local/draftCardRecognition';
+import { cardNameRegions, hasItemNameInk } from '../local/cardNames';
+import { refreshCardMarkers } from '../local/settledCardMarkers';
+import { HudOcrFallback, HudTextJobs } from '../local/hudOcrFallback';
+import { RerollCounterReader } from '../local/rerollCounter';
+import { hudLayout } from '../local/hudLayout';
+import { serialFrames } from '../local/cardRecognition';
+import { stopItemNameOCR } from '../local/cardNameOcr';
+import { InventoryConfirmation } from '../local/inventoryConfirmation';
+import { DraftOfferLock } from '../local/draftOfferLock';
+import { completedItemStatus, readingItemStatus, type ItemReadStatus } from '../local/itemReadStatus';
+import { SelfHeroConfirmation } from '../local/selfHeroConfirmation';
+import { TeamRosterConfirmation, type TeamRoster } from '../local/teamWinRate';
+import { FirstRoundPreparation, hasRoundCountdown, roundCountdownRegion } from '../local/firstRoundPreparation';
 import type { IconIndex } from './types';
 
 export interface FrameRegion {
@@ -33,7 +44,25 @@ export interface FrameRegion {
 }
 
 export type WorkerIn =
-  // names: item names by id, for reading the name printed under each card (absent: cards are read by icon only)
+  | {
+      type: 'abilityPoints';
+      captureEpoch: number;
+      tipEpoch: number;
+      sample: number;
+      width: number;
+      height: number;
+      buffer: ArrayBuffer;
+    }
+  | { type: 'abilityPointsCancel'; captureEpoch: number; tipEpoch: number }
+  | {
+      type: 'loadingName';
+      names: Record<number, string>;
+      width: number;
+      height: number;
+      buffer: ArrayBuffer;
+      captureEpoch?: number;
+      requestId: number;
+    }
   | { type: 'warm'; index: IconIndex; tiers: Record<number, number>; names?: Record<number, string> }
   | {
       type: 'init';
@@ -41,13 +70,15 @@ export type WorkerIn =
       tiers: Record<number, number>;
       names?: Record<number, string>;
       intervalMs: number;
+      captureEpoch?: number;
     }
   // A draft frame is only the rectangles the recogniser reads (draftRegions), each with its own pixels: the worker
   // pastes them into a reused frame-sized buffer, so nothing outside them is ever copied out of the video.
-  | { type: 'frame'; width: number; height: number; regions: FrameRegion[]; prefer: number[] }
+  | { type: 'frame'; captureEpoch?: number; width: number; height: number; regions: FrameRegion[]; prefer: number[] }
   // Off the draft screen the page copies just the "CHOICE n OF 3" crop (see shopProbeRect) instead of a whole frame.
   | {
       type: 'probe';
+      captureEpoch?: number;
       frameW: number;
       frameH: number;
       x: number;
@@ -57,7 +88,7 @@ export type WorkerIn =
       buffer: ArrayBuffer;
     }
   | { type: 'idle' } // the page had no frame ready for the last tick
-  | { type: 'reset' } // capture (re)started: forget the last draft and start ticking again
+  | { type: 'reset'; captureEpoch?: number } // capture (re)started: forget the last draft and start ticking again
   | { type: 'stop' }; // capture stopped: forget the last draft and free the OCR engine; the worker then stays silent
 
 /** The worker paces the capture: it asks the page for a frame, reads it, waits, asks again. Page timers are
@@ -65,25 +96,64 @@ export type WorkerIn =
  *  browser tab is hidden; worker timers are not, so the advice keeps updating without alt-tabbing. */
 export type WorkerOut =
   | FrameResult
-  | { type: 'load'; slow: boolean } // this machine reads frames slowly: the page lowers its frame rate
-  | { type: 'seen' } // the probe saw the draft screen: no cards are read yet
-  | { type: 'tick'; full: boolean } // full: send a whole frame; otherwise just the probe crop
-  | { type: 'rerolls'; forKey: string; rerollsRemaining: number }
-  // a card's name line was read: what the icon said, the OCR text, and the item it names (0: no clear match)
-  | { type: 'name'; slot: number; icon: number; text: string; itemId: number; ms: number };
+  | { type: 'abilityPoints'; captureEpoch: number; tipEpoch: number; sample: number; text: string; confidence: number }
+  | { type: 'loadingHero'; heroId: number; text: string; requestId: number; captureEpoch?: number }
+  | { type: 'load'; slow: boolean; captureEpoch?: number }
+  | { type: 'seen'; captureEpoch?: number }
+  | {
+      type: 'name';
+      slot: number;
+      icon: number;
+      text: string;
+      itemId: number;
+      ms: number;
+      source?: 'primary' | 'binary' | 'nearest' | 'icon';
+      captureEpoch?: number;
+    }
+  | { type: 'tick'; full: boolean; captureEpoch?: number } // full: send a whole frame; otherwise just the probe crop
+  | {
+      type: 'rerolls';
+      captureEpoch?: number;
+      forKey: string;
+      forRound: number;
+      forChoice: number;
+      rerollsRemaining: number;
+      spent: boolean;
+    };
 
-interface FrameResult {
+export interface FrameResult {
+  /** Confirmed player metadata published before item qualification, with no offer acceptance. */
+  identityOnly?: boolean;
+  /** Fresh capture identity for roster confirmation; multiple results from one frame share it. */
+  metadataSample?: number;
+  /** Fixed preparation caption evidence, independent of whether the item draft is open. */
+  roundCountdown?: boolean;
+  /** Actual top ROUND glyph, also read on a non-shop preparation frame. */
+  preparationRound?: number;
+  /** Distinct full capture sample, so repeated delivery cannot confirm a contradictory ROUND glyph. */
+  preparationSample?: number;
+  /** True only when this capture covered the round and countdown cues. Probes cannot show cue absence. */
+  cueCovered?: boolean;
+  captureEpoch?: number;
+  teamRoster?: TeamRoster | null;
+  transition?: 'initial' | 'choice' | 'round' | 'reroll' | 'metadata' | 'reacquire' | 'hero';
+  pendingTransition?: boolean;
+  pending?: boolean;
+  /** Current candidate progress only; contains no tentative IDs or recommendations. */
+  itemReadStatus?: ItemReadStatus;
+  /** Diagnostic qualification stage; contains no tentative card identity. */
+  blockedReason?: 'labels' | 'name-pending' | 'name-unknown' | 'texture' | 'offer-settle' | 'spent';
+  live?: boolean;
+  picked?: number | null;
+  spent?: boolean;
   type: 'result';
-  shop: boolean; // isShopScreen(img) for this frame -- false means card/inventory recognition was skipped entirely
-  round: number; // this frame's ROUND / CHOICE labels (0: unread; always 0 on a non-draft frame)
+  shop: boolean; // visible draft labels or unchanged known card pixels; false skips card/inventory recognition
+  round: number; // committed ROUND / CHOICE labels once established (0: unread; 0 on a non-draft frame)
   choice: number;
   reads: CardRead[];
   key: string; // item ids of the three cards, '' when fewer than three are visible
-  accepted: boolean; // true on the frame a new, settled set of three cards is first accepted (see draftGate.ts)
-  live: boolean; // the accepted set is still what is on screen: its advice stands
-  picked: number | null; // the item the player just selected from the accepted set (seen in the inventory grid)
-  spent: boolean; // the cards on screen are a set the player already selected from: advise nothing
-  meta: DraftMeta | null; // round / choice / hero bar, on the accepted frame only
+  accepted: boolean; // true when the transition lock commits a tuple or confirmed metadata recovers
+  meta: DraftMeta | null; // stable round / choice / hero bar, retained while the same draft is visible
   inventory: number[] | null; // owned items from the inventory grid, once two consecutive reads agree; null otherwise
   ms: number;
   stages?: Record<string, number>; // dev builds only: milliseconds per recogniser stage
@@ -91,287 +161,95 @@ interface FrameResult {
 
 let index: DecodedIndex | null = null;
 let tiers: Record<number, number> = {};
-let names: NameList | null = null;
-const setNames = (n: Record<number, string> | undefined) => {
-  if (!n || !index) return;
-  const list = nameList(index.ids, n);
-  names = list.length ? list : null;
-};
-
-// ---- item names under the cards ----------------------------------------------------------------------------
-// The game always draws the three cards at the same place and prints each item's exact name under it, so the name
-// decides which item a card is. Each slot keeps a lock: the item its name line last read as, plus a fingerprint of that
-// line's pixels. While the line looks the same, the slot is that item whatever the icon search says this frame (a hover
-// glow, an animation, a search landing one step off): the per-frame icon wobble never reaches the gate or the overlay.
-// A changed line (re-roll, next choice, a tooltip over it) is read again (~30 ms); only a clear read of another item
-// moves the lock. Until a slot has its first lock it is "waiting" and the set is not offered to the gate, so a wrong
-// icon guess is never advised first. Without a name list (CLI tools) or after a read failed, the icon guess stands.
-const NAME_RETRY_MS = 700;
-/** An icon match at least this good is trusted on its own; below it a card waits for its name. */
-const SURE_SCORE = 0.8,
-  SURE_MARGIN = 0.08;
-/** A slot whose name reads keep failing falls back to its icon after this long, when the icon is a clear match. */
-const NAME_GIVE_UP_MS = 1500;
-interface SlotLock {
-  id: number;
-  sig: Uint8Array;
-  enhanced: boolean;
-  rare: boolean;
-}
-let locks: (SlotLock | null)[] = [null, null, null];
-let nameFail: ({ sig: Uint8Array; at: number; since: number } | null)[] = [null, null, null];
-const nameBusy = [false, false, false];
-let nameChoice = 0,
-  nameGen = 0; // bumped when locks are dropped, so a read started before that lands nowhere
-const forgetNames = () => {
-  locks = [null, null, null];
-  nameFail = [null, null, null];
-  nameChoice = 0;
-  nameGen++;
-};
-
-// Fingerprint of a name line (the black-on-white OCR crop): ink share in a coarse grid over the text area.
-const SIG_COLS = 32,
-  SIG_ROWS = 4,
-  CROP_PAD = 12; // cardNameCrop's white margin
-const nameSig = (c: NameCrop): Uint8Array => {
-  const out = new Uint8Array(SIG_COLS * SIG_ROWS);
-  const w = c.width - 2 * CROP_PAD,
-    h = c.height - 2 * CROP_PAD;
-  const counts = new Uint32Array(out.length),
-    totals = new Uint32Array(out.length);
-  for (let y = 0; y < h; y++)
-    for (let x = 0; x < w; x++) {
-      const k =
-        Math.min(SIG_ROWS - 1, Math.floor((y * SIG_ROWS) / h)) * SIG_COLS +
-        Math.min(SIG_COLS - 1, Math.floor((x * SIG_COLS) / w));
-      totals[k]++;
-      if (c.data[((y + CROP_PAD) * c.width + x + CROP_PAD) * 4] === 0) counts[k]++;
-    }
-  for (let k = 0; k < out.length; k++) out[k] = totals[k] ? Math.round((255 * counts[k]!) / totals[k]!) : 0;
-  return out;
-};
-/** Same lettering: at most a few grid cells moved by more than a sixth. */
-const nameCellsMoved = (a: Uint8Array, b: Uint8Array) => {
-  let changed = 0;
-  for (let i = 0; i < a.length; i++) if (Math.abs(a[i]! - b[i]!) > 42) changed++;
-  return changed;
-};
-const sameName = (a: Uint8Array, b: Uint8Array) => nameCellsMoved(a, b) <= 4;
-/** Different lettering, not a hover over the same name: well over the hover tolerance moved, as when a re-roll prints
- *  another item. With no icon to tell, this is what makes a slot unsettled at once. */
-const otherName = (a: Uint8Array, b: Uint8Array) => a.length === b.length && nameCellsMoved(a, b) > OTHER_NAME_CELLS;
-const OTHER_NAME_CELLS = 6;
-/** A line with almost no ink shows no name (hidden, or the screen is mid-swap): nothing to read. */
-const hasInk = (s: Uint8Array) => s.reduce((n, v) => n + v, 0) > 255 * 2;
-
-/** The reads with each slot's item set from its name lock and its position pinned to the fixed card square;
- *  `waiting`: a slot's item is too unsure to offer the set to the gate; `pending`: a slot's name is still being read,
- *  so the set must not be accepted yet. Starts the name reads that are needed. */
-const applyNames = (
-  img: Parameters<typeof cardNameCrop>[0],
-  raw: CardRead[],
-  choice: number,
-): { reads: CardRead[]; waiting: boolean; pending: boolean; slotSure: boolean[]; changed: boolean; inked: boolean } => {
-  const squares = cardSquares(img.width, img.height);
-  // The RARE / ENHANCED marks are read at the fixed card square too: the icon search's wobble (an enhanced icon
-  // matches poorly) must not move the box off the label.
-  const pinned = raw.map((r, i) => {
-    const match = { ...r.match, ...squares[i]! };
-    if (!r.present) return { ...r, match };
-    const mk = readMarkers(img, match);
-    return { ...r, match, rare: mk.rare, enhanced: mk.enhanced };
-  });
-  const iconless = raw.every((r) => !r.present && r.match.score === 0); // see squareReads
-  if (!names)
-    return {
-      reads: pinned,
-      waiting: false,
-      pending: false,
-      slotSure: pinned.map((r) => r.present),
-      changed: false,
-      inked: false,
-    };
-  if (choice !== nameChoice) {
-    forgetNames(); // the next choice's cards
-    nameChoice = choice;
-  }
-  const list = names;
-  const now = performance.now();
-  let waiting = false,
-    pending = false,
-    changed = false,
-    inked = true;
-  // A slot is sure when its name is locked, or (no lock yet) its icon is a clear match. The fallback shows the rest as `?`.
-  const slotSure = [false, false, false];
-  const out = pinned.map((r, slot) => {
-    const crop = cardNameCrop(img, r.match);
-    const sig = crop ? nameSig(crop) : null;
-    if (!sig || !hasInk(sig)) inked = false;
-    const lock = locks[slot];
-    const sure = r.present && r.match.score >= SURE_SCORE && r.match.margin >= SURE_MARGIN;
-    const asLock = (l: SlotLock): CardRead => ({
-      ...r,
-      present: true,
-      itemId: l.id,
-      tier: tiers[l.id] ?? r.tier,
-      enhanced: l.enhanced,
-      rare: l.rare,
-      match: { ...r.match, itemId: l.id },
-    });
-    // A mark that shows up after the lock (the label draws a beat after the card) is added to it, never removed.
-    if (lock && (r.present ? r.itemId === lock.id : iconless)) {
-      lock.enhanced ||= r.enhanced;
-      lock.rare ||= r.rare;
-    }
-    if (lock && sig && sameName(lock.sig, sig)) {
-      slotSure[slot] = true;
-      return asLock(lock);
-    }
-    // The line changed (or is hidden): read it again unless that exact picture already failed a moment ago.
-    const fail = nameFail[slot];
-    const failedThis =
-      !!fail && !!sig && fail.sig.length === sig.length && sameName(fail.sig, sig) && now - fail.at < NAME_RETRY_MS;
-    if (!crop || !sig || !hasInk(sig)) {
-      // nothing printed there to read: counts as a failed read, so a slot that never shows a name falls back in time
-      if (!lock) nameFail[slot] = { sig: sig ?? new Uint8Array(0), at: now, since: fail?.since ?? now };
-    } else if (!nameBusy[slot] && !failedThis) {
-      nameBusy[slot] = true;
-      const gen = nameGen,
-        icon = r.present ? r.itemId : 0,
-        t = now,
-        enhanced = r.enhanced,
-        rare = r.rare;
-      readCardName(crop, slot)
-        .then((text) => {
-          const m = matchItemName(text, list);
-          const ms = performance.now() - t;
-          post({ type: 'name', slot, icon, text, itemId: m?.itemId ?? 0, ms });
-          if (gen !== nameGen) return;
-          if (m) {
-            const prev = locks[slot];
-            locks[slot] = prev?.id === m.itemId ? { ...prev, sig } : { id: m.itemId, sig, enhanced, rare };
-            nameFail[slot] = null;
-          } else {
-            const f = nameFail[slot];
-            nameFail[slot] = { sig, at: performance.now(), since: f?.since ?? t };
-          }
-        })
-        .catch(() => {}) // the OCR engine was freed (capture stopped) while this was running
-        .finally(() => (nameBusy[slot] = false));
-    }
-    if (lock) {
-      // A changed line under a lock is a hover/tooltip far more often than a new card. Only an icon that surely shows
-      // another item (a re-roll) makes the slot unsettled until its name is read.
-      if ((sure && r.itemId !== lock.id) || (iconless && sig && hasInk(sig) && otherName(lock.sig, sig))) {
-        waiting = true;
-        changed = true;
-        return r;
-      }
-      slotSure[slot] = true;
-      return asLock(lock);
-    }
-    // No lock yet. A sure icon offers its set to the gate so the settle time runs while the name is read (`pending`
-    // holds the accept until it is in); a shaky one keeps the set out. After the name has failed to read for a while,
-    // the icon guess stands.
-    const f = nameFail[slot];
-    // Only a clear icon stands on its own once the name will not read: a shaky guess is never put on screen.
-    if (f && now - f.since > NAME_GIVE_UP_MS && r.present && sure) {
-      slotSure[slot] = true;
-      return r;
-    }
-    pending = true;
-    if (!sure) waiting = true;
-    else slotSure[slot] = true;
-    return r;
-  });
-  return { reads: out, waiting, pending, slotSure, changed, inked };
-};
-/** The three cards at their fixed squares with no icon search: the item comes from the name lock alone (the name
- *  under a card is exact; the icon search was the slowest part of the first read). Only the RARE / ENHANCED marks are
- *  read here, from the fixed square. */
-const squareReads = (img: Parameters<typeof cardNameCrop>[0]): CardRead[] =>
-  cardSquares(img.width, img.height).map((sq, i) => {
-    const match = { itemId: 0, score: 0, margin: 0, ...sq };
-    const mk = readMarkers(img, match);
-    return {
-      card: ['left', 'top', 'right'][i]!,
-      match,
-      present: false,
-      itemId: 0,
-      tier: 0,
-      rare: mk.rare,
-      enhanced: mk.enhanced,
-    };
-  });
 let lastKey = '',
   acceptedKey = '';
-let lastInv = '',
-  sentInv = '';
-let stableInv: number[] | null = null; // the last inventory read two frames agreed on
-let gate = initialGate();
-// The "N Re-Roll Remaining" caption, read for the set on screen before that set is accepted (so the advice never
-// starts as "take" and flips to "re-roll" when the read lands), then re-read while it stays up: the caption can
-// update a beat after the cards. A new value is taken only when two re-reads in a row agree on it.
-const REROLL_REREAD_MS = 600;
-let rr: { set: string; value: number | null; next: number | null; busy: boolean; at: number } = {
-  set: '',
-  value: null,
-  next: null,
-  busy: false,
-  at: 0,
-};
-let rrGen = 0;
-const forgetRerolls = () => {
-  rr = { set: '', value: null, next: null, busy: false, at: 0 };
-  rrGen++;
-};
-/** Starts a caption read for the set `set` when one is due; `onChange` runs when a re-read moves the settled value. */
-const readRerolls = (img: Parameters<typeof readRerollsRemaining>[0], set: string, onChange: (v: number) => void) => {
-  if (rr.set !== set) (forgetRerolls(), (rr.set = set));
-  const now = performance.now();
-  if (rr.busy || (rr.value !== null && now - rr.at < REROLL_REREAD_MS)) return;
-  rr.busy = true;
-  rr.at = now;
-  const gen = rrGen;
-  readRerollsRemaining(img)
-    .then((v) => {
-      if (gen !== rrGen) return;
-      if (rr.value === null) rr.value = v;
-      else if (v === rr.value) rr.next = null;
-      else if (rr.next === v) {
-        rr.value = v;
-        rr.next = null;
-        onChange(v);
-      } else rr.next = v;
-    })
-    .catch(() => {}) // the OCR engine was freed (capture stopped) while this was running
-    .finally(() => {
-      if (gen === rrGen) rr.busy = false;
-    });
-};
-
+const inventoryConfirmation = new InventoryConfirmation();
+const offerLock = new DraftOfferLock();
+const teamRoster = new TeamRosterConfirmation();
+const preparation = new FirstRoundPreparation();
+let frameCountdown = false;
+let preparationRound = 0;
+let preparationSample = 0;
+let frameHadCueCoverage = false;
+const selfHeroConfirmation = new SelfHeroConfirmation();
+let lastRosterReadFrame = -1;
+let nextTeamRetryAt = 0;
+let pendingPreparationCorrection = false;
+let pendingIdentityMeta: { frame: number; readAt: number; replayInventory: boolean } | null = null;
+let freshMetaCache: { frame: number; round: number; meta: DraftMeta } | null = null;
+let offerEpoch = 0;
+let captureEpoch = 0;
+let closedSince: number | null = null;
+let committedCardSigs: Uint8Array[] = [];
+let pendingCardSigs: Uint8Array[] = [];
+let visualEpoch = 0;
+let candidateCardSigs: Uint8Array[] = [];
+let candidateCardKey = '';
+let awaitingNames = false;
+let captureSequence = 0;
+let previousInventory: number[] = [];
+let inventoryPick = false;
+let selectionSpent = false;
+let pendingPicked: number | null = null;
+let settledMeta: DraftMeta | null = null;
+let settledBarSig: Uint8Array | null = null;
+let nextMetaRetryAt = 0;
+let rosterInventoryReplayed = false;
+const completeRoster = (meta: DraftMeta | null) => !!meta?.self && new Set(enemiesFrom(meta.bar, meta.self)).size === 4;
+const completeMetadata = (meta: DraftMeta | null) =>
+  completeRoster(meta) && (acceptedRound !== 1 || teamRoster.complete);
+const rerollCounter = new RerollCounterReader();
+const recognition = new DraftCardRecognition();
+let loadingGeneration = 0;
+let pointsGeneration = 0;
+let pointsTipEpoch = -1;
+let pointsSample = -1;
+const pointsJobs = new HudTextJobs();
+const roundOcr = new HudOcrFallback('round');
+const countdownOcr = new HudOcrFallback('caption');
+let names: Record<string, string> = {};
+function pollRerolls(img: Parameters<RerollCounterReader['poll']>[0]) {
+  rerollCounter.poll(
+    img,
+    {
+      key: acceptedKey,
+      round: offerLock.pendingLabels?.round ?? acceptedRound,
+      choice: offerLock.pendingLabels?.choice ?? acceptedChoice,
+    },
+    performance.now(),
+    (rerollsRemaining, ctx, spent) => {
+      if (spent) {
+        offerEpoch++;
+        offerLock.armReroll();
+        lastKey = '';
+        pendingCardSigs = [];
+        candidateCardSigs = [];
+        candidateCardKey = '';
+        awaitingNames = false;
+        recognition.reset();
+        settledSig = pendingSig = null;
+      }
+      post({ type: 'rerolls', forKey: ctx.key, forRound: ctx.round, forChoice: ctx.choice, rerollsRemaining, spent });
+    },
+  );
+}
 let intervalMs = 250;
 // Off the shop screen there's nothing to react to quickly -- poll much slower, and only read the small
 // "CHOICE n OF 3" crop, until the shop reappears.
 const IDLE_INTERVAL_MS = 300;
 // Once the draft screen's cards, round and choice are all settled, only a change matters: look less often.
 const SETTLED_INTERVAL_MS = 250;
-// Load adapter: a moving average of what a full frame read costs. Over SLOW_ENTER_MS the machine is struggling: the
-// settled interval doubles and the page is told to lower its frame rate; back under SLOW_EXIT_MS it recovers.
-const SLOW_ENTER_MS = 150;
-const SLOW_EXIT_MS = 90;
 let readEma = 0;
 let slow = false;
+let frameHadRecognition = false;
 const noteReadMs = (ms: number) => {
   readEma = readEma === 0 ? ms : readEma * 0.7 + ms * 0.3;
-  const next = slow ? readEma > SLOW_EXIT_MS : readEma > SLOW_ENTER_MS;
+  const next = slow ? readEma > 90 : readEma > 150;
   if (next !== slow) {
     slow = next;
     post({ type: 'load', slow });
   }
 };
-const settledInterval = () => (slow ? SETTLED_INTERVAL_MS * 2 : SETTLED_INTERVAL_MS);
 // While the cards are settled, a frame that looks the same (coarse pixel grid, same round/choice labels) skips the
 // expensive card and inventory reads and reuses the last result: a change is noticed within one interval and the
 // idle draft screen costs almost nothing.
@@ -381,12 +259,12 @@ let settledSig: Uint8Array | null = null;
 let knownHero: { bar: DraftMeta['bar']; self: number } | null = null;
 let settledReads: CardRead[] = [];
 let pendingSig: Uint8Array | null = null,
-  pendingReads: CardRead[] = [],
   pendingChoice = 0;
 // Samples a coarse grid inside each region (not the whole frame: the rest was never copied).
-const frameSig = (regions: FrameRegion[]): Uint8Array => {
+const frameSig = (regions: FrameRegion[], inventory: ReturnType<typeof inventoryRegions>): Uint8Array => {
   const out: number[] = [];
   for (const r of regions) {
+    if (inventory.some((i) => i.x === r.x && i.y === r.y && i.width === r.width && i.height === r.height)) continue;
     const d = new Uint8ClampedArray(r.buffer);
     for (let y = 0; y < r.height; y += SIG_STEP)
       for (let x = 0; x < r.width; x += SIG_STEP) {
@@ -396,7 +274,38 @@ const frameSig = (regions: FrameRegion[]): Uint8Array => {
   }
   return Uint8Array.from(out);
 };
+const inventorySignature = (img: ReturnType<typeof pasteRegions>, regions: ReturnType<typeof inventoryRegions>) => {
+  let hash = 2166136261;
+  for (const r of regions)
+    for (let y = r.y; y < r.y + r.height; y += 4)
+      for (let x = r.x; x < r.x + r.width; x += 4) {
+        const i = (y * img.width + x) * 4;
+        for (let c = 0; c < 3; c++) hash = Math.imul(hash ^ img.data[i + c]!, 16777619);
+      }
+  return `${img.width}:${img.height}:${hash >>> 0}`;
+};
 // Reused across frames (same regions every time, so nothing stale survives); reallocated when the frame size changes.
+const cardSignatures = (img: ReturnType<typeof pasteRegions>) =>
+  cardAnchors(img.width, img.height).map((a) => {
+    const samples: number[] = [];
+    for (let y = -0.35; y <= 0.35; y += 0.1)
+      for (let x = -0.35; x <= 0.35; x += 0.1) {
+        const i = (Math.round(a.cy + y * a.icon) * img.width + Math.round(a.cx + x * a.icon)) * 4;
+        samples.push(img.data[i]!, img.data[i + 1]!, img.data[i + 2]!);
+      }
+    return Uint8Array.from(samples);
+  });
+const hasCardTexture = (sig: Uint8Array) => {
+  let sum = 0,
+    squares = 0;
+  for (let i = 0; i < sig.length; i += 3) {
+    const lum = 0.299 * sig[i]! + 0.587 * sig[i + 1]! + 0.114 * sig[i + 2]!;
+    sum += lum;
+    squares += lum * lum;
+  }
+  const n = sig.length / 3;
+  return Math.sqrt(Math.max(0, squares / n - (sum / n) ** 2)) > 15;
+};
 let frameBuf = new Uint8ClampedArray(0);
 const pasteRegions = (width: number, height: number, regions: FrameRegion[]) => {
   if (frameBuf.length !== width * height * 4) frameBuf = new Uint8ClampedArray(width * height * 4);
@@ -414,41 +323,62 @@ const sameSig = (a: Uint8Array | null, b: Uint8Array): boolean => {
   return true;
 };
 let wasShop = false; // the previous result was a draft frame: the next non-draft frame is re-checked quickly
-/** Draft frames in a row with no CHOICE glyph before the draft screen counts as closed. */
-const OFF_FRAMES = 3;
-let offFrames = 0;
 let acceptedRound = 0,
   acceptedChoice = 0;
-/** Without a sure read of all three cards this long after the draft screen (or a new set) appeared, the sure cards are
- *  advised and each other card shows a grey `?`. */
-export const FALLBACK_MS = 2500;
-let readingSince: number | null = null; // when the cards on the not-yet-accepted screen last changed (or were first seen)
-let readingFirst: number | null = null; // when the not-yet-accepted screen was first seen
-let readingCardsSig: Uint8Array | null = null; // the card pictures at readingSince
-/** The fallback clock restarts while the three card pictures are still changing (the swap animation after a pick or
- *  re-roll), but never runs past this long from the first sight. */
-const FALLBACK_MAX_MS = 6000;
-let earlyMeta: { sig: Uint8Array; meta: DraftMeta } | null = null; // the hero bar read before the accept
-let frozenReads: CardRead[] | null = null; // the accepted set's reads, sent unchanged for as long as the set is live
+let previousBarSig: Uint8Array | null = null;
+let previousRound = 0;
+let observedNameRound = 0;
 
 const forgetDraft = () => {
-  forgetNames();
-  lastKey = acceptedKey = lastInv = sentInv = '';
-  forgetRerolls();
+  roundOcr.reset();
+  countdownOcr.reset();
+  pointsGeneration++;
+  pointsJobs.reset();
+  preparation.reset();
+  frameCountdown = false;
+  preparationRound = 0;
+  preparationSample = 0;
+  lastKey = acceptedKey = '';
+  offerEpoch++;
+  offerLock.reset();
+  teamRoster.reset();
+  committedCardSigs = [];
+  pendingCardSigs = [];
+  closedSince = null;
+  previousInventory = [];
+  inventoryPick = false;
+  selectionSpent = false;
+  pendingPicked = null;
+  inventoryConfirmation.reset();
+  settledMeta = null;
+  settledBarSig = null;
+  nextMetaRetryAt = 0;
+  rerollCounter.reset();
+  recognition.reset();
+  recognition.reset();
+  candidateCardSigs = [];
+  candidateCardKey = '';
+  awaitingNames = false;
   wasShop = false;
-  offFrames = 0;
   settledSig = pendingSig = null;
   knownHero = null;
+  selfHeroConfirmation.reset();
+  lastRosterReadFrame = -1;
+  nextTeamRetryAt = 0;
+  pendingPreparationCorrection = false;
+  pendingIdentityMeta = null;
+  freshMetaCache = null;
   acceptedRound = acceptedChoice = 0;
-  readingSince = readingFirst = readingCardsSig = frozenReads = earlyMeta = null;
-  gate = initialGate();
-  stableInv = null;
+  previousBarSig = null;
+  previousRound = 0;
+  observedNameRound = 0;
 };
 // Dev builds only (`import.meta.env.DEV` is false in a production build, so this all folds away): milliseconds per
 // recogniser stage, sent back on each result for the page's perf summary.
-const DEV = import.meta.env?.DEV;
+const DEV = import.meta.env.DEV;
 let stages: Record<string, number> | undefined;
 const stage = <T>(name: string, fn: () => T): T => {
+  if (['meta', 'self', 'team'].includes(name)) frameHadRecognition = true;
   if (!stages) return fn();
   const t = performance.now();
   try {
@@ -457,19 +387,37 @@ const stage = <T>(name: string, fn: () => T): T => {
     stages[name] = performance.now() - t;
   }
 };
+const readMetadata = (
+  img: ReturnType<typeof pasteRegions>,
+  idx: DecodedIndex,
+  round: number,
+  known?: { bar: DraftMeta['bar']; self: number },
+) => {
+  const meta =
+    !known && freshMetaCache?.frame === captureSequence && freshMetaCache.round === round
+      ? { ...freshMetaCache.meta }
+      : readDraftMeta(img, idx, known, round !== 1);
+  meta.self = selfHeroConfirmation.value?.heroId ?? 0;
+  if (!known) freshMetaCache = { frame: captureSequence, round, meta: { ...meta } };
+  if (!known && round === 1 && !teamRoster.complete && lastRosterReadFrame !== captureSequence) {
+    teamRoster.observe(meta);
+    lastRosterReadFrame = captureSequence;
+  }
+  meta.rerollsRemaining = rerollCounter.value ?? meta.rerollsRemaining;
+  return meta;
+};
 // Pre-bake: the hero bar (eight portraits) is the slowest read, about 0.8 s, and it is the same for the whole match.
 // Keep the last read with a fingerprint of the bar's pixels; a later draft screen whose bar still matches reuses it
 // instead of searching all eight portraits again. A new match (other portraits) fails the check and is read afresh.
 const BAR_SIG_MAX_CHANGED = 12; // of ~200 sampled channel values; a different portrait moves most of them
 let matchBar: { bar: DraftMeta['bar']; self: number; sig: Uint8Array } | null = null;
 const barSig = (img: { width: number; height: number; data: Uint8ClampedArray }): Uint8Array => {
-  const sx = img.width / BRAWL_LAYOUT.ref.width,
-    sy = img.height / BRAWL_LAYOUT.ref.height,
-    out: number[] = [];
+  const { sx, sy, offsetX } = hudLayout(img.width, img.height);
+  const out: number[] = [];
   for (const cx of [...HERO_BAR.left, ...HERO_BAR.right])
     for (let dy = -30; dy <= 30; dy += 15)
       for (let dx = -30; dx <= 30; dx += 15) {
-        const i = (Math.round((HERO_BAR.cy + dy) * sy) * img.width + Math.round((cx + dx) * sx)) * 4;
+        const i = (Math.round((HERO_BAR.cy + dy) * sy) * img.width + Math.round(offsetX + (cx + dx) * sx)) * 4;
         out.push(img.data[i]!, img.data[i + 1]!, img.data[i + 2]!);
       }
   return Uint8Array.from(out);
@@ -479,273 +427,830 @@ const sameBar = (a: Uint8Array, b: Uint8Array) => {
   for (let i = 0; i < a.length; i++) if (Math.abs(a[i]! - b[i]!) > 40 && ++changed > BAR_SIG_MAX_CHANGED) return false;
   return true;
 };
-const post = (m: WorkerOut) => (self as unknown as { postMessage(m: unknown): void }).postMessage(m);
+const post = (m: WorkerOut) => {
+  if (m.type === 'result' && !m.identityOnly && frameHadRecognition) noteReadMs(m.ms);
+  if (m.type === 'result') {
+    if (pendingPreparationCorrection && m.meta?.self === selfHeroConfirmation.value?.heroId) {
+      m = { ...m, transition: 'hero' };
+      // MatchMemory can consume the correction only once all four current opponents are readable.
+      if (completeRoster(m.meta)) pendingPreparationCorrection = false;
+    }
+    const wasPreparation = preparation.visible;
+    preparation.observe(
+      {
+        shop: m.shop,
+        round: m.shop ? m.round : preparationRound,
+        countdown: frameCountdown,
+        confirmedRound: m.shop && m.accepted,
+        sample: preparationSample,
+        cueCovered: frameHadCueCoverage,
+      },
+      performance.now(),
+    );
+    if (
+      frameHadCueCoverage &&
+      wasPreparation &&
+      !preparation.visible &&
+      !preparation.needsFullFrame(performance.now()) &&
+      !m.shop
+    )
+      teamRoster.reset();
+    m = {
+      ...m,
+      live:
+        !m.identityOnly && m.shop && !!m.key && !!acceptedKey && !m.pending && !m.pendingTransition && !selectionSpent,
+      picked: m.identityOnly ? null : pendingPicked,
+      spent: selectionSpent || offerLock.awaitingReroll,
+      roundCountdown: frameCountdown,
+      preparationRound,
+      preparationSample,
+      cueCovered: frameHadCueCoverage,
+      metadataSample: captureSequence,
+    };
+  }
+  if (m.type === 'result' && !m.identityOnly) pendingPicked = null;
+  (self as unknown as { postMessage(m: unknown): void }).postMessage({ ...m, captureEpoch });
+};
 let timer: ReturnType<typeof setTimeout> | undefined;
 const tick = (after: number, full: boolean) => {
   clearTimeout(timer);
-  timer = setTimeout(() => post({ type: 'tick', full }), after);
+  const adaptiveAfter =
+    after === SETTLED_INTERVAL_MS && slow ? after * 2 : slow && after === intervalMs ? Math.max(after, 250) : after;
+  timer = setTimeout(
+    () => post({ type: 'tick', full: full || preparation.needsFullFrame(performance.now()) }),
+    adaptiveAfter,
+  );
 }; // one chain, even if the page sent two frames
 
-self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
-  const msg = ev.data;
-  if (msg.type === 'stop') {
-    clearTimeout(timer);
-    forgetDraft();
-    // matchBar is kept: capture stops between every round, and the bar fingerprint is checked before it is reused
-    // (a new match has different portraits), so the ~0.7 s hero bar read is paid once per match, not once per round.
-    void terminateOCR();
-    return;
-  }
-  if (msg.type === 'warm') {
-    // Sent when the app opens, long before a draft: decode the icon index now so the first frame does not.
-    index ??= decodeIconIndex(msg.index);
-    tiers = msg.tiers;
-    setNames(msg.names);
-    return;
-  }
-  if (msg.type === 'init' || msg.type === 'reset') {
-    if (msg.type === 'init') {
-      index ??= decodeIconIndex(msg.index);
-      tiers = msg.tiers;
-      setNames(msg.names);
-      intervalMs = msg.intervalMs;
-    }
-    forgetDraft();
-    warmOCR(); // capture only runs around the draft now: load the OCR engine with it (freed again on 'stop')
-    tick(0, false);
-    return;
-  }
-  if (msg.type === 'idle') {
-    tick(intervalMs, false);
-    return;
-  }
-  if (!index) return;
-  const idx = index; // narrowed for the stage closures below
-  const t0 = performance.now();
-  if (msg.type === 'probe') {
-    const crop = {
-      width: msg.width,
-      height: msg.height,
-      data: new Uint8ClampedArray(msg.buffer),
-      channels: 4 as const,
-      origin: { x: msg.x, y: msg.y, fullWidth: msg.frameW, fullHeight: msg.frameH },
-    };
-    if (isShopScreen(crop)) {
-      post({ type: 'seen' }); // the page can show its `Reading` sign before the first full frame is read
-      tick(0, true); // a draft screen: ask for the whole frame right away
-      return;
-    }
-    post(nonShopResult(t0));
-    // A single non-draft frame between two draft frames is a blink: check again soon before going slow.
-    tick(wasShop ? intervalMs : IDLE_INTERVAL_MS, false);
-    wasShop = false;
-    return;
-  }
-  stages = DEV ? {} : undefined;
-  const img = stage('paste', () => pasteRegions(msg.width, msg.height, msg.regions));
-  // Skip card/inventory recognition entirely off the shop screen (menus, gameplay, the round-end transition
-  // into the next shop) -- isShopScreen is one small glyph read instead of three full icon searches.
-  const labels = readRoundChoice(img);
-  if (labels.choice === 0) {
-    // One unreadable CHOICE glyph on a draft screen (a hover glow, a frame caught mid-animation) is not the screen
-    // closing: look at the next frames before forgetting the accepted set, or the plates blank and re-settle.
-    if (wasShop && ++offFrames < OFF_FRAMES) {
-      tick(intervalMs, true);
-      return;
-    }
-    post(nonShopResult(t0));
-    tick(wasShop ? intervalMs : IDLE_INTERVAL_MS, false);
-    wasShop = false;
-    return;
-  }
-  wasShop = true;
-  offFrames = 0;
-  const sig = frameSig(msg.regions);
-  if (
-    acceptedKey &&
-    acceptedKey === lastKey &&
-    labels.choice === acceptedChoice &&
-    (labels.round === 0 || labels.round === acceptedRound) &&
-    sameSig(settledSig, sig)
-  ) {
-    post({
-      type: 'result',
-      shop: true,
-      round: labels.round,
-      choice: labels.choice,
-      reads: settledReads,
-      key: acceptedKey,
-      accepted: false,
-      live: true,
-      picked: null,
-      spent: false,
-      meta: null,
-      inventory: null,
-      ms: performance.now() - t0,
-      stages,
-    });
-    tick(settledInterval(), true);
-    return;
-  }
-  // A new picture is about to be read: ask for the next frame now, so the page copies it while this one is being read
-  // (the two-frame check below then finds it waiting instead of paying copy + hop after the read). One tick per frame:
-  // the end of this handler does not tick again.
-  clearTimeout(timer);
-  post({ type: 'tick', full: true });
-  // A frame that looks the same as the one that just produced a full set of cards (and carries the same choice
-  // label) confirms that read without repeating the expensive icon search: a new screen is accepted a frame sooner.
-  const confirmed = lastKey !== '' && pendingChoice === labels.choice && sameSig(pendingSig, sig);
-  const raw = names
-    ? stage('cards', () => squareReads(img))
-    : confirmed
-      ? pendingReads
-      : stage('cards', () => readDraftScreen(img, idx, (id) => tiers[id] ?? 0));
-  const named = applyNames(img, raw, labels.choice);
-  const reads = named.reads;
-  const seen = reads.filter((r) => r.present).length;
-  // A set with a shaky card whose name is still being read is not a full set yet: the gate must not settle on it.
-  const key = seen === 3 && !named.waiting ? reads.map((r) => `${r.itemId}${r.enhanced ? '+' : ''}`).join(',') : '';
-  // While the names are still being read, the gate already gets the set with a `?` for each unread slot, so its settle
-  // time runs alongside the OCR instead of starting after it (a `?` stands for whatever the slot turns out to be).
-  const provisionalKey =
-    names && !gate.live && !key && named.inked && !named.changed
-      ? reads.map((r) => (r.present ? `${r.itemId}${r.enhanced ? '+' : ''}` : '?')).join(',')
-      : '';
-  const nowMs = performance.now();
-  if (gate.live) readingFirst = readingCardsSig = null;
-  else {
-    const cardsSig = frameSig(msg.regions.slice(0, 3));
-    if (readingSince === null) readingFirst = readingSince = nowMs;
-    else if (!sameSig(readingCardsSig, cardsSig)) readingSince = nowMs;
-    readingCardsSig = cardsSig;
-  }
-  // Fallback: no sure set within FALLBACK_MS. The sure cards are advised, the others become `?`. Never for a set the
-  // player already picked from (its cards read sure, so it never gets here with its own key).
-  const fullKey = seen === 3 ? reads.map((r) => `${r.itemId}${r.enhanced ? '+' : ''}`).join(',') : '';
-  const fbDue =
-    !gate.live &&
-    readingSince !== null &&
-    (nowMs - readingSince >= FALLBACK_MS || nowMs - (readingFirst ?? nowMs) >= FALLBACK_MAX_MS) &&
-    !gate.spent.some((k) => fullKey && k.replace(/\+/g, '') === fullKey.replace(/\+/g, ''));
-  const fbReads = reads.map((r, i) =>
-    named.slotSure[i] && r.present ? r : { ...r, present: true, unsure: true, itemId: 0, tier: 0, enhanced: false },
-  );
-  const fbKey = fbDue ? fbReads.map((r) => (r.unsure ? '?' : `${r.itemId}${r.enhanced ? '+' : ''}`)).join(',') : '';
-  let meta: DraftMeta | null = null,
-    inventory: number[] | null = null;
-  if (key && key === lastKey) {
-    // the inventory grid is only on the draft screen; a read counts once two frames agree
-    const inv: InventoryRead[] = stage('inventory', () => readInventory(img, idx, msg.prefer));
-    const ids = inv
-      .map((r) => r.itemId)
-      .filter(Boolean)
-      .sort((a, b) => a - b);
-    const ik = ids.join(',');
-    if (ik === lastInv) stableInv = ids;
-    lastInv = ik;
-  } else if (!key) lastInv = '';
-  // Read the hero bar while the set is still settling (a first draft of a match has no cached bar), so the accept does
-  // not wait for it. Only once the same three cards are up on two frames, so a transition frame never pays for it.
-  if (
-    key &&
-    key === lastKey &&
-    !gate.live &&
-    !earlyMeta &&
-    !(knownHero ?? (matchBar && sameBar(matchBar.sig, barSig(img))))
-  ) {
-    const sig = barSig(img);
-    earlyMeta = { sig, meta: stage('meta', () => readDraftMeta(img, idx, undefined, true)) };
-  }
-  // The re-roll caption is read for every full set (its own key: the '+' flags wobble), and the gate holds the accept
-  // until it is in, so the first advice already knows whether a re-roll is left.
-  const set = key ? `${labels.choice}|${key.replace(/\+/g, '')}` : '';
-  if (set)
-    readRerolls(img, set, (v) => {
-      if (acceptedKey) post({ type: 'rerolls', forKey: acceptedKey, rerollsRemaining: v });
-    });
-  // The gate decides when this screen is settled enough to advise on, and spots the player's selection.
-  const inFallback = !!gate.last && gate.live && gate.last.key.includes('?');
-  const g = stepGate(gate, {
-    changed: named.changed,
-    ready: !named.pending && (!set || (rr.set === set && rr.value !== null)),
-    key: fbDue ? fbKey : key || provisionalKey,
-    force: fbDue,
-    present: reads.filter((r, i) => r.present && (!inFallback || named.slotSure[i])).map((r) => r.itemId),
-    round: labels.round,
-    choice: labels.choice,
-    now: performance.now(),
-    inventory: stableInv,
-  });
-  gate = g.state;
-  if (g.live && gate.last) acceptedRound = gate.last.round;
-  const accepted = g.accept;
-  if (accepted) {
-    readingSince = readingFirst = readingCardsSig = null;
-    frozenReads = fbDue ? fbReads : reads;
-    acceptedKey = fbDue ? fbKey : key;
-    acceptedChoice = labels.choice;
-    acceptedRound = labels.round;
-    const bsig = barSig(img);
-    if (!knownHero && matchBar && sameBar(matchBar.sig, bsig)) knownHero = matchBar;
-    // The hero bar read is the slowest step on a slow PC: when a settling frame already did it, reuse that read.
-    const early = earlyMeta && sameBar(earlyMeta.sig, bsig) ? earlyMeta.meta : null;
-    meta = early ?? stage('meta', () => readDraftMeta(img, idx, knownHero ?? undefined, true));
-    if (meta.self) matchBar = { bar: meta.bar, self: meta.self, sig: bsig };
-    earlyMeta = null;
-    // the hero bar is constant while the draft screen stays up; keep it until the screen closes (nonShopResult)
-    knownHero = meta.self ? { bar: meta.bar, self: meta.self } : null;
-    meta.rerollsRemaining = rr.value ?? meta.rerollsRemaining;
-  }
-  // The owned list changes the scores, so it reaches the page with the accepted set and not again while that set is up
-  // (the player cannot gain an item without leaving it): a grid read that wobbles never re-ranks the cards on screen.
-  if (stableInv && (accepted || !g.live)) {
-    const ik = stableInv.join(',');
-    if (ik !== sentInv) {
-      sentInv = ik;
-      inventory = stableInv;
-    }
-  }
-  if (!g.live) {
-    acceptedKey = '';
-    frozenReads = null;
-  }
-  // The accepted set is sent as it was accepted until it stops being live: nothing about it moves with the hover.
-  const sent = g.live && frozenReads ? frozenReads : reads;
-  if (g.live && fbDue) acceptedKey = fbKey;
-  lastKey = key;
-  pendingSig = key ? sig : null;
-  pendingReads = raw;
-  pendingChoice = labels.choice;
-  settledSig = key !== '' && key === acceptedKey ? sig : null;
-  settledReads = sent;
-  noteReadMs(performance.now() - t0);
-  post({
-    type: 'result',
-    shop: true,
-    round: labels.round,
-    choice: labels.choice,
-    reads: sent,
-    key,
-    accepted,
-    live: g.live,
-    picked: g.picked,
-    spent: g.spent,
-    meta,
-    inventory,
-    ms: performance.now() - t0,
-    stages,
-  });
-});
+self.addEventListener(
+  'message',
+  serialFrames(
+    async (ev: MessageEvent<WorkerIn>) => {
+      const msg = ev.data;
+      if (msg.type === 'abilityPointsCancel') {
+        if (msg.captureEpoch !== captureEpoch) return;
+        pointsGeneration++;
+        pointsJobs.reset();
+        pointsTipEpoch = msg.tipEpoch;
+        return;
+      }
+      if (msg.type === 'abilityPoints') {
+        if (msg.captureEpoch !== captureEpoch) return;
+        if (pointsTipEpoch !== msg.tipEpoch) {
+          pointsGeneration++;
+          pointsJobs.reset();
+          pointsTipEpoch = msg.tipEpoch;
+        }
+        const generation = pointsGeneration;
+        pointsSample = msg.sample;
+        const current = () =>
+          generation === pointsGeneration && captureEpoch === msg.captureEpoch && pointsSample === msg.sample;
+        const pixels = new Uint8Array(msg.buffer).slice();
+        let hash = 2166136261;
+        for (const pixel of pixels) hash = Math.imul(hash ^ pixel, 16777619);
+        const key = `${msg.captureEpoch}:${msg.tipEpoch}:${msg.width}:${msg.height}:${hash >>> 0}`;
+        void pointsJobs
+          .request({ width: msg.width, height: msg.height, data: pixels }, 'points', key)
+          .then((value) => {
+            if (current())
+              (self as unknown as { postMessage(m: unknown): void }).postMessage({
+                type: 'abilityPoints',
+                captureEpoch: msg.captureEpoch,
+                tipEpoch: msg.tipEpoch,
+                sample: msg.sample,
+                text: value?.text ?? '',
+                confidence: value?.confidence ?? 0,
+              });
+          })
+          .catch(() => {
+            if (current())
+              (self as unknown as { postMessage(m: unknown): void }).postMessage({
+                type: 'abilityPoints',
+                captureEpoch: msg.captureEpoch,
+                tipEpoch: msg.tipEpoch,
+                sample: msg.sample,
+                text: '',
+                confidence: NaN,
+              });
+          });
+        return;
+      }
+      if (msg.type === 'loadingName') {
+        const generation = loadingGeneration;
+        const pixels = new Uint8ClampedArray(msg.buffer).slice();
+        void readHeroName({ width: msg.width, height: msg.height, data: pixels, channels: 4 })
+          .then((text) => {
+            if (generation !== loadingGeneration) return;
+            const heroId = matchItemName(text, nameList(Object.keys(msg.names).map(Number), msg.names))?.itemId ?? 0;
+            (self as unknown as { postMessage(m: unknown): void }).postMessage({
+              type: 'loadingHero',
+              heroId,
+              text,
+              requestId: msg.requestId,
+              captureEpoch: msg.captureEpoch,
+            });
+          })
+          .catch(() => {});
+        return;
+      }
+      if (msg.type === 'stop') {
+        clearTimeout(timer);
+        loadingGeneration++;
+        forgetDraft();
+        matchBar = null;
+        void terminateOCR();
+        void stopItemNameOCR();
+        return;
+      }
+      if (msg.type === 'warm') {
+        // Sent when the app opens, long before a draft: decode the icon index now so the first frame does not.
+        index ??= decodeIconIndex(msg.index);
+        tiers = msg.tiers;
+        names = msg.names ?? msg.index.names ?? {};
+        return;
+      }
+      if (msg.type === 'init' || msg.type === 'reset') {
+        loadingGeneration++;
+        captureEpoch = msg.captureEpoch ?? captureEpoch;
+        if (msg.type === 'init') {
+          index ??= decodeIconIndex(msg.index);
+          tiers = msg.tiers;
+          names = msg.names ?? msg.index.names ?? {};
+          intervalMs = msg.intervalMs;
+        }
+        forgetDraft();
+        void terminateOCR();
+        void stopItemNameOCR();
+        warmOCR(); // capture only runs around the draft now: load the OCR engine with it (freed again on 'stop')
+        tick(0, true); // F8 may begin after all item picks: read the countdown and ROUND once too.
+        return;
+      }
+      if (msg.type === 'idle') {
+        tick(intervalMs, false);
+        return;
+      }
+      if (
+        (msg.type === 'frame' || msg.type === 'probe') &&
+        msg.captureEpoch !== undefined &&
+        msg.captureEpoch !== captureEpoch
+      )
+        return;
+      if (!index) return;
+      const idx = index; // narrowed for the stage closures below
+      const t0 = performance.now();
+      frameHadRecognition = false;
+      frameHadCueCoverage = msg.type === 'frame';
+      if (msg.type === 'probe') {
+        frameCountdown = false;
+        preparationRound = 0;
+        const crop = {
+          width: msg.width,
+          height: msg.height,
+          data: new Uint8ClampedArray(msg.buffer),
+          channels: 4 as const,
+          origin: { x: msg.x, y: msg.y, fullWidth: msg.frameW, fullHeight: msg.frameH },
+        };
+        if (isShopScreen(crop)) {
+          post({ type: 'seen' });
+          tick(0, true); // a draft screen: ask for the whole frame right away
+          return;
+        }
+        if (acceptedKey) {
+          tick(0, true);
+          return;
+        }
+        post(nonShopResult(t0));
+        // A single non-draft frame between two draft frames is a blink: check again soon before going slow.
+        tick(wasShop ? intervalMs : IDLE_INTERVAL_MS, false);
+        wasShop = false;
+        return;
+      }
+      stages = DEV ? {} : undefined;
+      preparationSample++;
+      const img = stage('paste', () => pasteRegions(msg.width, msg.height, msg.regions));
+      // Skip card/inventory recognition entirely off the shop screen (menus, gameplay, the round-end transition
+      // into the next shop) -- isShopScreen is one small glyph read instead of three full icon searches.
+      const labels = readRoundChoice(img);
+      if (labels.round > 0) observedNameRound = labels.round;
+      frameCountdown = stage('countdown', () => hasRoundCountdown(img));
+      const fallbackRound = roundOcr.observe(
+        img,
+        roundProbeRect(img.width, img.height),
+        preparationSample,
+        t0,
+        !labels.round && (!!labels.choice || frameCountdown || preparation.needsFullFrame(t0)),
+      );
+      if (typeof fallbackRound === 'number') labels.round = fallbackRound;
+      const fallbackCountdown = countdownOcr.observe(
+        img,
+        roundCountdownRegion(img.width, img.height),
+        preparationSample,
+        t0,
+        !labels.choice && !frameCountdown && (labels.round === 1 || preparation.visible) && labels.round <= 1,
+      );
+      frameCountdown ||= fallbackCountdown === true;
+      preparationRound = labels.round;
+      if (labels.choice === 0) {
+        const firstPreparation = preparation.observe(
+          { shop: false, round: labels.round, countdown: frameCountdown, sample: preparationSample },
+          performance.now(),
+        );
+        if (firstPreparation && labels.round === 1 && frameCountdown) {
+          const captured = ++captureSequence;
+          if (selfHeroConfirmation.due(performance.now())) {
+            const previous = selfHeroConfirmation.value;
+            const observation = stage('self', () => readPlayerHero(img, idx));
+            if (selfHeroConfirmation.observe(observation, captured, performance.now())) {
+              if (previous) {
+                teamRoster.reset();
+                pendingPreparationCorrection = true;
+                settledMeta = null;
+                knownHero = matchBar = null;
+                settledBarSig = null;
+                freshMetaCache = null;
+                pendingIdentityMeta = null;
+              }
+              nextTeamRetryAt = 0;
+            }
+          }
+        }
+        if (
+          firstPreparation &&
+          labels.round === 1 &&
+          frameCountdown &&
+          selfHeroConfirmation.value &&
+          !teamRoster.complete &&
+          performance.now() >= nextTeamRetryAt
+        ) {
+          const teamMeta = stage('team', () => readMetadata(img, idx, 1));
+          teamMeta.round = 1;
+          teamMeta.choice = 0;
+          // A retained card tuple must replay the current interpretation of player and opposing side.
+          settledMeta = { ...teamMeta, round: acceptedRound || 1, choice: acceptedChoice };
+          settledBarSig = barSig(img);
+          knownHero = completeRoster(teamMeta) ? { bar: teamMeta.bar, self: teamMeta.self } : null;
+          matchBar = knownHero ? { ...knownHero, sig: settledBarSig } : null;
+          nextTeamRetryAt = performance.now() + (teamRoster.value ? 2000 : 500);
+          post({
+            type: 'result',
+            identityOnly: true,
+            shop: false,
+            round: 1,
+            choice: 0,
+            accepted: false,
+            transition: 'metadata',
+            reads: [],
+            key: '',
+            meta: teamMeta,
+            teamRoster: teamRoster.value,
+            inventory: null,
+            ms: performance.now() - t0,
+            stages,
+          });
+        }
+        const cardsRemain =
+          acceptedKey &&
+          cardSignatures(img).some(
+            (sig, slot) =>
+              !!committedCardSigs[slot] &&
+              hasCardTexture(committedCardSigs[slot]!) &&
+              sameSig(committedCardSigs[slot]!, sig),
+          );
+        if (cardsRemain) {
+          closedSince = null;
+          pollRerolls(img);
+          post({
+            type: 'result',
+            shop: true,
+            round: acceptedRound,
+            choice: acceptedChoice,
+            pending: awaitingNames || offerLock.awaitingReroll || offerLock.settling || undefined,
+            pendingTransition: offerLock.settling || offerLock.awaitingReroll || selectionSpent || undefined,
+            reads: awaitingNames || offerLock.awaitingReroll || offerLock.settling ? [] : settledReads,
+            key: awaitingNames || offerLock.awaitingReroll || offerLock.settling ? '' : acceptedKey,
+            accepted: false,
+            meta: settledMeta,
+            inventory: null,
+            ms: performance.now() - t0,
+            stages,
+          });
+          tick(SETTLED_INTERVAL_MS, true);
+          return;
+        }
+        // An unread CHOICE glyph is absence of label evidence. Three visible card cores and
+        // name bands keep immutable OCR work alive, but cannot authorize advice themselves.
+        if (
+          wasShop &&
+          cardSignatures(img).every(hasCardTexture) &&
+          cardNameRegions(img.width, img.height, cardAnchors(img.width, img.height)).every((region) =>
+            hasItemNameInk(img, region),
+          )
+        ) {
+          closedSince = null;
+          post({
+            type: 'result',
+            shop: true,
+            round: observedNameRound,
+            choice: 0,
+            accepted: false,
+            pending: true,
+            blockedReason: 'labels',
+            reads: [],
+            key: '',
+            meta: settledMeta,
+            teamRoster: teamRoster.value,
+            inventory: null,
+            ms: performance.now() - t0,
+            stages,
+          });
+          tick(intervalMs, true);
+          return;
+        }
+        post(nonShopResult(t0));
+        tick(acceptedKey ? SETTLED_INTERVAL_MS : wasShop ? intervalMs : IDLE_INTERVAL_MS, !!acceptedKey);
+        wasShop = false;
+        return;
+      }
+      closedSince = null;
+      wasShop = true;
+      const captured = ++captureSequence;
+      if (acceptedKey && (labels.choice !== acceptedChoice || (labels.round > 0 && labels.round !== acceptedRound))) {
+        const alreadySettling = offerLock.settling;
+        offerLock.observe({ ...labels, key: '' }, performance.now(), false, { frame: captured, labelsOnly: true });
+        if (!alreadySettling && offerLock.settling) {
+          offerEpoch++;
+          recognition.reset();
+        }
+        if (offerLock.settling)
+          post({
+            type: 'result',
+            shop: true,
+            pending: true,
+            pendingTransition: true,
+            round: acceptedRound,
+            choice: acceptedChoice,
+            reads: [],
+            key: '',
+            accepted: false,
+            meta: null,
+            inventory: null,
+            ms: performance.now() - t0,
+          });
+      }
+      const inventoryRects = inventoryRegions(img.width, img.height);
+      const sig = frameSig(msg.regions, inventoryRects);
+      const bsig = barSig(img);
+      let heroTransition: 'hero' | 'metadata' | undefined;
+      if (selfHeroConfirmation.due(performance.now())) {
+        const previous = selfHeroConfirmation.value;
+        const observation = stage('self', () => readPlayerHero(img, idx));
+        if (selfHeroConfirmation.observe(observation, captured, performance.now())) {
+          heroTransition = previous ? 'hero' : 'metadata';
+          // The corrected side can have a different opposing team: refresh once without cached identity.
+          if (previous) teamRoster.reset();
+          const identityRound = labels.round || acceptedRound;
+          settledMeta = stage('meta', () => readMetadata(img, idx, identityRound));
+          settledMeta.round = identityRound;
+          settledMeta.choice = labels.choice || acceptedChoice;
+          if (completeRoster(settledMeta)) {
+            matchBar = { bar: settledMeta.bar, self: settledMeta.self, sig: bsig };
+            knownHero = matchBar;
+            if (!previous && acceptedKey) {
+              inventoryConfirmation.reset();
+              rosterInventoryReplayed = true;
+            }
+          } else knownHero = null;
+          settledBarSig = bsig;
+          pendingIdentityMeta = previous
+            ? null
+            : { frame: captured, readAt: performance.now() + 500, replayInventory: !!acceptedKey };
+          // Player identity is independent of the item's icon/name qualification. Publish it before
+          // an expensive weak-card name read, without accepting or exposing that pending offer.
+          post({
+            type: 'result',
+            identityOnly: true,
+            shop: true,
+            round: identityRound,
+            choice: settledMeta.choice,
+            accepted: false,
+            pending: true,
+            transition: heroTransition,
+            reads: [],
+            key: '',
+            meta: settledMeta,
+            teamRoster: teamRoster.value,
+            inventory: null,
+            ms: performance.now() - t0,
+            stages,
+          });
+        }
+      }
+      if (
+        pendingIdentityMeta &&
+        pendingIdentityMeta.frame !== captured &&
+        performance.now() >= pendingIdentityMeta.readAt
+      ) {
+        const pending = pendingIdentityMeta;
+        pendingIdentityMeta = null;
+        const identityRound = labels.round || acceptedRound;
+        const freshRoster =
+          freshMetaCache &&
+          freshMetaCache.frame > pending.frame &&
+          completeRoster(freshMetaCache.meta) &&
+          matchBar &&
+          sameBar(matchBar.sig, bsig);
+        settledMeta = freshRoster
+          ? { ...freshMetaCache!.meta }
+          : stage('meta', () => readMetadata(img, idx, identityRound));
+        settledMeta.round = identityRound;
+        settledMeta.choice = labels.choice || acceptedChoice;
+        if (completeRoster(settledMeta)) {
+          matchBar = { bar: settledMeta.bar, self: settledMeta.self, sig: bsig };
+          knownHero = matchBar;
+          if (pending.replayInventory) {
+            inventoryConfirmation.reset();
+            rosterInventoryReplayed = true;
+          }
+        }
+        post({
+          type: 'result',
+          identityOnly: true,
+          shop: true,
+          round: identityRound,
+          choice: settledMeta.choice,
+          accepted: false,
+          pending: true,
+          transition: 'metadata',
+          reads: [],
+          key: '',
+          meta: settledMeta,
+          teamRoster: teamRoster.value,
+          inventory: null,
+          ms: performance.now() - t0,
+          stages,
+        });
+      }
+      // Full first-round lineup confirmation has its own cadence. A blocked item OCR must not
+      // suppress known hero rates or stop retries for one temporarily masked teammate portrait.
+      if (
+        labels.round === 1 &&
+        selfHeroConfirmation.value &&
+        !teamRoster.complete &&
+        performance.now() >= nextTeamRetryAt &&
+        lastRosterReadFrame !== captured
+      ) {
+        const teamMeta = stage('team', () => readMetadata(img, idx, 1));
+        teamMeta.round = 1;
+        teamMeta.choice = labels.choice;
+        nextTeamRetryAt = performance.now() + (teamRoster.value ? 2000 : 500);
+        post({
+          type: 'result',
+          identityOnly: true,
+          shop: true,
+          round: 1,
+          choice: labels.choice,
+          accepted: false,
+          pending: true,
+          transition: 'metadata',
+          reads: [],
+          key: '',
+          meta: teamMeta,
+          teamRoster: teamRoster.value,
+          inventory: null,
+          ms: performance.now() - t0,
+          stages,
+        });
+      }
+      const rosterChanged = !!matchBar && !sameBar(matchBar.sig, bsig);
+      if (rosterChanged) knownHero = null;
+      const matchBoundary = !!previousBarSig && !sameBar(previousBarSig, bsig);
+      if (matchBoundary) {
+        inventoryConfirmation.reset();
+        teamRoster.reset();
+        nextTeamRetryAt = nextMetaRetryAt = 0;
+      }
+      previousBarSig = bsig;
+      const inventorySig = `${inventorySignature(img, inventoryRects)}:${[...new Set(msg.prefer)].sort((a, b) => a - b).join(',')}`;
+      // Give the roster read one frame to catch up before publishing inventory from another match.
+      let inventory =
+        !matchBoundary && inventoryConfirmation.needsRead(inventorySig)
+          ? inventoryConfirmation.observe(
+              stage('inventory', () => readInventory(img, idx, msg.prefer)).map((r) => r.itemId),
+              inventorySig,
+            )
+          : null;
+      if (inventory) {
+        const picked = inventory.find(
+          (id) => !previousInventory.includes(id) && settledReads.some((r) => r.itemId === id),
+        );
+        if (picked) {
+          inventoryPick = true;
+          selectionSpent = true;
+          pendingPicked = picked;
+        }
+
+        previousInventory = inventory;
+      }
+      const iconSigs = cardSignatures(img);
+      const changedSlots = iconSigs.filter((s, i) => !sameSig(committedCardSigs[i] ?? null, s)).length;
+      let recoveredMarkers = false;
+      if (
+        acceptedKey &&
+        !selectionSpent &&
+        !offerLock.settling &&
+        !offerLock.awaitingReroll &&
+        labels.choice === acceptedChoice &&
+        (labels.round === 0 || labels.round === acceptedRound)
+      ) {
+        const markers = stage('markers', () =>
+          refreshCardMarkers(
+            img,
+            settledReads,
+            iconSigs.map((s, i) => sameSig(committedCardSigs[i] ?? null, s)),
+          ),
+        );
+        settledReads = markers.reads;
+        recoveredMarkers = markers.changed;
+      }
+      const samePendingIcons =
+        pendingCardSigs.length === 3 && iconSigs.every((s, i) => sameSig(pendingCardSigs[i]!, s));
+      if (
+        acceptedKey &&
+        acceptedKey === lastKey &&
+        labels.choice === acceptedChoice &&
+        (labels.round === 0 || labels.round === acceptedRound) &&
+        (!rosterChanged || (!!settledBarSig && sameBar(settledBarSig, bsig))) &&
+        sameSig(settledSig, sig) &&
+        !offerLock.awaitingReroll &&
+        !offerLock.settling &&
+        !offerLock.needsRestore &&
+        !awaitingNames &&
+        !selectionSpent &&
+        changedSlots === 0
+      ) {
+        // Retained metadata is not a fresh label observation. An unread ROUND
+        // must not erase a later-round label waiting for independent confirmation.
+        if (labels.round)
+          offerLock.observe({ key: acceptedKey, ...labels }, performance.now(), false, { frame: captured });
+        let recoveredMeta = !!heroTransition || recoveredMarkers;
+        if (!completeMetadata(settledMeta) && performance.now() >= nextMetaRetryAt) {
+          const previouslyKnownSelf = settledMeta?.self ?? 0;
+          settledMeta = stage('meta', () => readMetadata(img, idx, acceptedRound));
+          settledMeta.round = acceptedRound;
+          settledMeta.choice = acceptedChoice;
+          nextMetaRetryAt = performance.now() + (acceptedRound === 1 && teamRoster.value ? 2000 : 500);
+          if (completeRoster(settledMeta)) {
+            matchBar = { bar: settledMeta.bar, self: settledMeta.self, sig: bsig };
+            knownHero = matchBar;
+            // Earlier inventory may precede a full roster read. Re-publish it after roster confirmation.
+            if (!rosterInventoryReplayed && previouslyKnownSelf) {
+              inventoryConfirmation.reset();
+              inventory = null;
+              rosterInventoryReplayed = true;
+            }
+            recoveredMeta = true;
+          }
+        }
+        pollRerolls(img);
+        if (settledMeta) settledMeta.rerollsRemaining = rerollCounter.value ?? -1;
+        post({
+          type: 'result',
+          shop: true,
+          round: acceptedRound,
+          choice: acceptedChoice,
+          pending: offerLock.awaitingReroll || undefined,
+          reads: offerLock.awaitingReroll ? [] : settledReads,
+          key: offerLock.awaitingReroll ? '' : acceptedKey,
+          accepted: recoveredMeta && !offerLock.awaitingReroll,
+          transition: recoveredMeta ? (heroTransition ?? 'metadata') : undefined,
+          meta: settledMeta,
+          teamRoster: teamRoster.value,
+          inventory,
+          ms: performance.now() - t0,
+          stages,
+        });
+        tick(SETTLED_INTERVAL_MS, true);
+        return;
+      }
+      // A new picture is about to be read: ask for the next frame now, so the page copies it while this one is being read
+      // (the two-frame check below then finds it waiting instead of paying copy + hop after the read). One tick per frame:
+      // the end of this handler does not tick again.
+      clearTimeout(timer);
+      post({ type: 'tick', full: true });
+      // A frame that looks the same as the one that just produced a full set of cards (and carries the same choice
+      // label) confirms that read without repeating the expensive icon search: a new screen is accepted a frame sooner.
+      const confirmed =
+        lastKey !== '' && pendingChoice === labels.choice && sameSig(pendingSig, sig) && samePendingIcons;
+      if (
+        acceptedKey &&
+        changedSlots < 3 &&
+        labels.choice === acceptedChoice &&
+        (labels.round === 0 || labels.round === acceptedRound) &&
+        !offerLock.settling &&
+        !offerLock.awaitingReroll &&
+        !offerLock.needsRestore &&
+        !selectionSpent
+      ) {
+        pollRerolls(img);
+        if (settledMeta) settledMeta.rerollsRemaining = rerollCounter.value ?? -1;
+        post({
+          type: 'result',
+          shop: true,
+          round: acceptedRound,
+          choice: acceptedChoice,
+          reads: settledReads,
+          key: acceptedKey,
+          accepted: recoveredMarkers,
+          transition: recoveredMarkers ? 'metadata' : undefined,
+          meta: settledMeta,
+          inventory,
+          teamRoster: teamRoster.value,
+          ms: performance.now() - t0,
+          stages,
+        });
+        tick(SETTLED_INTERVAL_MS, true);
+        return;
+      }
+      const nameCandidate = `${captureEpoch}:${offerEpoch}:${labels.round || observedNameRound}:${labels.choice}`;
+      const nameEpoch = offerEpoch;
+      const nameCapture = captureEpoch;
+      const named = stage('names', () =>
+        recognition.read(img, idx, names, tiers, nameCandidate, iconSigs, (slot, text, itemId, ms, source) => {
+          if (nameEpoch === offerEpoch && nameCapture === captureEpoch) {
+            post({ type: 'name', slot, text, itemId, ms, source, icon: 0 });
+            noteReadMs(ms);
+          }
+        }),
+      );
+      const reads = named.reads;
+      const strong = named.outcome.slots.map((slot) => slot.status === 'strong');
+      const direct = named.complete && strong.every(Boolean);
+      const textured = iconSigs.every(hasCardTexture);
+      const nameCorroborated = named.complete && textured;
+      const key =
+        named.complete && textured
+          ? reads.map((r) => `${r.itemId}${r.enhanced ? '+' : ''}${r.rare ? 'r' : ''}`).join(',')
+          : '';
+      const namesVisible = named.outcome.slots.every((slot) => slot.reason !== 'empty-text');
+      const itemReadStatus = named.pending
+        ? readingItemStatus(named.outcome.slots.map((slot) => !!slot.itemId))
+        : completedItemStatus(named.outcome);
+      const wasAwaitingNames = awaitingNames;
+      awaitingNames = !named.complete;
+      // Anchor the resolved tuple, so a weak raw misidentification cannot reset exact-name stability on rereads.
+      if (
+        candidateCardKey !== key ||
+        candidateCardSigs.length !== 3 ||
+        !iconSigs.every((s, i) => sameSig(candidateCardSigs[i]!, s))
+      ) {
+        visualEpoch++;
+        candidateCardKey = key;
+        candidateCardSigs = iconSigs;
+      }
+      let accepted = false,
+        meta: DraftMeta | null = null;
+      const wasSettling = offerLock.settling;
+      const sameCommittedLabels =
+        labels.choice === acceptedChoice && (labels.round === 0 || labels.round === acceptedRound);
+      const restore =
+        wasAwaitingNames && named.complete && sameCommittedLabels && changedSlots === 0 && key === acceptedKey;
+      if (restore) offerLock.restoreCurrent();
+      const commit =
+        offerLock.observe(
+          {
+            key: namesVisible && (direct || nameCorroborated) && !(selectionSpent && key === acceptedKey) ? key : '',
+            round: labels.round,
+            choice: labels.choice,
+          },
+          performance.now(),
+          inventoryPick,
+          { visual: visualEpoch, direct, nameCorroborated, changedSlots, frame: captured },
+        ) || restore;
+      const transition = restore ? 'metadata' : commit ? (offerLock.transition ?? undefined) : undefined;
+      if (!wasSettling && offerLock.settling) {
+        offerEpoch++;
+        recognition.reset();
+      }
+      if (commit) {
+        awaitingNames = false;
+        // A new card set, or the ROUND / CHOICE label changed under the same cards (a stale label must not stand):
+        // (re)accept, which re-reads the hero bar and labels once the screen has settled.
+        acceptedKey = key;
+        acceptedRound = offerLock.current!.round;
+        acceptedChoice = offerLock.current!.choice;
+        if (previousRound > 1 && acceptedRound === 1) {
+          preparation.reset(); // a committed first round after a later round is a new match
+          selfHeroConfirmation.reset();
+          pendingPreparationCorrection = false;
+          knownHero = null;
+          inventoryConfirmation.reset();
+          inventory = null;
+        }
+        if (acceptedRound > 0) previousRound = acceptedRound;
+        inventoryPick = false;
+        selectionSpent = false;
+        pendingPicked = null;
+        accepted = true;
+        if (!knownHero && matchBar && sameBar(matchBar.sig, bsig)) knownHero = matchBar;
+        meta = stage('meta', () =>
+          readMetadata(
+            img,
+            idx,
+            acceptedRound,
+            !selfHeroConfirmation.value || (acceptedRound === 1 && !teamRoster.complete)
+              ? undefined
+              : (knownHero ?? undefined),
+          ),
+        );
+        meta.round = acceptedRound;
+        meta.choice = acceptedChoice;
+        if (completeRoster(meta)) matchBar = { bar: meta.bar, self: meta.self, sig: bsig };
+        // the hero bar is constant while the draft screen stays up; keep it until the screen closes (nonShopResult)
+        knownHero = completeRoster(meta) ? { bar: meta.bar, self: meta.self } : null;
+        settledMeta = meta;
+        settledBarSig = bsig;
+        nextMetaRetryAt = 0;
+        rosterInventoryReplayed = false;
+        committedCardSigs = confirmed ? pendingCardSigs : iconSigs;
+        settledSig = confirmed ? pendingSig : sig;
+        settledReads = reads;
+      }
+      lastKey = key;
+      if (!confirmed) {
+        // The fingerprints belong to this actual recognition. Reused IDs must keep their original pixel anchor.
+        pendingSig = key ? sig : null;
+        pendingCardSigs = iconSigs;
+      }
+      pendingChoice = labels.choice;
+      if (acceptedKey) pollRerolls(img);
+      if (meta) meta.rerollsRemaining = rerollCounter.value ?? -1;
+      post({
+        type: 'result',
+        shop: true,
+        pending: !acceptedKey || awaitingNames || offerLock.awaitingReroll || offerLock.settling || undefined,
+        pendingTransition:
+          offerLock.settling ||
+          offerLock.awaitingReroll ||
+          selectionSpent ||
+          (!!acceptedKey && changedSlots === 3 && samePendingIcons && pendingChoice === labels.choice) ||
+          undefined,
+        itemReadStatus: !acceptedKey || awaitingNames || offerLock.settling ? itemReadStatus : undefined,
+        blockedReason:
+          selectionSpent || offerLock.awaitingReroll
+            ? 'spent'
+            : named.pending
+              ? 'name-pending'
+              : !named.complete
+                ? 'name-unknown'
+                : !textured
+                  ? 'texture'
+                  : offerLock.settling || !acceptedKey
+                    ? 'offer-settle'
+                    : undefined,
+        round: acceptedKey ? acceptedRound : labels.round,
+        choice: acceptedKey ? acceptedChoice : labels.choice,
+        reads:
+          awaitingNames || selectionSpent || offerLock.awaitingReroll || offerLock.settling || !acceptedKey
+            ? []
+            : settledReads,
+        key:
+          awaitingNames || selectionSpent || offerLock.awaitingReroll || offerLock.settling || !acceptedKey
+            ? ''
+            : acceptedKey,
+        accepted: accepted && !awaitingNames && !offerLock.awaitingReroll && !offerLock.settling,
+        transition,
+        meta: accepted ? meta : settledMeta,
+        teamRoster: teamRoster.value,
+        inventory,
+        ms: performance.now() - t0,
+        stages,
+      });
+    },
+    () => tick(intervalMs, true),
+  ),
+);
 
 const nonShopResult = (t0: number): FrameResult => {
-  forgetNames();
-  lastKey = acceptedKey = lastInv = sentInv = '';
-  settledSig = pendingSig = null;
-  knownHero = null;
-  acceptedRound = acceptedChoice = 0;
-  readingSince = readingFirst = readingCardsSig = frozenReads = null;
-  gate = offScreenGate(gate);
-  stableInv = null;
+  if (frameHadCueCoverage) closedSince ??= t0;
+  if (frameHadCueCoverage && closedSince !== null && t0 - closedSince >= 250) {
+    if (acceptedKey) offerEpoch++;
+    lastKey = acceptedKey = '';
+    offerLock.reset();
+    if (!preparation.visible && !preparation.needsFullFrame(t0)) teamRoster.reset();
+    committedCardSigs = [];
+    inventoryConfirmation.reset();
+    settledMeta = null;
+    settledBarSig = null;
+    nextMetaRetryAt = 0;
+    settledSig = pendingSig = null;
+    knownHero = null;
+    acceptedRound = acceptedChoice = 0;
+    pendingCardSigs = [];
+    candidateCardSigs = [];
+    candidateCardKey = '';
+    awaitingNames = false;
+    recognition.reset();
+  }
   return {
     type: 'result',
     shop: false,
@@ -754,10 +1259,8 @@ const nonShopResult = (t0: number): FrameResult => {
     reads: [],
     key: '',
     accepted: false,
-    live: false,
-    picked: null,
-    spent: false,
     meta: null,
+    teamRoster: teamRoster.value,
     inventory: null,
     ms: performance.now() - t0,
   };

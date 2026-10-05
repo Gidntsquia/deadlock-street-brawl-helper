@@ -1,7 +1,11 @@
 // Street Brawl draft-screen recogniser: pure pixel code, no DOM and no Node APIs, so the same function runs
 // in the browser (canvas) and in the fixture test (sharp). Layout constants are fractions of a 2560x1440
-// screen and were measured from the user's screenshots; a different resolution scales linearly.
+// HUD and were measured from screenshots; wider screens keep this HUD centred at the same height scale.
 import type { IconIndex } from './types';
+import { cardNameRegions } from '../local/cardNames';
+import { hudLayout } from '../local/hudLayout';
+import { roundCountdownRegion } from '../local/firstRoundPreparation';
+export { hudLayout } from '../local/hudLayout';
 
 export interface RGBImage {
   width: number;
@@ -28,9 +32,13 @@ export const BRAWL_LAYOUT = {
 
 /** Card centres for an arbitrary screen size. */
 export const cardAnchors = (width: number, height: number) => {
-  const sx = width / BRAWL_LAYOUT.ref.width,
-    sy = height / BRAWL_LAYOUT.ref.height;
-  return BRAWL_LAYOUT.cards.map((c) => ({ name: c.name, cx: c.cx * sx, cy: c.cy * sy, icon: BRAWL_LAYOUT.icon * sx }));
+  const { sx, sy, offsetX } = hudLayout(width, height);
+  return BRAWL_LAYOUT.cards.map((c) => ({
+    name: c.name,
+    cx: offsetX + c.cx * sx,
+    cy: c.cy * sy,
+    icon: BRAWL_LAYOUT.icon * sx,
+  }));
 };
 
 /** The game always draws the three cards at the same place, so the overlay and the name reads use this fixed square per
@@ -50,12 +58,11 @@ const REROLL_BUTTON = { x0: 1140, y0: 913, x1: 1420, y1: 996 } as const;
 
 /** Re-roll button rect for an arbitrary screen size. */
 export const rerollButtonRect = (width: number, height: number) => {
-  const sx = width / BRAWL_LAYOUT.ref.width,
-    sy = height / BRAWL_LAYOUT.ref.height;
+  const { sx, sy, offsetX } = hudLayout(width, height);
   return {
-    x0: REROLL_BUTTON.x0 * sx,
+    x0: offsetX + REROLL_BUTTON.x0 * sx,
     y0: REROLL_BUTTON.y0 * sy,
-    x1: REROLL_BUTTON.x1 * sx,
+    x1: offsetX + REROLL_BUTTON.x1 * sx,
     y1: REROLL_BUTTON.y1 * sy,
   };
 };
@@ -67,6 +74,14 @@ export interface DecodedIndex {
   twins: Map<number, number[]>;
   heroIds: number[];
   heroPixels: Float32Array[];
+  heroForeground?: HeroForegroundReference[];
+}
+interface HeroForegroundReference {
+  source: Uint8Array;
+  mask: Float32Array;
+  offsets: Int32Array;
+  count: number;
+  pixels: Float32Array;
 }
 
 const b64 = (s: string): Uint8Array => {
@@ -128,6 +143,21 @@ export function decodeIconIndex(idx: IconIndex): DecodedIndex {
     twins,
     heroIds,
     heroPixels: heroIds.map((id) => normalise(b64(idx.heroes![id]), idx.size, cmask)),
+    heroForeground: heroIds.map((id) => {
+      const pixels = b64(idx.heroes![id]);
+      const mask = new Float32Array(cmask.length);
+      // Both catalog builders flatten transparent portrait art on #3a4a58. Team-colored
+      // in-game circles are not part of the face and cannot be independent identity evidence.
+      for (let i = 0; i < mask.length; i++)
+        mask[i] =
+          cmask[i] &&
+          Math.max(Math.abs(pixels[i * 3] - 58), Math.abs(pixels[i * 3 + 1] - 74), Math.abs(pixels[i * 3 + 2] - 88)) >
+            10
+            ? 1
+            : 0;
+      const offsets = offsetsOf(mask);
+      return { source: pixels, mask, offsets, count: offsets.length, pixels: normalise(pixels, idx.size, mask) };
+    }),
   };
 }
 
@@ -373,9 +403,6 @@ export function matchIcon(
   return best;
 }
 const SHORTLIST = 12;
-const NARROW = { search: 12, scales: [0.92, 0.97] as const };
-const NARROW_SURE_SCORE = 0.85;
-const NARROW_SURE_MARGIN = 0.1;
 
 const MIN_ICON_SCORE = 0.45; // icon similarity floor; between this and SURE_ICON_SCORE a tier numeral must also be read
 const SURE_ICON_SCORE = 0.75;
@@ -388,34 +415,39 @@ export interface CardRead {
   tier: number;
   rare: boolean;
   enhanced: boolean;
-  /** Set by the worker's fallback: the card could not be read in time. It is shown as a grey `?` plate, never as an item. */
   unsure?: boolean;
 }
 
 /** Reads the three draft cards of a full-screen capture. Items that share an icon are told apart by the tier numeral. */
 export function readDraftScreen(img: RGBImage, index: DecodedIndex, tierOf: (id: number) => number): CardRead[] {
-  return cardAnchors(img.width, img.height).map((a) => {
-    // The game draws every card at the same place, so a narrow search nearly always finds it; only a weak or
-    // ambiguous result pays for the full position/scale search.
-    let match = matchIcon(img, index, a.cx, a.cy, a.icon, undefined, NARROW);
-    if (match.score < NARROW_SURE_SCORE || match.margin < NARROW_SURE_MARGIN)
-      match = matchIcon(img, index, a.cx, a.cy, a.icon);
-    const tier = match.score >= MIN_ICON_SCORE ? readTier(img, match) : 0;
-    // The numeral only tells twin icons apart: an icon with no twin needs none (a numeral is not always readable, e.g.
-    // when the game shows the card without one or the card is hovered).
-    const unique = match.score >= MIN_ICON_SCORE && !index.twins?.get(match.itemId)?.length;
-    const present = match.score >= SURE_ICON_SCORE || (match.score >= MIN_ICON_SCORE && (tier > 0 || unique));
-    const mk = present ? readMarkers(img, match) : { rare: false, enhanced: false, rareFrac: 0, enhancedFrac: 0 };
-    return {
-      card: a.name,
-      match,
-      present,
-      itemId: present ? resolveTwin(match.itemId, tier, index, tierOf) : 0,
-      tier,
-      rare: mk.rare,
-      enhanced: mk.enhanced,
-    };
-  });
+  return cardAnchors(img.width, img.height).map((_, slot) => readDraftSlot(img, index, tierOf, slot));
+}
+
+/** Only unresolved name slots pay for icon search. */
+export function readDraftSlot(
+  img: RGBImage,
+  index: DecodedIndex,
+  tierOf: (id: number) => number,
+  slot: number,
+): CardRead {
+  const a = cardAnchors(img.width, img.height)[slot]!;
+  let match = matchIcon(img, index, a.cx, a.cy, a.icon, undefined, { search: 12, scales: [0.92, 0.97] });
+  if (match.score < 0.85 || match.margin < 0.1) match = matchIcon(img, index, a.cx, a.cy, a.icon);
+  const tier = match.score >= MIN_ICON_SCORE ? readTier(img, match) : 0;
+  // The numeral only tells twin icons apart: an icon with no twin needs none (a numeral is not always readable, e.g.
+  // when the game shows the card without one or the card is hovered).
+  const unique = match.score >= MIN_ICON_SCORE && !index.twins?.get(match.itemId)?.length;
+  const present = match.score >= SURE_ICON_SCORE || (match.score >= MIN_ICON_SCORE && (tier > 0 || unique));
+  const mk = present ? readMarkers(img, match) : { rare: false, enhanced: false, rareFrac: 0, enhancedFrac: 0 };
+  return {
+    card: a.name,
+    match,
+    present,
+    itemId: present ? resolveTwin(match.itemId, tier, index, tierOf) : 0,
+    tier,
+    rare: mk.rare,
+    enhanced: mk.enhanced,
+  };
 }
 
 /** When several items share the matched icon (Spirit Armor / Spirit Resilience ...), pick the one whose tier matches the numeral. */
@@ -630,8 +662,8 @@ function matchHero(img: RGBImage, index: DecodedIndex, cx: number, cy: number, d
   for (const v of mask) n += v;
   let best: HeroMatch = { heroId: 0, score: -1, margin: 0 },
     second = -1;
-  const sx = img.width / BRAWL_LAYOUT.ref.width,
-    step = Math.max(2, Math.round(HERO_BAR.step * sx)),
+  const { sx } = hudLayout(img.width, img.height);
+  const step = Math.max(2, Math.round(HERO_BAR.step * sx)),
     search = HERO_BAR.search * sx;
   // coarse pass from five windows (centre and the four corners of the search range): portraits shift a little between screens
   const pool = new Set<number>();
@@ -667,16 +699,85 @@ function matchHero(img: RGBImage, index: DecodedIndex, cx: number, cy: number, d
       }
   }
   best.margin = best.score - second;
-  if (best.score < MIN_HERO_SCORE || best.margin < MIN_HERO_MARGIN) best.heroId = 0;
+  if (best.score < MIN_HERO_SCORE || best.margin < MIN_HERO_MARGIN) {
+    best.heroId = 0;
+    return matchHeroForeground(img, index, cx, cy, diameter) ?? best;
+  }
   return best;
+}
+
+/** One bounded alternate for unread portraits; admitted primary identities never enter this path. */
+function matchHeroForeground(
+  img: RGBImage,
+  index: DecodedIndex,
+  cx: number,
+  cy: number,
+  diameter: number,
+): HeroMatch | null {
+  if (!index.heroForeground?.length) return null;
+  const { sx } = hudLayout(img.width, img.height);
+  const step = Math.max(2, Math.round(HERO_BAR.step * sx));
+  // Round the alternate search out by less than one step, keeping its symmetric budget fixed.
+  const steps = Math.ceil((HERO_BAR.search * sx) / step);
+  const search = steps * step;
+  const scales = [0.8, ...HERO_BAR.scales];
+  const circleCount = offsetsOf(circleMask(index.size)).length;
+  const references = index.heroForeground
+    .map((reference, k) => ({ reference, k }))
+    .filter(({ reference }) => reference.count >= circleCount / 2);
+  if (!references.length) return null;
+  const reach = (diameter * Math.max(...scales)) / 2 + search + 2;
+  const ig = integralOf(img, cx - reach, cy - reach, cx + reach, cy + reach);
+  const scores = new Float64Array(index.heroIds.length).fill(-1);
+  for (const scale of scales) {
+    const edge = diameter * scale;
+    // Integer step counts include both endpoints; fractional screen scaling cannot lose one side.
+    for (let iy = -steps; iy <= steps; iy++)
+      for (let ix = -steps; ix <= steps; ix++) {
+        const pixels = sampleFast(img, ig, cx - edge / 2 + ix * step, cy - edge / 2 + iy * step, edge, index.size);
+        for (const { reference, k } of references) {
+          const v = normalise(pixels, index.size, reference.mask);
+          scores[k] = Math.max(scores[k], nccMasked(v, reference.pixels, reference.count, reference.offsets));
+        }
+      }
+  }
+  const ranked = Array.from(scores, (score, k) => ({ heroId: index.heroIds[k], score })).sort(
+    (a, b) => b.score - a.score,
+  );
+  const best = ranked[0];
+  if (!best) return null;
+  const margin = best.score - (ranked[1]?.score ?? -1);
+  if (best.score < MIN_HERO_SCORE || margin < MIN_HERO_MARGIN) return null;
+  // Candidate masks can cover different amounts of face. Verify uniqueness again with the winner's
+  // one fixed mask shared by every catalog hero, including references with too little foreground.
+  const winner = index.heroForeground[index.heroIds.indexOf(best.heroId)];
+  const common = index.heroForeground.map((reference) => normalise(reference.source, index.size, winner.mask));
+  const commonScores = new Float64Array(index.heroIds.length).fill(-1);
+  for (const scale of scales) {
+    const edge = diameter * scale;
+    for (let iy = -steps; iy <= steps; iy++)
+      for (let ix = -steps; ix <= steps; ix++) {
+        const pixels = sampleFast(img, ig, cx - edge / 2 + ix * step, cy - edge / 2 + iy * step, edge, index.size);
+        const v = normalise(pixels, index.size, winner.mask);
+        for (let k = 0; k < common.length; k++)
+          commonScores[k] = Math.max(commonScores[k], nccMasked(v, common[k], winner.count, winner.offsets));
+      }
+  }
+  const verified = Array.from(commonScores, (score, k) => ({ heroId: index.heroIds[k], score })).sort(
+    (a, b) => b.score - a.score,
+  );
+  const first = verified[0];
+  const commonMargin = first.score - (verified[1]?.score ?? -1);
+  return first.heroId === best.heroId && first.score >= MIN_HERO_SCORE && commonMargin >= MIN_HERO_MARGIN
+    ? { ...first, margin: Math.min(margin, commonMargin) }
+    : null;
 }
 
 /** Reads the eight portraits; heroId is 0 for a slot that could not be read. */
 function readHeroBar(img: RGBImage, index: DecodedIndex): HeroBar {
-  const sx = img.width / BRAWL_LAYOUT.ref.width,
-    sy = img.height / BRAWL_LAYOUT.ref.height;
+  const { sx, sy, offsetX } = hudLayout(img.width, img.height);
   const read = (xs: readonly number[]) =>
-    xs.map((x) => matchHero(img, index, x * sx, HERO_BAR.cy * sy, HERO_BAR.diameter * sx));
+    xs.map((x) => matchHero(img, index, offsetX + x * sx, HERO_BAR.cy * sy, HERO_BAR.diameter * sx));
   return { left: read(HERO_BAR.left), right: read(HERO_BAR.right) };
 }
 
@@ -684,13 +785,12 @@ function readHeroBar(img: RGBImage, index: DecodedIndex): HeroBar {
 function readLeanBar(img: RGBImage, index: DecodedIndex, slot: { left: number; right: number }): HeroBar {
   const ownSide = slot.left >= 0 ? 'left' : slot.right >= 0 ? 'right' : null;
   if (!ownSide) return readHeroBar(img, index);
-  const sx = img.width / BRAWL_LAYOUT.ref.width,
-    sy = img.height / BRAWL_LAYOUT.ref.height;
+  const { sx, sy, offsetX } = hudLayout(img.width, img.height);
   const read = (side: 'left' | 'right') =>
     HERO_BAR[side].map((x, i): HeroMatch =>
       side === ownSide && i !== slot[side]
         ? { heroId: 0, score: 0, margin: 0 }
-        : matchHero(img, index, x * sx, HERO_BAR.cy * sy, HERO_BAR.diameter * sx),
+        : matchHero(img, index, offsetX + x * sx, HERO_BAR.cy * sy, HERO_BAR.diameter * sx),
     );
   return { left: read('left'), right: read('right') };
 }
@@ -699,7 +799,7 @@ function readLeanBar(img: RGBImage, index: DecodedIndex, slot: { left: number; r
 // edges run the full height of the upper half, and the tile fill in the top corners differs from the bar background
 // beside it. While the "round starting" banner is up every slot sits in a tile, so a frame where several slots show
 // tiles is rejected and the next frame is used.
-const SELF_TILE = { edgeRun: 0.9, minScore: 40, maxTiles: 2, cornerSat: 40, cornerGap: 8 } as const;
+const SELF_TILE = { edgeRun: 0.9, minScore: 40, maxTiles: 2 } as const;
 
 function pxAt(img: RGBImage, x: number, y: number): [number, number, number] {
   x = Math.min(img.width - 1, Math.max(0, x));
@@ -727,8 +827,7 @@ function meanRect(img: RGBImage, x0: number, y0: number, x1: number, y1: number)
 
 /** Index (0..3) of the player's slot on each side, or -1. */
 function readSelfSlot(img: RGBImage): { left: number; right: number } {
-  const sx = img.width / BRAWL_LAYOUT.ref.width,
-    sy = img.height / BRAWL_LAYOUT.ref.height;
+  const { sx, sy, offsetX } = hudLayout(img.width, img.height);
   const cy = HERO_BAR.cy * sy,
     R = (HERO_BAR.diameter * sx) / 2;
   const y0 = Math.round(cy - 0.9 * R),
@@ -746,7 +845,7 @@ function readSelfSlot(img: RGBImage): { left: number; right: number } {
     }
     return n;
   };
-  const tile = (cx: number) => {
+  const tile = (cx: number, brightOnly = false) => {
     let best = 0;
     for (let xl = Math.round(cx - 1.3 * R); xl <= cx - 0.7 * R; xl++) {
       if (run(xl) < rows * SELF_TILE.edgeRun) continue;
@@ -756,36 +855,30 @@ function readSelfSlot(img: RGBImage): { left: number; right: number } {
           inR = meanRect(img, xr - 12, cb, xr - 4, ce);
         const outL = meanRect(img, xl - 10, cb, xl - 4, ce),
           outR = meanRect(img, xr + 4, cb, xr + 10, ce);
+        if (
+          brightOnly &&
+          (inL.reduce((a, v) => a + v, 0) <= outL.reduce((a, v) => a + v, 0) ||
+            inR.reduce((a, v) => a + v, 0) <= outR.reduce((a, v) => a + v, 0))
+        )
+          continue;
         best = Math.max(best, Math.min(colourDiff(inL, outL), colourDiff(inR, outR)) - colourDiff(inL, inR) / 2);
       }
     }
     return best;
   };
-  const scores = [...HERO_BAR.left, ...HERO_BAR.right].map((x) => tile(x * sx));
-  // Only a full-strength tile counts towards the banner check: the player's own tile leaks a weak score into the
-  // slots beside it (its edge falls inside their search window), which once rejected a real frame with self in slot 3.
-  const tiles = scores.filter((v) => v >= SELF_TILE.minScore).length;
-  const order = scores.map((_, i) => i).sort((p, q) => scores[q] - scores[p]);
-  const ok =
-    tiles <= SELF_TILE.maxTiles && scores[order[0]] >= SELF_TILE.minScore && scores[order[0]] >= 2 * scores[order[1]];
-  let k = order[0];
-  if (!ok) {
-    // Fallback: the tile's two top corners are filled with the team colour while a circular portrait leaves the grey
-    // bar there, so both corners are saturated. Needs one clear winner (a banner tiles every slot).
-    const sat = [...HERO_BAR.left, ...HERO_BAR.right].map((x) => {
-      const c = x * sx;
-      const corner = (a: number) => {
-        const m = meanRect(img, Math.round(c + a * R - 5), cb, Math.round(c + a * R + 5), ce);
-        return Math.max(...m) - Math.min(...m);
-      };
-      return Math.min(corner(-0.85), corner(0.85));
-    });
-    const ord = sat.map((_, i) => i).sort((p, q) => sat[q] - sat[p]);
-    if (sat[ord[0]] < SELF_TILE.cornerSat || sat[ord[0]] - sat[ord[1]] < SELF_TILE.cornerGap)
-      return { left: -1, right: -1 };
-    k = ord[0];
-  }
-  return k < HERO_BAR.left.length ? { left: k, right: -1 } : { left: -1, right: k - HERO_BAR.left.length };
+  const select = (brightOnly: boolean) => {
+    const scores = [...HERO_BAR.left, ...HERO_BAR.right].map((x) => tile(offsetX + x * sx, brightOnly));
+    const tiles = scores.filter((v) => v > 0).length;
+    const order = scores.map((_, i) => i).sort((p, q) => scores[q] - scores[p]);
+    const ok =
+      tiles <= SELF_TILE.maxTiles && scores[order[0]] >= SELF_TILE.minScore && scores[order[0]] >= 2 * scores[order[1]];
+    if (!ok) return { left: -1, right: -1 };
+    const k = order[0];
+    return k < HERO_BAR.left.length ? { left: k, right: -1 } : { left: -1, right: k - HERO_BAR.left.length };
+  };
+  const original = select(false);
+  // A neighboring dark gap can share the selected tile's vertical edge. Require inward brightness only on ambiguity.
+  return original.left >= 0 || original.right >= 0 ? original : select(true);
 }
 
 /** The player's hero id from the bar, or 0 when the square-topped slot is missing or unreadable. */
@@ -793,6 +886,17 @@ function selfHero(bar: HeroBar, self: { left: number; right: number }): number {
   if (self.left >= 0) return bar.left[self.left]?.heroId ?? 0;
   if (self.right >= 0) return bar.right[self.right]?.heroId ?? 0;
   return 0;
+}
+
+/** Fresh self marker plus its single portrait; never reuses a cached bar or hero. */
+export function readPlayerHero(img: RGBImage, index: DecodedIndex) {
+  const selected = readSelfSlot(img);
+  const side: 'left' | 'right' | null = selected.left >= 0 ? 'left' : selected.right >= 0 ? 'right' : null;
+  if (!side) return null;
+  const slot = selected[side];
+  const { sx, sy, offsetX } = hudLayout(img.width, img.height);
+  const match = matchHero(img, index, offsetX + HERO_BAR[side][slot]! * sx, HERO_BAR.cy * sy, HERO_BAR.diameter * sx);
+  return match.heroId ? { heroId: match.heroId, side, slot } : null;
 }
 
 /** The opposing team's hero ids, given the player's hero; empty when the player's hero is on neither side. */
@@ -1030,14 +1134,13 @@ const readDigit = (
   /** Accept a blurrier glyph (max distance, and how many times closer than the runner-up it must be). */
   loose: { maxDistance: number; ratio: number } = { maxDistance: LOOSE_DIGIT_DISTANCE, ratio: 2 },
 ): number => {
-  const sx = (img.origin?.fullWidth ?? img.width) / BRAWL_LAYOUT.ref.width,
-    sy = (img.origin?.fullHeight ?? img.height) / BRAWL_LAYOUT.ref.height;
+  const { sx, sy, offsetX } = hudLayout(img.origin?.fullWidth ?? img.width, img.origin?.fullHeight ?? img.height);
   const at = (minCol: number) =>
     readGlyph(
       img,
-      Math.round(box.x0 * sx),
+      Math.round(offsetX + box.x0 * sx),
       Math.round(box.y0 * sy),
-      Math.round(box.x1 * sx),
+      Math.round(offsetX + box.x1 * sx),
       Math.round(box.y1 * sy),
       test,
       minCol,
@@ -1079,11 +1182,10 @@ const matchDigit = (
  *  the rest of this file. */
 export function extractRerollLabelCrop(img: RGBImage): { data: Uint8Array; width: number; height: number } | null {
   const box = LABELS.rerolls;
-  const sx = img.width / BRAWL_LAYOUT.ref.width,
-    sy = img.height / BRAWL_LAYOUT.ref.height;
-  const x1 = Math.round(box.x1 * sx),
+  const { sx, sy, offsetX } = hudLayout(img.width, img.height);
+  const x1 = Math.round(offsetX + box.x1 * sx),
     y1 = Math.round(box.y1 * sy);
-  let x0 = Math.round(box.x0 * sx),
+  let x0 = Math.round(offsetX + box.x0 * sx),
     y0 = Math.round(box.y0 * sy);
   // minWidth 2: a soft, dim "1" is only ~3 px wide once the window has been scaled up.
   const bb = readGlyphBBox(img, x0, y0, x1, y1, mutedText, 2);
@@ -1129,13 +1231,12 @@ export function extractRerollLabelCrop(img: RGBImage): { data: Uint8Array; width
  *  for when OCR cannot read that dim, soft digit. The OCR result wins whenever it produces a digit. */
 export function rerollGlyphIsOne(img: RGBImage): boolean {
   const box = LABELS.rerolls;
-  const sx = img.width / BRAWL_LAYOUT.ref.width,
-    sy = img.height / BRAWL_LAYOUT.ref.height;
+  const { sx, sy, offsetX } = hudLayout(img.width, img.height);
   const bb = readGlyphBBox(
     img,
-    Math.round(box.x0 * sx),
+    Math.round(offsetX + box.x0 * sx),
     Math.round(box.y0 * sy),
-    Math.round(box.x1 * sx),
+    Math.round(offsetX + box.x1 * sx),
     Math.round(box.y1 * sy),
     mutedText,
     2,
@@ -1189,15 +1290,22 @@ export function isShopScreen(img: RGBImage): boolean {
 /** The part of a `width`x`height` frame `isShopScreen` reads (the "CHOICE n OF 3" digit plus slack), in frame
  *  px. Idle polling copies only this crop out of the video instead of the whole frame. */
 export function shopProbeRect(width: number, height: number) {
-  const sx = width / BRAWL_LAYOUT.ref.width,
-    sy = height / BRAWL_LAYOUT.ref.height;
-  const b = LABELS.choice;
-  const x = Math.max(0, Math.floor(b.x0 * sx) - 4),
+  return labelProbeRect(width, height, LABELS.choice);
+}
+
+/** The ROUND glyph alone, used to qualify first-round countdown capture without reading portraits. */
+export function roundProbeRect(width: number, height: number) {
+  return labelProbeRect(width, height, LABELS.round);
+}
+
+function labelProbeRect(width: number, height: number, b: { x0: number; y0: number; x1: number; y1: number }) {
+  const { sx, sy, offsetX } = hudLayout(width, height);
+  const x = Math.max(0, Math.floor(offsetX + b.x0 * sx) - 4),
     y = Math.max(0, Math.floor(b.y0 * sy) - 4);
   return {
     x,
     y,
-    width: Math.min(width, Math.ceil(b.x1 * sx) + 4) - x,
+    width: Math.min(width, Math.ceil(offsetX + b.x1 * sx) + 4) - x,
     height: Math.min(height, Math.ceil(b.y1 * sy) + 4) - y,
   };
 }
@@ -1205,7 +1313,7 @@ export function shopProbeRect(width: number, height: number) {
 /** Every part of a `width`x`height` draft frame the recogniser ever reads, in frame px: the three card icons (with
  *  the position/scale search slack and the tier numeral), the hero bar with the ROUND label, the CHOICE label, the
  *  re-roll caption and the inventory grid. Everything else on screen is never looked at, so the page copies only
- *  these rectangles out of the video instead of the whole frame (~11 % of its pixels). Padded past what the reads
+ *  these rectangles out of the video instead of the whole frame (under 26 % of its pixels). Padded past what the reads
  *  touch; `regions.test.ts` checks that masking a real frame to these changes no read. */
 export interface Region {
   x: number;
@@ -1214,8 +1322,7 @@ export interface Region {
   height: number;
 }
 export function draftRegions(width: number, height: number): Region[] {
-  const sx = width / BRAWL_LAYOUT.ref.width,
-    sy = height / BRAWL_LAYOUT.ref.height;
+  const { sx, sy, offsetX } = hudLayout(width, height);
   const boxes: [number, number, number, number][] = [];
   const cardHalf = (BRAWL_LAYOUT.icon * 1.1) / 2 + BRAWL_LAYOUT.search + 20;
   // Extra room below the icon: the ENHANCED box (readMarkers) sits ~85-122 icon-units under it, past a square crop.
@@ -1229,35 +1336,21 @@ export function draftRegions(width: number, height: number): Region[] {
     boxes.push([b.x0 - pad, b.y0 - pad, b.x1 + pad, b.y1 + pad]);
   box(LABELS.choice);
   box(LABELS.rerolls);
-  for (const inv of INVENTORY_LAYOUTS)
-    boxes.push([
-      inv.x0 - inv.search - pad,
-      inv.y0 - inv.search - pad,
-      inv.x0 + (inv.cols - 1) * inv.pitch + inv.icon + inv.search + pad,
-      inv.y0 + (inv.rows - 1) * inv.pitch + inv.icon + inv.search + pad,
-    ]);
-  // The item name line under each card (cardNameCrop), at the largest icon scale tried plus the search slack. The card
-  // box above already spans its rows and middle, so only the two ends of the line stick out. Last, so the indices of
-  // the boxes above stay put.
-  const big = BRAWL_LAYOUT.icon * BRAWL_LAYOUT.scales[BRAWL_LAYOUT.scales.length - 1]!,
-    slack = BRAWL_LAYOUT.search,
-    reach = CARD_NAME.text * big + slack,
-    y0 = (CARD_NAME.top - 0.5) * BRAWL_LAYOUT.icon * BRAWL_LAYOUT.scales[0] - slack,
-    y1 = (CARD_NAME.bottom - 0.5) * big + slack;
-  for (const c of BRAWL_LAYOUT.cards) {
-    boxes.push([c.cx - reach, c.cy + y0, c.cx - cardHalf, c.cy + y1]);
-    boxes.push([c.cx + cardHalf, c.cy + y0, c.cx + reach, c.cy + y1]);
-  }
-  return boxes.map(([x0, y0, x1, y1]) => {
-    const x = Math.max(0, Math.floor(x0 * sx)),
-      y = Math.max(0, Math.floor(y0 * sy));
-    return {
-      x,
-      y,
-      width: Math.min(width, Math.ceil(x1 * sx)) - x,
-      height: Math.min(height, Math.ceil(y1 * sy)) - y,
-    };
-  });
+  return [
+    ...boxes.map(([x0, y0, x1, y1]) => {
+      const x = Math.max(0, Math.floor(offsetX + x0 * sx)),
+        y = Math.max(0, Math.floor(y0 * sy));
+      return {
+        x,
+        y,
+        width: Math.min(width, Math.ceil(offsetX + x1 * sx)) - x,
+        height: Math.min(height, Math.ceil(y1 * sy)) - y,
+      };
+    }),
+    ...inventoryRegions(width, height),
+    ...cardNameRegions(width, height, cardAnchors(width, height)),
+    roundCountdownRegion(width, height),
+  ];
 }
 
 /** Round (0 when unread) and choice (0 when unread) labels of the draft screen: two glyph reads, cheap enough
@@ -1270,14 +1363,14 @@ export function readRoundChoice(img: RGBImage): { round: number; choice: number 
 }
 
 // ---- inventory grid ------------------------------------------------------------------------------------
-// The player's items sit bottom-left of the draft screen: two rows of five 66 px icons (2560x1440), 75 px pitch.
+// The player's items sit bottom-left of the draft screen: two rows of eight icons (2560x1440).
 // Reading it gives the owned list without any clicking, and a new icon that was on offer is the card the player took.
 const INVENTORY = {
   x0: 147,
   y0: 1272,
   pitch: 75,
   icon: 66,
-  cols: 5,
+  cols: 8,
   rows: 2,
   search: 6,
   scales: [0.94, 1, 1.06],
@@ -1286,6 +1379,30 @@ const INVENTORY = {
  *  edge and the tiles grow (72 px, 82 px pitch). `readInventory` reads both layouts and keeps the one that matches more. */
 const INVENTORY_WIDE = { ...INVENTORY, x0: 34, y0: 1261, pitch: 82, icon: 72 } as const;
 const INVENTORY_LAYOUTS = [INVENTORY, INVENTORY_WIDE] as const;
+
+/** Both supported grids overlap: copy their union once and fingerprint inventory independently of the cards. */
+export function inventoryRegions(width: number, height: number): Region[] {
+  const { sx, sy, offsetX } = hudLayout(width, height);
+  const pad = 12;
+  const x0 = Math.min(...INVENTORY_LAYOUTS.map((inv) => inv.x0 - inv.search - pad));
+  const y0 = Math.min(...INVENTORY_LAYOUTS.map((inv) => inv.y0 - inv.search - pad));
+  const x1 = Math.max(
+    ...INVENTORY_LAYOUTS.map((inv) => inv.x0 + (inv.cols - 1) * inv.pitch + inv.icon + inv.search + pad),
+  );
+  const y1 = Math.max(
+    ...INVENTORY_LAYOUTS.map((inv) => inv.y0 + (inv.rows - 1) * inv.pitch + inv.icon + inv.search + pad),
+  );
+  const x = Math.max(0, Math.floor(offsetX + x0 * sx));
+  const y = Math.max(0, Math.floor(y0 * sy));
+  return [
+    {
+      x,
+      y,
+      width: Math.min(width, Math.ceil(offsetX + x1 * sx)) - x,
+      height: Math.min(height, Math.ceil(y1 * sy)) - y,
+    },
+  ];
+}
 const MIN_INVENTORY_SCORE = 0.6; // for items that were on offer or are already owned
 const SURE_INVENTORY_SCORE = 0.85; // for anything else
 const MIN_INVENTORY_SD = 20; // raw pixel std-dev below which a slot counts as empty
@@ -1299,7 +1416,7 @@ export interface InventoryRead {
 }
 
 /**
- * Item ids in the ten inventory slots (0 = empty or unreadable). `prefer` (every card offered this game + items already
+ * Item ids in the sixteen inventory slots (0 = empty or unreadable). `prefer` (every card offered this game + items already
  * owned) settles icon twins and lowers the score floor; an item outside it needs a near-perfect match.
  */
 export function readInventory(img: RGBImage, index: DecodedIndex, prefer: number[] = []): InventoryRead[] {
@@ -1331,14 +1448,13 @@ function readInventoryAt(
     scales: readonly number[];
   },
 ): InventoryRead[] {
-  const sx = img.width / BRAWL_LAYOUT.ref.width,
-    sy = img.height / BRAWL_LAYOUT.ref.height;
+  const { sx, sy, offsetX } = hudLayout(img.width, img.height);
   const out: InventoryRead[] = [];
   const pref = new Set(prefer);
   for (let r = 0; r < INVENTORY.rows; r++)
     for (let c = 0; c < INVENTORY.cols; c++) {
       const edge = INVENTORY.icon * sx;
-      const cx = (INVENTORY.x0 + c * INVENTORY.pitch) * sx + edge / 2,
+      const cx = offsetX + (INVENTORY.x0 + c * INVENTORY.pitch) * sx + edge / 2,
         cy = (INVENTORY.y0 + r * INVENTORY.pitch) * sy + edge / 2;
       // an empty slot is a flat tinted square: skip it on contrast before matching
       const raw = sampleSquare(img, cx - edge / 2, cy - edge / 2, edge, index.size);
@@ -1387,6 +1503,7 @@ export function findRerollButton(
   ox: number,
   oy: number,
   frameW: number,
+  frameH = (frameW * BRAWL_LAYOUT.ref.height) / BRAWL_LAYOUT.ref.width,
 ): { x0: number; y0: number; x1: number; y1: number } | null {
   const lum = new Float32Array(w * h);
   for (let i = 0; i < w * h; i++) lum[i] = 0.3 * rgba[i * 4]! + 0.59 * rgba[i * 4 + 1]! + 0.11 * rgba[i * 4 + 2]!;
@@ -1398,7 +1515,7 @@ export function findRerollButton(
     const med = [...buf].sort((a, b) => a - b)[w >> 2]!;
     for (let x = 0; x < w; x++) light[y * w + x] = lum[y * w + x]! > med + 20 ? 1 : 0;
   }
-  const scale = frameW / BRAWL_LAYOUT.ref.width;
+  const scale = hudLayout(frameW, frameH).sx;
   const minRun = 90 * scale;
   const longest = (y: number) => {
     let best = 0,
@@ -1448,20 +1565,20 @@ export function findRerollButton(
   if (xMax < xMin) return null;
   return { x0: ox + xMin, y0: oy + top, x1: ox + xMax + 1, y1: oy + bottom + 1 };
 }
-
 /** The big hero name on the loading screen ("JOINING THE FIGHT AS..." and then the name), as fractions of the frame
  *  (measured on a 2000x1125 frame: the name spans x 150-790, y 425-580). */
 export const LOADING_NAME = { x0: 0.07, y0: 0.37, x1: 0.41, y1: 0.53 } as const;
 
 /** The loading screen's name box in frame px. */
 export function loadingNameRect(width: number, height: number) {
-  const x = Math.floor(LOADING_NAME.x0 * width),
-    y = Math.floor(LOADING_NAME.y0 * height);
+  const { sx, sy, offsetX } = hudLayout(width, height);
+  const x = Math.floor(offsetX + LOADING_NAME.x0 * BRAWL_LAYOUT.ref.width * sx),
+    y = Math.floor(LOADING_NAME.y0 * BRAWL_LAYOUT.ref.height * sy);
   return {
     x,
     y,
-    width: Math.ceil(LOADING_NAME.x1 * width) - x,
-    height: Math.ceil(LOADING_NAME.y1 * height) - y,
+    width: Math.ceil(offsetX + LOADING_NAME.x1 * BRAWL_LAYOUT.ref.width * sx) - x,
+    height: Math.ceil(LOADING_NAME.y1 * BRAWL_LAYOUT.ref.height * sy) - y,
   };
 }
 

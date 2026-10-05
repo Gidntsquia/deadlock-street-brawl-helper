@@ -1,17 +1,21 @@
 // Windows-only Electron test harness. Run by real electron.exe (never Linux Electron): sets BRAWL_E2E=1,
 // requires the REAL electron-dist/main.js (not a stub), drives it via executeJavaScript, and writes one
 // JSON report. Filter cases with --only <name1,name2,...>. Everything runs against the app's own Test mode
-// dummy window. Hard timeout 40 s; a full run takes ~25 s. The ability panel lasts TIP_MS here (BRAWL_TIP_MS, 1.2 s) instead of the real 15 s.
+// dummy window. Hard timeout 40 s; a full run takes ~25 s. The ability panel lasts TIP_MS here (BRAWL_TIP_MS, 3 s) instead of the real 15 s.
 'use strict';
 process.env.BRAWL_E2E = '1';
-const TIP_MS = 1200;
+// Two fresh HUD samples and the cold OCR worker must fit before the tip expires.
+const TIP_MS = 3000;
 process.env.BRAWL_TIP_MS = String(TIP_MS);
 const HARD_TIMEOUT_MS = 40_000;
 
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
-const { app } = require('electron');
+const { app, protocol } = require('electron');
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'brawl-data', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } },
+]);
 // A dummy window sitting under other windows must keep rendering (and being capturable): no occlusion throttling.
 app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion,AllowWgcWindowCapturer');
 app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
@@ -29,7 +33,7 @@ const only = onlyArg
 const checks = [];
 function check(name, pass, detail) {
   checks.push({ name, pass: !!pass, detail: detail ?? null });
-  console.log(`[${pass ? 'PASS' : 'FAIL'}] ${name}${detail ? ' — ' + detail : ''}`);
+  console.log(`[${pass ? 'PASS' : 'FAIL'}] ${name}${detail ? ': ' + detail : ''}`);
 }
 
 function wantsCase(name) {
@@ -67,7 +71,7 @@ async function waitFor(fn, timeoutMs, stepMs = 200) {
 }
 
 // main.ts's own unhandledRejection handler filters exactly one known Electron artifact to debug and logs
-// everything else via src/log.ts's console.error(JSON...) — count those (main process, not renderer).
+// everything else via src/log.ts's console.error(JSON...) - count those (main process, not renderer).
 // Also mirrors every main-process console.log/console.error line into the debug log file.
 let mainProcessUnhandledCount = 0;
 const realConsoleError = console.error.bind(console);
@@ -216,16 +220,16 @@ async function main() {
     await waitFor(
       async () =>
         captureAttempts >= 1 &&
-        (await js(control, 'document.querySelector(".brawl-status")?.textContent ?? ""')).includes(
+        (await js(control, 'document.querySelector(".brawl-controls [role=status]")?.textContent ?? ""')).includes(
           'Deadlock window not found',
         ),
       4_000,
       100,
     );
-    const status = await js(control, 'document.querySelector(".brawl-status")?.textContent ?? ""');
+    const status = await js(control, 'document.querySelector(".brawl-controls [role=status]")?.textContent ?? ""');
     check(
       'capture-denied-status',
-      captureAttempts >= 1 && status === 'Waiting for Deadlock',
+      captureAttempts >= 1 && status === 'Deadlock window not found: press Start to retry',
       `attempts=${captureAttempts} status="${status}"`,
     );
     const before = captureAttempts;
@@ -237,18 +241,100 @@ async function main() {
   }
 
   if (wantsCase('testmode')) {
+    const showInterface = e2e.getTrayMenu()?.getMenuItemById('show-interface');
+    control.hide();
+    showInterface?.click();
+    check('tray-show-interface', showInterface?.label === 'Show interface' && control.isVisible());
+    control.minimize();
+    await waitFor(() => control.isMinimized(), 1000, 25);
+    e2e.getTray()?.emit('double-click');
+    check('tray-double-click-restores', control.isVisible() && !control.isMinimized());
+    await waitFor(
+      () =>
+        js(
+          control,
+          `(() => { const b = document.querySelector('.data-updates > button'); return !!b && !b.disabled; })()`,
+        ),
+      2000,
+      50,
+    );
+    const updateDialog = await js(
+      control,
+      `(() => {
+      const button = document.querySelector('.data-updates button');
+      if (!button || button.disabled) return null;
+      button.click();
+      return true;
+    })()`,
+    );
+    const modal = await waitFor(
+      () =>
+        js(
+          control,
+          `(() => {
+      const d=document.querySelector('.data-update-dialog');
+      return d?.open ? { title:d.querySelector('h2')?.textContent, utc:d.innerText.includes('Patch time (UTC)'), modes:d.querySelector('select')?.options.length } : null;
+    })()`,
+        ),
+      2000,
+      50,
+    );
+    check(
+      'data-update-dialog',
+      !!updateDialog && modal?.title === 'Update Street Brawl data' && modal?.utc && modal?.modes === 2,
+      JSON.stringify(modal),
+    );
+    await js(
+      control,
+      `(() => { const d=document.querySelector('.data-update-dialog'); const b=[...d.querySelectorAll('button')].find(b=>b.textContent==='Close'); b?.click(); })()`,
+    );
+
+    const overlaySettings = await js(
+      control,
+      `(() => {
+      document.querySelector('.overlay-settings button').click();
+      const d = document.querySelector('.overlay-settings-dialog');
+      const values = [...d.querySelectorAll('select,input:not([type="checkbox"])')].map(e=>e.value);
+      const fits = d.scrollWidth <= d.clientWidth && d.getBoundingClientRect().width <= innerWidth;
+      const open = d.open;
+      d.close();
+      return { open, values, fits, teamWinRates:d.querySelector('input[type="checkbox"]')?.checked === true };
+    })()`,
+    );
+    check(
+      'overlay-settings-dialog',
+      overlaySettings.open &&
+        overlaySettings.fits &&
+        overlaySettings.teamWinRates &&
+        JSON.stringify(overlaySettings.values) === JSON.stringify(['detailed', 'points', '15', '60']),
+      JSON.stringify(overlaySettings),
+    );
     // Debug panel: hidden at launch, Ctrl+Shift+D toggles it, the tray entry toggles the same state.
     const hasDebug = () => js(control, '!!document.querySelector("[aria-label=\\"Debug panel\\"]")');
     // First-run panel: three lines and Show me; Got it dismisses it and it stays dismissed.
     // userData keeps the dismissal between runs, so start from a first run.
-    await js(control, `localStorage.removeItem('brawl.firstRunDone'); setTimeout(() => location.reload(), 0)`);
+    const reloadControl = () =>
+      new Promise((resolve) => {
+        control.webContents.once('did-finish-load', resolve);
+        control.webContents.reload();
+      });
+    await js(control, `localStorage.removeItem('brawl.firstRunDone')`);
+    // Do not let the old document's panel satisfy the check while the replacement document mounts.
+    await reloadControl();
     await waitFor(() => js(control, `document.querySelectorAll('.brawl-firstrun li').length === 3`), 6_000, 100);
     const firstRun = await js(control, `document.querySelectorAll('.brawl-firstrun li').length`);
     check('first-run-shown', firstRun === 3, `lines=${firstRun}`);
     await js(control, `[...document.querySelectorAll('button')].find((b) => b.textContent === 'Got it')?.click()`);
-    await sleep(200);
+    await waitFor(() => js(control, `localStorage.getItem('brawl.firstRunDone') === 'true'`), 1_000, 25);
+    await reloadControl();
+    await waitFor(() => js(control, `!!document.querySelector('.brawl-controls')`), 6_000, 50);
+    const firstRunDismissed = await js(
+      control,
+      `localStorage.getItem('brawl.firstRunDone') === 'true' && !document.querySelector('.brawl-firstrun')`,
+    );
+    check('first-run-dismissal-persists', firstRunDismissed, 'Got it remains dismissed after reload');
     // Debug starts off in a final version and on in an -rc (or dev) one (src/brawl/debugMode.ts); the main view itself has
-    // no capture buttons. Whichever way it starts, the checks below end with the panel shown, so test mode is reachable.
+    // capture buttons remain available in the main view. Whichever way it starts, the checks below end with the panel shown, so test mode is reachable.
     const version = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
     const wantOn = /^\d+\.\d+\.\d+-[0-9A-Za-z]/.test(version);
     const startedOn = !!(await hasDebug());
@@ -263,7 +349,15 @@ async function main() {
       await waitFor(async () => !(await hasDebug()), 3000, 100);
     }
     const mainBtns = await js(control, `/Start capture|Stop capture|Detect now/.test(document.body.innerText)`);
-    check('main-view-no-buttons', !(await hasDebug()) && !mainBtns, `buttons=${mainBtns}`);
+    const slim = await js(
+      control,
+      '({ selects: [...document.querySelectorAll("select")].filter(s => !s.closest("dialog")).length, btn: !!document.querySelector(".brawl-controls .brawl-capture") })',
+    );
+    check(
+      'debug-hidden-main-controls-available',
+      !(await hasDebug()) && mainBtns && slim.btn && slim.selects <= 1,
+      JSON.stringify(slim),
+    );
     await js(control, key);
     const dbgShown = await waitFor(hasDebug, 3000, 100);
     const dbgParts = await js(
@@ -310,9 +404,10 @@ async function main() {
         `({
         drawn: window.__overlayDrawn ?? [],
         reading: !!window.__overlayReading,
-        head: window.__overlayAdvice ? window.__overlayAdvice.hero + ' · round ' + window.__overlayAdvice.round + ', choice ' + window.__overlayAdvice.choice : '',
+        head: window.__overlayAdvice ? window.__overlayAdvice.hero + ', round ' + window.__overlayAdvice.round + ', choice ' + window.__overlayAdvice.choice : '',
         panel: !!window.__overlayAdvice,
         ap: !!document.querySelector('.ap'),
+        apTitle: document.querySelector('.ap-title')?.textContent ?? '',
         now: [...document.querySelectorAll('.ap-col')].flatMap((c) => [
           ...[...c.querySelectorAll('.ap-pill[data-state="now"]')].map(
             (p) => c.dataset.ability + '|' + ({ 5: 'tier3', 2: 'tier2', 1: 'tier1' })[p.dataset.cost],
@@ -321,10 +416,34 @@ async function main() {
         done: document.querySelectorAll('.ap-pill[data-state="done"]').length,
         cards: (window.__overlayAdvice?.ranked ?? []).map((r) => r.name).join(' | '),
         scores: (window.__overlayAdvice?.ranked ?? []).map((r) => r.score.toFixed(2)),
+        takeCues: document.querySelectorAll('.overlay-action-cue[data-action="take"]').length,
+        rerollCues: document.querySelectorAll('.overlay-action-cue[data-action="reroll"]').length,
+        teamWR: !!document.querySelector('.team-hero-wr'),
+        teamWRDetails: (() => {
+          const p = document.querySelector('.team-hero-wr');
+          if (!p) return null;
+          const cs = getComputedStyle(p);
+          return {
+            teams: [...p.querySelectorAll('.team-hero-wr-team')].map((t) => ({
+              label: t.getAttribute('aria-label'),
+              average: t.querySelector('.team-hero-wr-average strong')?.textContent,
+              rows: [...t.querySelectorAll('li')].map((r) => ({
+                name: r.querySelector('.team-hero-wr-name')?.textContent,
+                rate: r.lastElementChild?.textContent,
+              })),
+            })),
+            direction: p.dataset.direction,
+            difference: p.querySelector('.team-hero-wr-difference strong')?.textContent,
+            border: cs.borderTopColor,
+            background: cs.backgroundColor,
+            width: p.getBoundingClientRect().width,
+          };
+        })(),
       })`,
       );
 
     // --- blank before any draft: test mode on with the in-round frame -> nothing drawn (before advice) ---
+    e2e.setInitialTestFrame('gameplay');
     const clicked = await js(control, CLICK_TEST_MODE_JS);
     const win = await waitFor(() => e2e.getTestWindow(), 8_000);
     check(
@@ -378,6 +497,7 @@ async function main() {
     };
     // Warm up on the in-round frame (capture start-up is not what the 2 s bound measures); nothing may be
     // drawn.
+    await waitFor(() => js(control, `!!document.querySelector('select[aria-label="Test screenshot"]')`), 2000, 25);
     await setFrame('gameplay');
     await waitFor(
       () => captureAttempts >= 1 && js(control, '!!document.querySelector("video")?.videoWidth'),
@@ -387,7 +507,12 @@ async function main() {
     await sleep(600);
     // --- lobby status dot (non-draft frame), hover line, detect-miss ---
     {
-      const dot = await waitFor(() => js(overlay, 'window.__overlayDot ?? null'), 3_000, 100);
+      e2e.forceCaptureOff();
+      const dot = await waitFor(
+        () => js(overlay, `window.__overlayDot?.state === 'watching' ? window.__overlayDot : null`),
+        3_000,
+        100,
+      );
       const ow = overlay.getBounds();
       if (dot) {
         overlay.webContents.sendInputEvent({ type: 'mouseMove', x: Math.round(dot.cx), y: Math.round(dot.cy) });
@@ -404,7 +529,7 @@ async function main() {
           `gone=${!!gone} ignoresMouse=${e2e.overlayIgnoresMouseEvents}`,
         );
       }
-      // Detect now on a non-draft frame: "No draft found" within the limit, capture ends off, nothing drawn.
+      // Detect now on a non-draft frame reports the miss within the limit and keeps watching for the draft.
       const statusText = () =>
         js(control, `document.querySelector('.brawl-controls [role=status]')?.textContent ?? ''`);
       const captureBtn = () => js(control, `document.querySelector('.brawl-capture')?.textContent ?? ''`);
@@ -421,7 +546,7 @@ async function main() {
         'detect-miss',
         !!missed &&
           missMs <= 2_000 &&
-          (await captureBtn()) === 'Start capture' &&
+          (await captureBtn()) === 'Stop capture' &&
           after.drawn.length === 0 &&
           !after.panel,
         `status=${JSON.stringify(await statusText())} ${missMs}ms (limit 2000ms) btn=${await captureBtn()} drawn=${after.drawn.length}`,
@@ -444,7 +569,29 @@ async function main() {
       `${first.ms}ms (limit 2500ms) head="${first.last?.head}" cards="${first.last?.cards}"`,
     );
 
+    const counter = await waitFor(
+      () => js(overlay, `document.querySelector('.local-reroll-counter')?.textContent==='Re-rolls: 1'`),
+      2000,
+      50,
+    );
+    check('reroll-counter-visible', !!counter, 'Re-rolls: 1 read from the draft label');
+    const detailedPanel = await js(
+      overlay,
+      `(() => {
+      const p = document.querySelector('.overlay-panel');
+      return { rows:p?.querySelectorAll('.overlay-panel-card').length, text:p?.textContent };
+    })()`,
+    );
+    check(
+      'detailed-advice-visible',
+      detailedPanel.rows === 3 &&
+        detailedPanel.text.includes('round 1, choice 1') &&
+        detailedPanel.text.includes('% picks') &&
+        detailedPanel.text.includes('% wins'),
+      JSON.stringify(detailedPanel),
+    );
     // Overlay geometry + click-through while the draft is up.
+
     const bounds = win.getBounds();
     const ob = overlay.getBounds();
     const near = (a, b, t) => Math.abs(a - b) <= t;
@@ -487,6 +634,52 @@ async function main() {
       }
     }
     check('boxes-choice1', boxesOk, detail.join(' '));
+    const controlLayout = await js(
+      control,
+      `(() => {
+      const header = document.querySelector('.app-header')?.getBoundingClientRect();
+      const buttons = [...document.querySelectorAll('.header-actions .data-updates > button, .header-actions .overlay-settings > button')].map(b => b.getBoundingClientRect());
+      return { references: document.querySelectorAll('.hero-reference').length,
+        headerFits: !!header && header.left >= 0 && header.right <= innerWidth + 1,
+        buttonsFit: buttons.length === 2 && buttons.every(b => b.left >= 0 && b.right <= innerWidth + 1 && b.top >= header.top && b.bottom <= header.bottom + 1) };
+    })()`,
+    );
+    check(
+      'compact-header-and-single-reference',
+      controlLayout.references === 1 && controlLayout.headerFits && controlLayout.buttonsFit,
+      JSON.stringify(controlLayout),
+    );
+    fs.writeFileSync(path.join(ROOT, 'logs', 'win-control-ui.png'), (await control.webContents.capturePage()).toPNG());
+    check(
+      'take-action-cue',
+      cur.takeCues === 1 && cur.rerollCues === 0,
+      `take=${cur.takeCues} reroll=${cur.rerollCues}`,
+    );
+    const teamWR = await waitFor(async () => (await readOverlay()).teamWRDetails, 1_500, 50);
+    const teamWRPalette = {
+      positive: ['rgb(82, 227, 139)', 'rgba(18, 48, 32, 0.92)'],
+      negative: ['rgb(240, 120, 120)', 'rgba(58, 24, 28, 0.92)'],
+      neutral: ['rgb(119, 124, 128)', null],
+    }[teamWR?.direction];
+    check(
+      'round1-team-average-wr',
+      !!teamWR &&
+        teamWR.teams.length === 2 &&
+        teamWR.teams.map((t) => t.label).join('|') === 'Ours|Enemy' &&
+        teamWR.teams.every(
+          (t) =>
+            /^\d+\.\d%$/.test(t.average) &&
+            t.rows.length === 4 &&
+            t.rows.every((r) => r.name && /^\d+\.\d%$/.test(r.rate)),
+        ) &&
+        new Set(teamWR.teams.flatMap((t) => t.rows.map((r) => r.name))).size === 8 &&
+        /^[+\u2212-]?(?:\d+\.\d|<0\.1) pp$/.test(teamWR.difference.trim()) &&
+        !!teamWRPalette &&
+        teamWR.border === teamWRPalette[0] &&
+        (!teamWRPalette[1] || teamWR.background === teamWRPalette[1]) &&
+        teamWR.width <= 420.5,
+      JSON.stringify(teamWR),
+    );
     if (vid && bestPos) {
       await js(overlay, 'new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))');
       const cards = cur.drawn.filter((d) => d.plate && (d.kind === 'best' || d.kind === 'card'));
@@ -538,10 +731,16 @@ async function main() {
       const d = (await readOverlay()).drawn.find((r) => r.kind === 'reroll');
       const s = d && vid ? iou(scaleBox(c1.boxes.reroll, vid.w / 2000), d) : 0;
       check('reroll-box', s >= 0.5, `iou=${s.toFixed(2)}`);
+      const cues = await readOverlay();
+      check(
+        'reroll-action-cue',
+        cues.rerollCues === 1 && cues.takeCues === 0,
+        `take=${cues.takeCues} reroll=${cues.rerollCues}`,
+      );
       // next real state replaces the forced one (advice re-sent on change only): switch frame below re-syncs
     }
 
-    // --- leave the draft: gameplay frame -> ability panel with this round's points highlighted, then gone ---
+    // --- leave the draft: Reading, then twice-confirmed HUD points and this round's highlights, then gone ---
     const expectedNow = await js(
       control,
       `(() => {
@@ -554,6 +753,44 @@ async function main() {
       })()`,
     );
     await setFrame('gameplay');
+    // A deterministic positive HUD fixture goes through the dummy's real capture and worker OCR.
+    // It does not inject a point result or panel state. Geometry matches abilityPointsRect's centred HUD.
+    await js(
+      e2e.getTestWindow(),
+      `(() => {
+        const old = document.getElementById('e2e-known-ability-bank'); old?.remove();
+        const c = document.createElement('canvas'); c.id = 'e2e-known-ability-bank';
+        c.width = 65; c.height = 38;
+        const k = innerHeight / 1440, ox = (innerWidth - innerHeight * 16 / 9) / 2;
+        c.style.cssText = 'position:fixed;pointer-events:none;left:' + (ox + 1280 * k) + 'px;top:' + (1402 * k) + 'px;width:' + (65 * k) + 'px;height:' + (38 * k) + 'px';
+        const ctx = c.getContext('2d'); ctx.fillStyle = '#29201c'; ctx.fillRect(0, 0, 65, 38);
+        ctx.fillStyle = '#68be94'; ctx.font = 'bold 28px Arial'; ctx.fillText('6', 0, 30);
+        document.body.appendChild(c);
+        // Static window capture can stop presenting new video frames. Change one non-ink pixel
+        // without changing the glyph so the reader gets two genuine fresh captured samples.
+        let shade = false;
+        window.__e2eBankTimer = setInterval(() => {
+          shade = !shade; ctx.fillStyle = shade ? '#29201c' : '#302925'; ctx.fillRect(64, 0, 1, 1);
+        }, 100);
+        return true;
+      })()`,
+    );
+    const itemCloseStarted = Date.now();
+    const itemAdviceGone = await waitFor(
+      async () => {
+        const s = await readOverlay();
+        return !s.panel && s.drawn.length === 0 && !s.ap && s.takeCues === 0 && s.rerollCues === 0 && !s.teamWR
+          ? s
+          : null;
+      },
+      1_000,
+      25,
+    );
+    check(
+      'item-advice-clears-before-ability-tip',
+      !!itemAdviceGone,
+      `${Date.now() - itemCloseStarted}ms panel=${itemAdviceGone?.panel} drawn=${itemAdviceGone?.drawn.length} ability=${itemAdviceGone?.ap}`,
+    );
     const tipSeen = await waitFor(
       async () => {
         const s = await readOverlay();
@@ -565,8 +802,8 @@ async function main() {
     const tipStart = Date.now();
     check(
       'ability-panel-appears',
-      !!tipSeen && tipSeen.now.length > 0 && JSON.stringify(tipSeen.now) === JSON.stringify(expectedNow),
-      `expected=${JSON.stringify(expectedNow)} highlighted=${JSON.stringify(tipSeen?.now ?? null)}`,
+      !!tipSeen && tipSeen.apTitle.includes('Reading') && tipSeen.now.length === 0,
+      `title=${JSON.stringify(tipSeen?.apTitle)} highlighted=${JSON.stringify(tipSeen?.now ?? null)}`,
     );
     check(
       'ability-panel-no-drawing',
@@ -574,6 +811,38 @@ async function main() {
       JSON.stringify(tipSeen?.drawn.map((r) => r.kind)),
     );
     check('ability-panel-overlay-visible', overlay.isVisible(), `visible=${overlay.isVisible()}`);
+    const tipStyle = await js(
+      overlay,
+      `(() => { const e=document.querySelector('.overlay-ap'); if(!e)return null;const r=e.getBoundingClientRect();return {left:r.left,bottom:innerHeight-r.bottom,width:r.width,opacity:Number(getComputedStyle(e).opacity)};})()`,
+    );
+    check(
+      'compact-ability-tip',
+      !!tipStyle &&
+        Math.abs(tipStyle.left - 16) < 1 &&
+        Math.abs(tipStyle.bottom - 16) < 1 &&
+        tipStyle.width <= 316 &&
+        tipStyle.opacity === 0.5,
+      JSON.stringify(tipStyle),
+    );
+
+    const confirmedPoints = await waitFor(
+      async () => {
+        const s = await readOverlay();
+        return s.ap && s.apTitle.includes('6 available') && s.now.length > 0 ? s : null;
+      },
+      TIP_MS,
+      25,
+    );
+    check(
+      'ability-points-confirmed-highlights',
+      !!confirmedPoints && JSON.stringify(confirmedPoints.now) === JSON.stringify(expectedNow),
+      `expected=${JSON.stringify(expectedNow)} title=${JSON.stringify(confirmedPoints?.apTitle)} highlighted=${JSON.stringify(confirmedPoints?.now ?? null)}`,
+    );
+    await js(
+      e2e.getTestWindow(),
+      `clearInterval(window.__e2eBankTimer); document.getElementById('e2e-known-ability-bank')?.remove()`,
+    );
+
     const gone = await waitFor(async () => !(await readOverlay()).ap, TIP_MS + 2_000, 100);
     const shown = Date.now() - tipStart;
     check(
@@ -649,10 +918,10 @@ async function main() {
     // --- off ---
     await js(control, CLICK_TEST_MODE_JS);
     const closed = await waitFor(() => !e2e.getTestWindow(), 6_000);
-    await sleep(300);
+    const overlayHidden = await waitFor(() => !overlay.isVisible(), 1_000, 50);
     check(
       'testmode-off',
-      !!closed && !overlay.isVisible() && !control.isDestroyed(),
+      !!closed && !!overlayHidden && !control.isDestroyed(),
       `dummy=${e2e.getTestWindow() ? 'open' : 'closed'} overlayVisible=${overlay.isVisible()}`,
     );
   }
@@ -697,7 +966,7 @@ function scaleBox(box, scale) {
 }
 
 // Reads the overlay canvas's own pixels (alpha-aware, unlike capturePage on a transparent window) and checks: the best
-// plate is filled teal, the other plates are not, the best card has a teal outline, the others have none.
+// plate is filled green, the other plates are not, the best card has a green outline, the others have none.
 async function checkPixels(overlay, drawn, bestPos) {
   const px = await overlay.webContents.executeJavaScript(
     `(() => {
@@ -714,15 +983,15 @@ async function checkPixels(overlay, drawn, bestPos) {
       }));
     })()`,
   );
-  const isTeal = (p) => p[3] > 200 && p[1] >= 150 && p[2] >= 140 && p[0] <= 90;
+  const isGreen = (p) => p[3] > 200 && p[1] >= 150 && p[1] >= p[2] + 50 && p[0] <= 110;
   const best = px.find((p) => p.card === bestPos);
   const others = px.filter((p) => p.card !== bestPos);
   const pass =
     !!best &&
-    isTeal(best.fill) &&
-    best.edge.some(isTeal) &&
+    isGreen(best.fill) &&
+    best.edge.some(isGreen) &&
     others.length > 0 &&
-    others.every((o) => !isTeal(o.fill) && !o.edge.some(isTeal));
+    others.every((o) => !isGreen(o.fill) && !o.edge.some(isGreen));
   return { pass, detail: `best=${JSON.stringify(best)} others=${JSON.stringify(others)}` };
 }
 

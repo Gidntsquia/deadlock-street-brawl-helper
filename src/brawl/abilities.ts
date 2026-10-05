@@ -4,6 +4,8 @@ import type { BrawlInput } from './types';
 export interface BrawlAbilityOrder {
   steps: AbilityStep[];
   support: { matches: number; winRate: number } | null;
+  /** Number of steps supported by the observed prefix; remaining steps are deterministic fallback. */
+  supportedSteps?: number;
   alternatives: { steps: AbilityStep[]; matches: number; winRate: number }[];
 }
 
@@ -36,8 +38,8 @@ const shrunk = (wins: number, matches: number, mean: number, k: number) =>
  *  rate of every sequence that starts with the whole chosen order. */
 export function brawlAbilityOrder(input: BrawlInput): BrawlAbilityOrder {
   const stats: AbilityOrderStat[] = input.analytics.ability_order_stats ?? [];
-  const byId = new Map(input.abilities.map((a) => [a.id, a]));
-  const sig = input.abilities.filter((a) => input.hero.abilities.includes(a.class_name));
+  const sig = heroBarAbilities(input.hero, input.abilities);
+  const byId = new Map(sig.map((a) => [a.id, a]));
   const sigIds = new Set(sig.map((a) => a.id));
   const usable = stats.filter((s) => s.abilities.length > 0 && s.abilities.every((id) => sigIds.has(id)));
   const totalW = usable.reduce((a, s) => a + s.wins, 0);
@@ -69,15 +71,27 @@ export function brawlAbilityOrder(input: BrawlInput): BrawlAbilityOrder {
     support = { matches: best.g.matches, winRate: best.g.wins / best.g.matches };
   }
 
-  if (!chosen.length) {
-    const ids = input.hero.abilities
-      .map((c) => sig.find((a) => a.class_name === c)?.id)
-      .filter((x): x is number => !!x);
-    const seq = [...ids];
-    for (let t = 0; t < 3; t++) for (const id of ids) seq.push(id);
-    return { steps: stepsFor(seq, byId), support: null, alternatives: [] };
-  }
-  return { steps: stepsFor(chosen, byId), support, alternatives: [] };
+  const supportedSteps = chosen.length;
+  // Finish the legal prefix in bar order, tier by tier. Evidence applies only to the prefix above.
+  for (const tier of [1, 2, 3])
+    for (const ability of sig) if (chosen.filter((id) => id === ability.id).length < tier) chosen.push(ability.id);
+  return { steps: stepsFor(chosen, byId), support, supportedSteps, alternatives: [] };
+}
+
+/** Shared deterministic bar order for both the reference list and the round panel. */
+export function heroBarAbilities(hero: Hero, abilities: Ability[]): Ability[] {
+  return hero.abilities
+    .slice(0, 4)
+    .map((className) => abilities.find((ability) => ability.class_name === className))
+    .filter((ability): ability is Ability => !!ability);
+}
+
+export function abilityOrderEvidence(order: BrawlAbilityOrder): string {
+  const evidence = evidenceLine(order.support);
+  const supported = order.supportedSteps ?? order.steps.length;
+  return order.support && supported < order.steps.length
+    ? `${evidence}; first ${supported} upgrades supported, remaining upgrades use fallback order`
+    : evidence;
 }
 
 /** Index of the order step nearest this draft choice, for highlighting the ability-order list. */
@@ -102,6 +116,7 @@ interface PanelSlot {
 
 /** The ability upgrade panel for one round: the hero's four abilities in bar order with each point's state. */
 export interface AbilityPanelData {
+  availablePoints?: number | null;
   round: number;
   /** Ability points this round hands out (6/6/5/5/10). */
   points: number;
@@ -158,12 +173,12 @@ export function abilityPanelFor(
 ): AbilityPanelData {
   const reliable = !!order.support && order.support.matches >= MIN_ORDER_MATCHES;
   const rounds = reliable ? pillRounds(order, hero) : new Map<string, number>();
-  const slots = hero.abilities.slice(0, 4).map((cls, i): PanelSlot => {
+  const slots = heroBarAbilities(hero, abilities).map((ability, i): PanelSlot => {
+    const cls = ability.class_name;
     const at = (tier: number): PointState => {
       const r = rounds.get(`${cls}:${tier}`);
       return r === undefined || r > round ? 'later' : r === round ? 'now' : 'done';
     };
-    const ability = abilities.find((a) => a.class_name === cls);
     return {
       name: ability?.name ?? cls,
       icon: ability?.image_webp ?? '',
@@ -171,5 +186,5 @@ export function abilityPanelFor(
       tiers: [at(3), at(2), at(1)],
     };
   });
-  return { round, points: AP_PER_ROUND[round - 1] ?? 0, slots, evidence: evidenceLine(order.support) };
+  return { round, points: AP_PER_ROUND[round - 1] ?? 0, slots, evidence: abilityOrderEvidence(order) };
 }

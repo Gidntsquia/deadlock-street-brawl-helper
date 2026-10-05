@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import sharp from 'sharp';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { cardSquares, draftRegions } from '../../src/brawl/recognise';
+import { cardSquares, draftRegions, inventoryRegions } from '../../src/brawl/recognise';
 import type { WorkerIn, WorkerOut } from '../../src/brawl/worker';
 import type { Item } from '../../src/types';
 
@@ -50,7 +50,7 @@ async function frame(name: string): Promise<Out> {
   posted.length = 0;
   send({ type: 'frame', width: W, height: H, regions: msgRegions, prefer: [] });
   clock += 70;
-  const out = posted.find((m): m is Out => m.type === 'result')!;
+  const out = posted.filter((m): m is Out => m.type === 'result' && !m.identityOnly).at(-1)!;
   await new Promise((r) => setTimeout(r, 40));
   return out;
 }
@@ -71,14 +71,17 @@ beforeAll(async () => {
   send = (m) => handler({ data: m });
   const c1 = await load('choice1'),
     c2 = await load('choice2');
-  const labelsAndGrid = [3, 4, ...regions.keys()].filter((k) => k === 3 || k === 4 || k >= 6);
+  const inventory = inventoryRegions(W, H);
+  const labelsAndGrid = [...regions.keys()].filter(
+    (k) => k === 3 || k === 4 || inventory.some((r) => r.x === regions[k]!.x && r.y === regions[k]!.y),
+  );
   frames.c1 = c1;
   frames.c2 = c2;
   frames.oldCardsNewLabel = mix(c1, c2, labelsAndGrid); // picked: label and grid moved on, old cards still up
   frames.newCardsOldLabel = mix(c2, c1, [3, 4]); // the new cards in before the label
   frames.halfSwapped = mix(c2, c1, [1, 2]); // only the left card replaced so far
   // A re-roll: same labels and grid, three new cards with their names.
-  frames.rerolled = mix(c1, c2, [0, 1, 2, ...[...regions.keys()].slice(-6)]);
+  frames.rerolled = mix(c1, c2, [0, 1, 2, ...[...regions.keys()].slice(-4, -1)]);
   // Hover states on choice1's left card: a glow over the card, the icon nudged a few px (the search lands on another
   // step), and the icon covered by a dark tooltip.
   const [sq] = cardSquares(W, H);
@@ -110,7 +113,10 @@ afterAll(() => {
   vi.restoreAllMocks();
 });
 
-const accepts = (outs: Out[]) => outs.filter((o) => o.accepted).map((o) => [o.key, o.meta!.round, o.meta!.choice]);
+const accepts = (outs: Out[]) =>
+  outs
+    .filter((o) => o.accepted && o.transition !== 'metadata' && o.transition !== 'hero')
+    .map((o) => [o.key, o.meta!.round, o.meta!.choice]);
 
 describe('worker: the draft gate on real frames', () => {
   it('advises choice 1, spots the pick, never re-advises the old cards, then advises choice 2', async () => {
@@ -154,7 +160,8 @@ describe('worker: the draft gate on real frames', () => {
   it('keeps the advice and the circles still through hovers, and moves to re-rolled cards', async () => {
     send({ type: 'reset' });
     const c1Key = '1548066885,2829638276,3633614685';
-    const first = await run('c1', 12);
+    const first: Out[] = [];
+    for (let n = 0; n < 120 && !first.some((o) => o.accepted); n++) first.push(await frame('c1'));
     expect(accepts(first)).toEqual([[c1Key, 1, 1]]);
     // every state of a hover, a few times over: the accepted set never drops, never re-accepts, never moves
     const squares = cardSquares(W, H);
@@ -165,7 +172,8 @@ describe('worker: the draft gate on real frames', () => {
     for (const o of hover)
       expect(o.reads.map((r) => [r.match.x, r.match.y, r.match.edge])).toEqual(squares.map((q) => [q.x, q.y, q.edge]));
     // A re-roll: the old advice goes at once, the new cards are advised under the same labels.
-    const after = await run('rerolled', 16);
+    const after = await run('rerolled', 2);
+    for (let n = 0; n < 120 && !after.some((o) => o.accepted); n++) after.push(await frame('rerolled'));
     expect(after.slice(0, 2).some((o) => !o.live)).toBe(true);
     const got = accepts(after);
     expect(got).toHaveLength(1);
