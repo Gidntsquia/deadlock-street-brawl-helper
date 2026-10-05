@@ -4,6 +4,7 @@ import { analyseDraft, type DraftStats, type StatFrame } from './sessionStats';
 
 /** Frames kept per draft, at these times after the draft screen was first seen (ms), plus the accepted frame. */
 const KEEP_AT = [0, 300, 700, 1200, 1800, 2500, 3200];
+const MAX_GAP_MS = 2000; // a silence this long between draft frames restarts the keep schedule
 const AFTER_ACCEPT_MS = 1000;
 const MIN_MISS_MS = 1000; // a draft that never got plates is recorded only if it was up this long
 
@@ -25,9 +26,16 @@ export class DraftLog {
   private frames: StatFrame[] = [];
   private lastKey = '';
   private startedAt = 0;
+  private lastSeen = 0;
 
   /** Called for each draft frame sent to the worker: whether to keep it, and how much of it. */
   wantFrame(now: number): Shot {
+    // No frames for a while (capture was idle): a new run of kept frames starts, so they sit together.
+    if (this.t0 !== null && now - this.lastSeen > MAX_GAP_MS && this.acceptedAt === null) {
+      this.t0 = now;
+      this.kept = 0;
+    }
+    this.lastSeen = now;
     if (this.t0 === null) {
       this.t0 = now;
       this.startedAt = Date.now();
