@@ -20,6 +20,8 @@
     "icon-index": "node scripts/build-icon-index.mjs",
     "brawl": "npx tsx scripts/brawl-cli.ts",
     "brawl:see": "npx tsx scripts/brawl-recognise.ts",
+    "brawl:replay": "npx tsx scripts/replay.ts",
+    "brawl:fixture": "npx tsx scripts/session-fixture.ts",
     "preview": "vite preview",
     "win:setup": "bash scripts/win/setup.sh",
     "win:sync": "bash scripts/win/sync.sh",
