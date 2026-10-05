@@ -1278,6 +1278,14 @@ footer {
   color: rgb(243, 229, 210);
   font-size: calc(20 * var(--u));
 }
+.ap-evidence {
+  grid-column: 1 / -1;
+  text-align: center;
+  margin-top: calc(-6 * var(--u));
+  font-size: calc(14 * var(--u));
+  font-weight: 600;
+  color: rgb(170, 158, 140);
+}
 .ap-col {
   display: flex;
   flex-direction: column;
