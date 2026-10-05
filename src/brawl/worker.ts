@@ -193,7 +193,10 @@ const applyNames = (
       rare: l.rare,
       match: { ...r.match, itemId: l.id },
     });
-    if (lock && sig && sameName(lock.sig, sig)) return asLock(lock);
+    if (lock && sig && sameName(lock.sig, sig)) {
+      slotSure[slot] = true;
+      return asLock(lock);
+    }
     // The line changed (or is hidden): read it again unless that exact picture already failed a moment ago.
     const fail = nameFail[slot];
     const failedThis =
@@ -568,9 +571,7 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
     ready: !named.pending && (!set || (rr.set === set && rr.value !== null)),
     key: fbDue ? fbKey : key,
     force: fbDue,
-    present: reads
-      .filter((r, i) => r.present && (!inFallback || named.slotSure[i]))
-      .map((r) => r.itemId),
+    present: reads.filter((r, i) => r.present && (!inFallback || named.slotSure[i])).map((r) => r.itemId),
     round: labels.round,
     choice: labels.choice,
     now: performance.now(),
@@ -582,7 +583,7 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
   if (accepted) {
     readingSince = null;
     frozenReads = fbDue ? fbReads : reads;
-    acceptedKey = key;
+    acceptedKey = fbDue ? fbKey : key;
     acceptedChoice = labels.choice;
     acceptedRound = labels.round;
     const bsig = barSig(img);

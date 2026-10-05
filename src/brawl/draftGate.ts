@@ -58,7 +58,11 @@ export const initialGate = (): GateState => ({ cand: null, last: null, live: fal
 /** Off the draft screen: forget everything except which sets were already picked from. */
 export const offScreenGate = (s: GateState): GateState => ({ ...initialGate(), spent: s.spent });
 
-const cardIds = (key: string) => key.split(',').map((k) => Number(k.replace('+', '')));
+const cardIds = (key: string) =>
+  key
+    .split(',')
+    .map((k) => Number(k.replace('+', '')))
+    .filter((n) => n > 0); // a '?' slot has no id
 /** Same three items, whatever the enhanced ('+') reads say: that flag wobbles under the hover glow. */
 const sameSet = (a: string, b: string) => {
   const x = a.replace(/\+/g, '').split(','),
