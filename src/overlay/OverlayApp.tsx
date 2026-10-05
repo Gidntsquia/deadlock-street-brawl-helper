@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   drawReads,
+  drawReading,
   drawDot,
   dotBadgeRect,
   gradesFromAdvice,
@@ -9,6 +10,7 @@ import {
   type DrawnRect,
   type OverlayState,
 } from '../brawl/draw';
+import { cardSquares } from '../brawl/recognise';
 import { ScoreTip } from '../components/ScoreTip';
 import { AbilityPanel } from '../components/AbilityPanel';
 import { DOT_TEXT, type DotState } from '../brawl/lobbyDot';
@@ -18,6 +20,7 @@ declare global {
   interface Window {
     __overlayDrawn?: DrawnRect[];
     __overlayAdvice?: OverlayState['advice'];
+    __overlayReading?: boolean;
     __overlayDot?: { cx: number; cy: number; r: number; color: string; state: DotState } | null;
     __overlayDotTip?: string | null;
   }
@@ -50,6 +53,7 @@ export default function OverlayApp() {
       drawnRef.current = [];
       if (window.brawlAPI?.isE2E) {
         window.__overlayDrawn = [];
+        window.__overlayReading = false;
         window.__overlayAdvice = null;
       }
       return;
@@ -73,11 +77,15 @@ export default function OverlayApp() {
           gradesFromAdvice(state.advice),
         ),
       );
+    // The `Reading` sign stands in until the plates come, and is never drawn with them.
+    const reading = state.draft && !!state.reading && !drawn.length;
+    if (reading) drawReading(ctx, cardSquares(state.frameW, state.frameH)[1]!, sx, sy);
     // e2e-only: expose exactly what was stroked (frame px) so the harness can verify boxes without
     // re-deriving them from reads (PLAN.md item 3's boxes-<frame> check).
     drawnRef.current = drawn;
     if (window.brawlAPI?.isE2E) {
       window.__overlayDrawn = drawn;
+      window.__overlayReading = reading;
       window.__overlayAdvice = state.draft ? state.advice : null; // what the harness reads in place of the old panel
     }
   };

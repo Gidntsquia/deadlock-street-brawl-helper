@@ -373,6 +373,22 @@ function expectedBestOfSet(
   };
 }
 
+/** The highest score any single card could have in set `setIndex` of this round (normal or rare tier, enhanced or not).
+ *  When a card could not be read, a sure card is only worth taking over it if it beats this. */
+export function unknownCeiling(input: BrawlInput, state: DraftState, setIndex: number): number {
+  const bases = baseScores(input, state.enemies);
+  const pair = pairLifts(input);
+  const lay = roundTiers(input, state.round)[setIndex];
+  const tiers = new Set<number>(lay ? [lay.normal, lay.rare] : []);
+  let best = -Infinity;
+  for (const i of input.items) {
+    if (!draftable(i) || (tiers.size && !tiers.has(i.item_tier))) continue;
+    for (const enhanced of [false, true])
+      best = Math.max(best, scoreOffer(input, bases, pair, state, { itemId: i.id, enhanced }).score);
+  }
+  return best;
+}
+
 /** Ranks every card, chooses the jointly best pick per set, and says whether a reroll is worth it. */
 export function adviseDraft(input: BrawlInput, state: DraftState): DraftAdvice {
   const bases = baseScores(input, state.enemies);

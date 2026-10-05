@@ -28,6 +28,7 @@ export interface GateFrame {
   choice: number;
   now: number; // ms
   inventory: number[] | null; // the inventory grid, once two reads agree; null when not known
+  force?: boolean; // accept now whatever the settle time and the pending reads say (the 2.5 s fallback)
   ready?: boolean; // false: a read the advice needs (the re-roll caption) is still in flight; hold the accept
 }
 
@@ -59,7 +60,12 @@ export const offScreenGate = (s: GateState): GateState => ({ ...initialGate(), s
 
 const cardIds = (key: string) => key.split(',').map((k) => Number(k.replace('+', '')));
 /** Same three items, whatever the enhanced ('+') reads say: that flag wobbles under the hover glow. */
-const sameSet = (a: string, b: string) => a.replace(/\+/g, '') === b.replace(/\+/g, '');
+const sameSet = (a: string, b: string) => {
+  const x = a.replace(/\+/g, '').split(','),
+    y = b.replace(/\+/g, '').split(',');
+  // a '?' (a card the fallback could not read) stands for whatever the other set has in that slot
+  return x.length === y.length && x.every((v, i) => v === y[i] || v === '?' || y[i] === '?');
+};
 const step = (l: { round: number; choice: number }) => (l.round > 0 ? (l.round - 1) * 3 + l.choice : 0);
 /** Same labels; an unread round (0) matches any round. */
 const sameLabels = (a: Labelled, b: Labelled) => a.choice === b.choice && (!a.round || !b.round || a.round === b.round);
@@ -130,13 +136,13 @@ export function stepGate(s: GateState, f: GateFrame): GateOut {
   // first read under a stale label). Drop the advice until the new screen settles.
   if (live && cand.frames >= 2) live = false;
 
-  if (cand.frames < 2) return out(false);
+  if (cand.frames < 2 && !f.force) return out(false);
   const back = last !== null && step(now) > 0 && step(last) > 0 && step(now) < step(last);
   const relabel = last !== null && sameSet(last.key, f.key) && !sameLabels(last, now);
   // The set that was just up comes back under the same labels (a hover tooltip moved away): no need to wait.
   const returning = last !== null && sameSet(last.key, f.key) && sameLabels(last, now);
   const need = returning ? 0 : relabel || back ? RELABEL_SETTLE_MS : SETTLE_MS;
-  if (f.now - cand.since < need || f.ready === false) return out(false);
+  if (!f.force && (f.now - cand.since < need || f.ready === false)) return out(false);
 
   last = { key: f.key, round: cand.round, choice: f.choice, inv: f.inventory ?? last?.inv ?? null };
   live = true;
