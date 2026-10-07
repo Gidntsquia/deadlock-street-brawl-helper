@@ -26,6 +26,8 @@ export interface ReplayDraft {
   inventory: number[] | null;
   /** Last frame on which all three cards had a read, -1 when none. */
   lastFull: number;
+  /** Per slot, whether the accepted set read the card as enhanced. */
+  enhanced: boolean[];
 }
 
 let clock = 0;
@@ -88,6 +90,7 @@ export async function replayDraft(dir: string, opts: ReplayOpts = {}): Promise<R
   let first = true;
   let acceptFrame = -1;
   let lastFull = -1;
+  let enhanced: boolean[] = [false, false, false];
   let hero = 0;
   let rerolls: number | null = null;
   let inventory: number[] | null = null;
@@ -120,6 +123,7 @@ export async function replayDraft(dir: string, opts: ReplayOpts = {}): Promise<R
     const res = posted.find((m): m is Result => m.type === 'result');
     if (!res) continue;
     if (res.accepted && acceptFrame < 0) acceptFrame = fi;
+    if (res.accepted) enhanced = res.reads.map((x) => x.present && !x.unsure && x.enhanced);
     if (res.reads.length === 3 && res.reads.every((x) => x.present && !x.unsure)) lastFull = fi;
     if (res.meta?.self) hero = res.meta.self;
     // the accepted set carries the count it was accepted with; later changes arrive as separate 'rerolls' messages
@@ -159,6 +163,7 @@ export async function replayDraft(dir: string, opts: ReplayOpts = {}): Promise<R
     rerolls,
     inventory,
     lastFull,
+    enhanced,
   };
 }
 

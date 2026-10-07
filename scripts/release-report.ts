@@ -85,7 +85,7 @@ const body = rows
     const take = d.live.shown.takeId;
     return `<tr class="${kind(verdict)}"><td>${esc(key)}<br>R${d.round} C${d.choice}</td>
 <td class="crops">${crops.map((c) => `<img src="${c}" alt="">`).join('')}</td>
-<td>${s.items.length ? s.items.map((id) => esc(iname(id))).join('<br>') + (held >= 0 ? `<br><small>recording too short to settle: frame ${held} held on screen</small>` : '') : 'nothing accepted'}</td>
+<td>${s.items.length ? s.items.map((id, k) => esc(iname(id)) + (d.enhanced[k] ? ' <b>(enhanced)</b>' : '')).join('<br>') + (held >= 0 ? `<br><small>recording too short to settle: frame ${held} held on screen</small>` : '') : 'nothing accepted'}</td>
 <td>${esc(hname(d.hero || d.live.hero.id))}<br><small>live: ${d.live.hero.source}</small></td>
 <td>${d.rerolls ?? 'n/a'}</td><td>${s.unsure}</td>
 <td>${take ? esc(iname(take)) : 'none'}</td>
@@ -117,7 +117,7 @@ writeFileSync(
   JSON.stringify(
     rows.map((r) => ({
       key: r.key,
-      items: r.d.stats.items.map(iname),
+      items: r.d.stats.items.map((id, k) => iname(id) + (r.d.enhanced[k] ? ' (enhanced)' : '')),
       unsure: r.d.stats.unsure,
       live: r.d.live.items.map(iname),
     })),
