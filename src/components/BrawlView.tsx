@@ -440,7 +440,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
     // The worker stays alive but silent (it only ever ticks in reply to a message) so the next draft does not pay for
-    // a new worker and icon index; 'stop' frees its OCR engine.
+    // a new worker and icon index; its OCR engines are freed 10 min after 'stop' unless capture starts again.
     workerRef.current?.postMessage({ type: 'stop' } satisfies WorkerIn);
     tipStateRef.current = initialTip();
     setDraftOpen(false);

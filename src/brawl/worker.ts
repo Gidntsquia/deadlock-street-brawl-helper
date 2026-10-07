@@ -58,7 +58,7 @@ export type WorkerIn =
     }
   | { type: 'idle' } // the page had no frame ready for the last tick
   | { type: 'reset' } // capture (re)started: forget the last draft and start ticking again
-  | { type: 'stop' }; // capture stopped: forget the last draft and free the OCR engine; the worker then stays silent
+  | { type: 'stop' }; // capture stopped: forget the last draft (the OCR engines are freed after OCR_KEEP_MS); the worker then stays silent
 
 /** The worker paces the capture: it asks the page for a frame, reads it, waits, asks again. Page timers are
  *  throttled to once a second (Chrome: once a minute after five minutes) while the game has the foreground and the
@@ -129,6 +129,9 @@ let nameChoice = 0,
 const REROLL_WINDOW_MS = 3000;
 let rerollAt: number | null = null; // when the cards were last seen re-rolling (this choice)
 const rerolling = (now: number) => rerollAt !== null && now - rerollAt < REROLL_WINDOW_MS;
+/** The locked cards are the set being advised for this choice: only then is other lettering under a lock a hover. Right
+ *  after the CHOICE label moves on, the gate can still hold the previous choice's set as live. */
+const advising = () => gate.live && acceptedChoice === nameChoice;
 const forgetNames = () => {
   locks = [null, null, null];
   nameFail = [null, null, null];
@@ -268,9 +271,13 @@ const applyNames = (
             nameFail[twin] = { sig: locks[twin]!.sig, at, since: nameFail[twin]?.since ?? at };
             nameFail[slot] = { sig, at, since: nameFail[slot]?.since ?? t };
             locks[twin] = locks[slot] = null;
-          } else if (m && ((prev && prev.id !== m.itemId && !rerolling(performance.now())) || twin >= 0)) {
-            // another item's name over a locked card without a re-roll: the hover tooltip's title. Keep the lock, and
-            // do not read this same picture again for a moment.
+          } else if (
+            m &&
+            ((prev && prev.id !== m.itemId && advising() && !rerolling(performance.now())) || twin >= 0)
+          ) {
+            // another item's name over the advised card without a re-roll: the hover tooltip's title. Keep the lock, and
+            // do not read this same picture again for a moment. Before the accept the lock moves: the game swaps the
+            // CHOICE label a beat before the cards, so the first lock can be the previous choice's card.
             nameFail[slot] = { sig, at: performance.now(), since: nameFail[slot]?.since ?? t };
           } else if (m) {
             locks[slot] = prev?.id === m.itemId ? { ...prev, sig } : { id: m.itemId, sig, enhanced, rare };
@@ -294,6 +301,9 @@ const applyNames = (
         changed = true;
         return r;
       }
+      // Before the accept, other lettering under a lock may be the real card replacing the previous choice's: hold the
+      // accept until that picture has been read (a hover tooltip's title is caught by the twin check).
+      if (!advising() && sig && hasInk(sig) && otherName(lock.sig, sig) && !failedThis) pending = true;
       slotSure[slot] = true;
       return asLock(lock);
     }
@@ -523,6 +533,10 @@ const sameBar = (a: Uint8Array, b: Uint8Array) => {
 };
 const post = (m: WorkerOut) => (self as unknown as { postMessage(m: unknown): void }).postMessage(m);
 let timer: ReturnType<typeof setTimeout> | undefined;
+// Capture stops between rounds, and loading the OCR engines again on the next draft took longer than FALLBACK_MS on a
+// PC running the game: the first cards of a round came up as `?`. The engines stay loaded this long after a stop.
+const OCR_KEEP_MS = 10 * 60_000;
+let ocrFree: ReturnType<typeof setTimeout> | undefined;
 const tick = (after: number, full: boolean) => {
   clearTimeout(timer);
   timer = setTimeout(() => post({ type: 'tick', full }), after);
@@ -535,7 +549,9 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
     forgetDraft();
     // matchBar is kept: capture stops between every round, and the bar fingerprint is checked before it is reused
     // (a new match has different portraits), so the ~0.7 s hero bar read is paid once per match, not once per round.
-    void terminateOCR();
+    clearTimeout(ocrFree);
+    ocrFree = setTimeout(() => void terminateOCR(), OCR_KEEP_MS);
+    (ocrFree as { unref?: () => void }).unref?.(); // Node (tests, CLI): never keep the process alive for it
     return;
   }
   if (msg.type === 'warm') {
@@ -553,7 +569,8 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
       intervalMs = msg.intervalMs;
     }
     forgetDraft();
-    warmOCR(); // capture only runs around the draft now: load the OCR engine with it (freed again on 'stop')
+    clearTimeout(ocrFree);
+    warmOCR(); // capture only runs around the draft now: load the OCR engines with it (freed OCR_KEEP_MS after 'stop')
     tick(0, false);
     return;
   }

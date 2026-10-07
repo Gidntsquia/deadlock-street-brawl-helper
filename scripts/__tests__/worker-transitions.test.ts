@@ -180,6 +180,34 @@ describe('worker: the draft gate on real frames', () => {
     expect(second.at(-1)!.live).toBe(true);
   });
 
+  it('moves to the new cards when their names were first read off the old cards under the new label', async () => {
+    // Live (2560x1440, 2026-10-07): the CHOICE label changed a beat before the cards, the old names were read and locked
+    // under the new label, and the real names that followed were taken for hover tooltips: the previous choice's item
+    // was advised, or the set never settled and fell back to `?`.
+    send({ type: 'reset' });
+    const c1Ids = [1548066885, 2829638276, 3633614685];
+    const first: Out[] = [];
+    for (let i = 0; i < 120 && !first.some((o) => o.accepted); i++) first.push(await frame('c1'));
+    expect(accepts(first)).toEqual([[c1Ids.join(','), 1, 1]]);
+    // the old cards under the new label until all three of their names have been read again
+    const read = new Set<number>();
+    for (let i = 0; i < 120 && read.size < 3; i++) {
+      await frame('oldCardsNewLabel');
+      for (const m of posted) if (m.type === 'name' && c1Ids.includes(m.itemId)) read.add(m.slot);
+    }
+    expect(read.size).toBe(3);
+    const second: Out[] = [];
+    for (let i = 0; i < 120 && !second.some((o) => o.accepted); i++) second.push(await frame('c2'));
+    const got = accepts(second);
+    expect(got).toHaveLength(1);
+    expect(got[0]!.slice(1)).toEqual([1, 2]);
+    expect(
+      String(got[0]![0])
+        .split(',')
+        .some((id: string) => c1Ids.includes(Number(id.replace('+', '')))),
+    ).toBe(false);
+  });
+
   it('never advises one item twice when a tooltip prints the next card name over a card before it is read', async () => {
     send({ type: 'reset' });
     const c1Key = '1548066885,2829638276,3633614685';
