@@ -103,8 +103,10 @@ const setNames = (n: Record<number, string> | undefined) => {
 // decides which item a card is. Each slot keeps a lock: the item its name line last read as, plus a fingerprint of that
 // line's pixels. While the line looks the same, the slot is that item whatever the icon search says this frame (a hover
 // glow, an animation, a search landing one step off): the per-frame icon wobble never reaches the gate or the overlay.
-// A changed line (re-roll, next choice, a tooltip over it) is read again (~30 ms); only a clear read of another item
-// moves the lock. Until a slot has its first lock it is "waiting" and the set is not offered to the gate, so a wrong
+// A changed line (re-roll, next choice, a tooltip over it) is read again (~30 ms). Hovering a card grows it and the
+// game's tooltip covers the next card's name line, often with an item name of its own, so a changed line under a lock
+// is a hover and keeps the lock: only after a re-roll (two name lines blank in one frame as the cards fade, or the
+// re-roll count dropping) does a clear read of another item move the lock. Until a slot has its first lock it is "waiting" and the set is not offered to the gate, so a wrong
 // icon guess is never advised first. Without a name list (CLI tools) or after a read failed, the icon guess stands.
 const NAME_RETRY_MS = 700;
 /** An icon match at least this good is trusted on its own; below it a card waits for its name. */
@@ -123,10 +125,15 @@ let nameFail: ({ sig: Uint8Array; at: number; since: number } | null)[] = [null,
 const nameBusy = [false, false, false];
 let nameChoice = 0,
   nameGen = 0; // bumped when locks are dropped, so a read started before that lands nowhere
+/** For this long after a re-roll is seen, a changed name line is a new card rather than a hover. */
+const REROLL_WINDOW_MS = 3000;
+let rerollAt: number | null = null; // when the cards were last seen re-rolling (this choice)
+const rerolling = (now: number) => rerollAt !== null && now - rerollAt < REROLL_WINDOW_MS;
 const forgetNames = () => {
   locks = [null, null, null];
   nameFail = [null, null, null];
   nameChoice = 0;
+  rerollAt = null;
   nameGen++;
 };
 
@@ -204,9 +211,13 @@ const applyNames = (
     inked = true;
   // A slot is sure when its name is locked, or (no lock yet) its icon is a clear match. The fallback shows the rest as `?`.
   const slotSure = [false, false, false];
+  const crops = pinned.map((r) => cardNameCrop(img, r.match));
+  const sigs = crops.map((c) => (c ? nameSig(c) : null));
+  // The cards fading out for a re-roll: two locked name lines blank at once (a hover blanks at most the one it grows).
+  if (locks.filter((l, i) => l && !(sigs[i] && hasInk(sigs[i]!))).length >= 2) rerollAt = now;
   const out = pinned.map((r, slot) => {
-    const crop = cardNameCrop(img, r.match);
-    const sig = crop ? nameSig(crop) : null;
+    const crop = crops[slot] ?? null;
+    const sig = sigs[slot] ?? null;
     if (!sig || !hasInk(sig)) inked = false;
     const lock = locks[slot];
     const sure = r.present && r.match.score >= SURE_SCORE && r.match.margin >= SURE_MARGIN;
@@ -248,8 +259,12 @@ const applyNames = (
           const ms = performance.now() - t;
           post({ type: 'name', slot, icon, text, itemId: m?.itemId ?? 0, ms });
           if (gen !== nameGen) return;
-          if (m) {
-            const prev = locks[slot];
+          const prev = locks[slot];
+          if (m && prev && prev.id !== m.itemId && !rerolling(performance.now())) {
+            // another item's name over a locked card without a re-roll: the hover tooltip's title. Keep the lock, and
+            // do not read this same picture again for a moment.
+            nameFail[slot] = { sig, at: performance.now(), since: nameFail[slot]?.since ?? t };
+          } else if (m) {
             locks[slot] = prev?.id === m.itemId ? { ...prev, sig } : { id: m.itemId, sig, enhanced, rare };
             nameFail[slot] = null;
           } else {
@@ -261,9 +276,12 @@ const applyNames = (
         .finally(() => (nameBusy[slot] = false));
     }
     if (lock) {
-      // A changed line under a lock is a hover/tooltip far more often than a new card. Only an icon that surely shows
-      // another item (a re-roll) makes the slot unsettled until its name is read.
-      if ((sure && r.itemId !== lock.id) || (iconless && sig && hasInk(sig) && otherName(lock.sig, sig))) {
+      // A changed line under a lock is a hover/tooltip unless the cards were just seen re-rolling. Only then does an
+      // icon that surely shows another item, or other lettering, make the slot unsettled until its name is read.
+      if (
+        rerolling(now) &&
+        ((sure && r.itemId !== lock.id) || (iconless && sig && hasInk(sig) && otherName(lock.sig, sig)))
+      ) {
         waiting = true;
         changed = true;
         return r;
@@ -340,6 +358,7 @@ const readRerolls = (img: Parameters<typeof readRerollsRemaining>[0], set: strin
       if (rr.value === null) rr.value = v;
       else if (v === rr.value) rr.next = null;
       else if (rr.next === v) {
+        if (v < rr.value) rerollAt = performance.now(); // a re-roll was spent: the cards are being replaced
         rr.value = v;
         rr.next = null;
         onChange(v);
