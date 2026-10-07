@@ -15,9 +15,11 @@ import type { BrawlInput, DraftAdvice, DraftState, Offer, RankedOffer, RerollAdv
 // card is often worth re-rolling: the slot keeps its bonus and only the item is drawn again.
 // enhancedCarry: an enhanced item keeps its enhancement when it is upgraded (enhanced Grit becomes an enhanced Divine
 // Barrier), so an enhanced card is also worth part of an enhanced copy of the best item it builds into. `Base.carry` is
-// that item's tiers above the card times sqrt(its popularity within its tier), so a strong 800 card with a popular
-// tier-4 upgrade (Extra Spirit -> Boundless Spirit) gains up to ~1.7 and one with no upgrade or an unpopular one little.
-// With both, a good enhanced 800 card beats a strong rare tier-2 card, and a weak one is worth re-rolling for another.
+// that item's tiers above the card times sqrt(its popularity within its tier).
+// The 800-soul (tier-1) set is the only one of its kind: it is round 1's first set, its item is a big share of round-1
+// strength, and a tier-1 item has the longest upgrade path ahead. So an enhanced tier-1 card gets `enhanced800` and
+// `enhancedCarry800` instead: a strong one with a popular tier-4 upgrade (Extra Spirit -> Boundless Spirit) beats a
+// strong rare tier-2 card, and a weak one is worth re-rolling for another enhanced 800 card.
 export const BRAWL_WEIGHTS = {
   popularity: 1.0,
   winLift: 1.0,
@@ -27,8 +29,10 @@ export const BRAWL_WEIGHTS = {
   synergy: 0.5,
   active: 0.1,
   upgrade: 0.15,
-  enhanced: 0.9,
-  enhancedCarry: 0.6,
+  enhanced: 0.6,
+  enhancedCarry: 0.15,
+  enhanced800: 0.9,
+  enhancedCarry800: 0.6,
   dup: 1.0,
 };
 const WIN_SHRINK_FRAC = 0.05; // K = max(200, 5 % of the tier's most-picked item)
@@ -60,9 +64,14 @@ export interface Base {
   carryInto?: Item;
 }
 
-/** Score an enhanced copy of the item adds over the plain one: the flat bonus, the carry and the stat multiplier. */
-const enhancedExtra = (b: Base) =>
-  BRAWL_WEIGHTS.enhanced + BRAWL_WEIGHTS.enhancedCarry * b.carry + BRAWL_WEIGHTS.kit * b.kit * (ENHANCED_STAT_MULT - 1);
+/** The `enhanced` score part: the flat bonus plus the upgrade carry, both larger for an 800-soul (tier-1) card. */
+const enhancedPart = (b: Base) =>
+  b.item.item_tier === 1
+    ? BRAWL_WEIGHTS.enhanced800 + BRAWL_WEIGHTS.enhancedCarry800 * b.carry
+    : BRAWL_WEIGHTS.enhanced + BRAWL_WEIGHTS.enhancedCarry * b.carry;
+
+/** Score an enhanced copy of the item adds over the plain one: the enhanced part and the stat multiplier. */
+const enhancedExtra = (b: Base) => enhancedPart(b) + BRAWL_WEIGHTS.kit * b.kit * (ENHANCED_STAT_MULT - 1);
 
 /** Items that can appear on a draft card. */
 const draftable = (i: Item) => !i.disabled && i.item_tier >= 1 && !/^upgrade_|Disabled/.test(i.name);
@@ -237,7 +246,7 @@ export function scoreOffer(
     synergy: BRAWL_WEIGHTS.synergy * synergy,
     active: (item.is_active_item ? BRAWL_WEIGHTS.active : 0) + activePenalty,
     upgrade: upgradesOwned ? BRAWL_WEIGHTS.upgrade : 0,
-    enhanced: enhanced ? BRAWL_WEIGHTS.enhanced + (b ? BRAWL_WEIGHTS.enhancedCarry * b.carry : 0) : 0,
+    enhanced: enhanced ? (b ? enhancedPart(b) : BRAWL_WEIGHTS.enhanced) : 0,
     dup: dup ? -BRAWL_WEIGHTS.dup : 0,
   };
   const score = Object.values(parts).reduce((a, x) => a + x, 0);
@@ -317,12 +326,13 @@ function enhancedChancePerCard(input: BrawlInput, round: number): number {
 }
 
 /**
- * Chance of each item of a tier being the one drawn. The mode config draws a tier's card from a "normal" or a "good"
- * bucket (`item_drafts[tier].bucket`, e.g. 40/60 for tier 1) without saying which items are good; the normal share
- * is spread evenly and the good share by popularity, the closest public signal for that list.
+ * Chance of each item of a tier being the one drawn: even, except in the 800-soul (tier-1) set. The mode config draws
+ * a card from a "normal" or a "good" bucket (`item_drafts[tier].bucket`, 40/60 for tier 1) without saying which items
+ * are good; for tier 1 the normal share is spread evenly and the good share by popularity, the closest public signal
+ * for that list, so a re-roll of an enhanced 800 slot is valued by how likely it is to land a good enhanced 800 card.
  */
 function drawWeights(input: BrawlInput, tier: number, xs: Base[]): number[] {
-  const bucket = input.config.item_drafts?.[String(tier)]?.bucket;
+  const bucket = tier === 1 ? input.config.item_drafts?.[String(tier)]?.bucket : undefined;
   const total = bucket ? bucket.normal + bucket.good : 0;
   const good = total ? bucket!.good / total : 0;
   const popSum = xs.reduce((a, b) => a + b.pop, 0);
