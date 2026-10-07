@@ -675,7 +675,8 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
   else {
     const cardsSig = frameSig(msg.regions.slice(0, 3));
     if (readingSince === null) readingFirst = readingSince = nowMs;
-    else if (!sameSig(readingCardsSig, cardsSig)) readingSince = nowMs;
+    // two or three empty card slots mean the cards are still sliding in: no grey `?` on a card that is not there (at most FALLBACK_MAX_MS)
+    else if (!sameSig(readingCardsSig, cardsSig) || seen < 2) readingSince = nowMs;
     readingCardsSig = cardsSig;
   }
   // Fallback: no sure set within FALLBACK_MS. The sure cards are advised, the others become `?`. Never for a set the
