@@ -13,6 +13,11 @@ import type { BrawlInput, DraftAdvice, DraftState, Offer, RankedOffer, RerollAdv
 // (tier-bumped) flag belong to the card slot and survive a re-roll: a re-roll of an enhanced slot yields another
 // enhanced card and a re-roll of a rare slot yields another rare-tier card (see cardDist). So a weak rare or enhanced
 // card is often worth re-rolling: the slot keeps its bonus and only the item is drawn again.
+// enhancedCarry: an enhanced item keeps its enhancement when it is upgraded (enhanced Grit becomes an enhanced Divine
+// Barrier), so an enhanced card is also worth part of an enhanced copy of the best item it builds into. `Base.carry` is
+// that item's tiers above the card times sqrt(its popularity within its tier), so a strong 800 card with a popular
+// tier-4 upgrade (Extra Spirit -> Boundless Spirit) gains up to ~1.7 and one with no upgrade or an unpopular one little.
+// With both, a good enhanced 800 card beats a strong rare tier-2 card, and a weak one is worth re-rolling for another.
 export const BRAWL_WEIGHTS = {
   popularity: 1.0,
   winLift: 1.0,
@@ -22,7 +27,8 @@ export const BRAWL_WEIGHTS = {
   synergy: 0.5,
   active: 0.1,
   upgrade: 0.15,
-  enhanced: 0.6,
+  enhanced: 0.9,
+  enhancedCarry: 0.6,
   dup: 1.0,
 };
 const WIN_SHRINK_FRAC = 0.05; // K = max(200, 5 % of the tier's most-picked item)
@@ -48,7 +54,15 @@ export interface Base {
   kit: number;
   base: number;
   counter: number;
+  /** Enhancement carry: tiers gained times sqrt(popularity) of the best item this one upgrades into, 0 if none. */
+  carry: number;
+  /** The upgrade `carry` was measured on. */
+  carryInto?: Item;
 }
+
+/** Score an enhanced copy of the item adds over the plain one: the flat bonus, the carry and the stat multiplier. */
+const enhancedExtra = (b: Base) =>
+  BRAWL_WEIGHTS.enhanced + BRAWL_WEIGHTS.enhancedCarry * b.carry + BRAWL_WEIGHTS.kit * b.kit * (ENHANCED_STAT_MULT - 1);
 
 /** Items that can appear on a draft card. */
 const draftable = (i: Item) => !i.disabled && i.item_tier >= 1 && !/^upgrade_|Disabled/.test(i.name);
@@ -137,7 +151,31 @@ export function baseScores(input: BrawlInput, enemies: number[] = []): Map<numbe
       BRAWL_WEIGHTS.kit * k +
       BRAWL_WEIGHTS.tier * (it.item_tier - 1) +
       (it.is_active_item ? BRAWL_WEIGHTS.active : 0);
-    out.set(it.id, { item: it, stat, pop, winLift, kit: k, base, counter });
+    out.set(it.id, { item: it, stat, pop, winLift, kit: k, base, counter, carry: 0 });
+  }
+  // every item an item builds into, directly or through another upgrade
+  const upgrades = new Map<string, Base[]>();
+  for (const b of out.values())
+    for (const c of b.item.component_items ?? []) {
+      const xs = upgrades.get(c);
+      if (xs) xs.push(b);
+      else upgrades.set(c, [b]);
+    }
+  for (const b of out.values()) {
+    const seen = new Set<string>([b.item.class_name]);
+    const stack = [b.item.class_name];
+    while (stack.length) {
+      for (const u of upgrades.get(stack.pop()!) ?? []) {
+        if (seen.has(u.item.class_name)) continue;
+        seen.add(u.item.class_name);
+        stack.push(u.item.class_name);
+        const v = Math.max(0, u.item.item_tier - b.item.item_tier) * Math.sqrt(u.pop);
+        if (v > b.carry) {
+          b.carry = v;
+          b.carryInto = u.item;
+        }
+      }
+    }
   }
   return out;
 }
@@ -199,7 +237,7 @@ export function scoreOffer(
     synergy: BRAWL_WEIGHTS.synergy * synergy,
     active: (item.is_active_item ? BRAWL_WEIGHTS.active : 0) + activePenalty,
     upgrade: upgradesOwned ? BRAWL_WEIGHTS.upgrade : 0,
-    enhanced: enhanced ? BRAWL_WEIGHTS.enhanced : 0,
+    enhanced: enhanced ? BRAWL_WEIGHTS.enhanced + (b ? BRAWL_WEIGHTS.enhancedCarry * b.carry : 0) : 0,
     dup: dup ? -BRAWL_WEIGHTS.dup : 0,
   };
   const score = Object.values(parts).reduce((a, x) => a + x, 0);
@@ -222,7 +260,12 @@ export function scoreOffer(
       `upgrades ${ownedItems.find((o) => item.component_items.includes(o.class_name))!.name}, which you already hold`,
     );
   if (activePenalty) why.push(`you already hold ${actives} active items`);
-  if (enhanced) why.push('enhanced version');
+  if (enhanced)
+    why.push(
+      b?.carryInto && b.carry > 0.5
+        ? `enhanced version, and it stays enhanced when upgraded into ${b.carryInto.name}`
+        : 'enhanced version',
+    );
   if (dup) why.push('you already hold this item');
   return {
     item,
@@ -273,6 +316,19 @@ function enhancedChancePerCard(input: BrawlInput, round: number): number {
   return w ? Math.min(1, ew / w / cards) : 0;
 }
 
+/**
+ * Chance of each item of a tier being the one drawn. The mode config draws a tier's card from a "normal" or a "good"
+ * bucket (`item_drafts[tier].bucket`, e.g. 40/60 for tier 1) without saying which items are good; the normal share
+ * is spread evenly and the good share by popularity, the closest public signal for that list.
+ */
+function drawWeights(input: BrawlInput, tier: number, xs: Base[]): number[] {
+  const bucket = input.config.item_drafts?.[String(tier)]?.bucket;
+  const total = bucket ? bucket.normal + bucket.good : 0;
+  const good = total ? bucket!.good / total : 0;
+  const popSum = xs.reduce((a, b) => a + b.pop, 0);
+  return xs.map((b) => (popSum ? (1 - good) / xs.length + (good * b.pop) / popSum : 1 / xs.length));
+}
+
 interface Dist {
   s: number;
   w: number;
@@ -310,12 +366,13 @@ function cardDist(
   ] as const) {
     if (p <= 0) continue;
     const xs = [...bases.values()].filter((b) => b.item.item_tier === tier);
-    for (const b of xs) {
+    const ws = drawWeights(input, tier, xs);
+    for (const [k, b] of xs.entries()) {
       const pen = b.item.is_active_item && actives >= MAX_ACTIVES ? -ACTIVE_OVERFLOW_PENALTY : 0;
       const plain = b.base + pen;
-      const enh = b.base + pen + BRAWL_WEIGHTS.enhanced + BRAWL_WEIGHTS.kit * b.kit * (ENHANCED_STAT_MULT - 1);
-      if (pEnh < 1) out.push({ s: plain, w: (p / xs.length) * (1 - pEnh) });
-      if (pEnh > 0) out.push({ s: enh, w: (p / xs.length) * pEnh });
+      const enh = plain + enhancedExtra(b);
+      if (pEnh < 1) out.push({ s: plain, w: p * ws[k] * (1 - pEnh) });
+      if (pEnh > 0) out.push({ s: enh, w: p * ws[k] * pEnh });
     }
   }
   return out.length ? out : null;
@@ -453,7 +510,8 @@ export function adviseDraft(input: BrawlInput, state: DraftState): DraftAdvice {
     const n = layout.length;
     const known = sets.map((set, i) => {
       if (!set.length) return null;
-      const flags = state.sets[i].map((o) => !!o.enhanced);
+      // both flags from the same (ranked) list, so a card that is rare and enhanced stays one slot
+      const flags = set.map((r) => r.enhanced);
       while (flags.length < CARDS_PER_SET) flags.push(false);
       const normal = layout[i]?.normal ?? 0;
       const rares = set.map((r) => r.item.item_tier > normal);
