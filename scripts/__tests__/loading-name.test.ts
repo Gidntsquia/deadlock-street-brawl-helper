@@ -24,7 +24,7 @@ describe('loading screen name box', () => {
 describe('loading screen hero name', () => {
   it('reads Infernus', async () => {
     const { readHeroName, terminateOCR } = await import('../../src/brawl/ocr');
-    const { matchItemName, nameList } = await import('../../src/brawl/names');
+    const { matchHeroName, nameList } = await import('../../src/brawl/names');
     const heroes = JSON.parse((await import('node:fs')).readFileSync('public/data/heroes.json', 'utf8')) as {
       id: number;
       name: string;
@@ -33,7 +33,7 @@ describe('loading screen hero name', () => {
     const text = await readHeroName(await nameBox('scripts/fixtures/loading/infernus.png'));
     await terminateOCR();
     expect(
-      matchItemName(
+      matchHeroName(
         text,
         nameList(
           heroes.map((h) => h.id),
@@ -42,4 +42,15 @@ describe('loading screen hero name', () => {
       )?.itemId,
     ).toBe(1);
   }, 60_000);
+});
+
+describe('loading screen hero name match', () => {
+  it('needs a near-exact read: a short junk read is not a short hero name', async () => {
+    const { matchHeroName, nameList } = await import('../../src/brawl/names');
+    const list = nameList([1, 19], { 1: 'Infernus', 19: 'Shiv' });
+    expect(matchHeroName('SHIP', list)).toBeNull();
+    expect(matchHeroName('SHI', list)).toBeNull();
+    expect(matchHeroName('SHIV', list)?.itemId).toBe(19);
+    expect(matchHeroName('INFERNUS', list)?.itemId).toBe(1);
+  });
 });
