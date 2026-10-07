@@ -6,7 +6,9 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import sharp from 'sharp';
 import { replaySession, replayDraft, type ReplayDraft } from './replay';
-import type { Item, Hero } from '../src/types';
+import { adviseDraft, type BrawlInput } from '../src/brawl';
+import type { BrawlAnalytics, BrawlConfig } from '../src/brawl/types';
+import type { Item, Hero, Ability } from '../src/types';
 
 const [out, verdictFile, ...folders] = process.argv.slice(2);
 if (!out || !verdictFile || !folders.length) {
@@ -17,6 +19,25 @@ const items: Item[] = JSON.parse(readFileSync('public/data/items.json', 'utf8'))
 const heroes: Hero[] = JSON.parse(readFileSync('public/data/heroes.json', 'utf8'));
 const iname = (id: number) => (id ? (items.find((i) => i.id === id)?.name ?? `#${id}`) : '?');
 const hname = (id: number) => (id ? (heroes.find((h) => h.id === id)?.name ?? `#${id}`) : 'not read');
+const abilities: Ability[] = JSON.parse(readFileSync('public/data/abilities.json', 'utf8'));
+const config: BrawlConfig = JSON.parse(readFileSync('public/data/brawl-config.json', 'utf8'));
+/** What the current engine advises for the replayed set: the read cards (enhanced flags), the owned list the replay read,
+ *  the re-roll count, no enemy heroes (the replay does not read them). */
+function currentAdvice(d: ReplayDraft, owned: number[]): string {
+  const ids = d.stats.items;
+  if (ids.length !== 3 || ids.some((i) => !i)) return 'no full set';
+  const heroId = d.hero || d.live.hero.id;
+  const hero = heroes.find((h) => h.id === heroId);
+  if (!hero) return 'no hero';
+  const analytics: BrawlAnalytics = JSON.parse(readFileSync(`public/data/analytics/brawl/${heroId}.json`, 'utf8'));
+  const input: BrawlInput = { hero, abilities, items, analytics, config };
+  const sets = [[], [], []] as { itemId: number; enhanced: boolean }[][];
+  sets[d.choice - 1] = ids.map((itemId, k) => ({ itemId, enhanced: !!d.enhanced[k] }));
+  const a = adviseDraft(input, { round: d.round, owned, enemies: [], sets });
+  if (a.reroll && (d.rerolls ?? 1) > 0) return 'Re-roll';
+  const top = a.sets[d.choice - 1]?.[0];
+  return top ? `Take ${iname(top.item.id)}` : 'none';
+}
 const verdicts: Record<string, string> = existsSync(verdictFile) ? JSON.parse(readFileSync(verdictFile, 'utf8')) : {};
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
@@ -28,10 +49,12 @@ interface Row {
   crops: string[];
   verdict: string;
   held: number;
+  current: string;
 }
 const rows: Row[] = [];
 const owned: { session: string; ids: number[] | null }[] = [];
 for (const folder of folders) {
+  let ownedNow: number[] = [];
   const session = path.basename(folder);
   const drafts = await replaySession(folder, { waitNames: true });
   for (let d of drafts) {
@@ -70,7 +93,8 @@ for (const folder of folders) {
       crops.push(`crops/${name}`);
     }
     const key = `${session}/${d.name}`;
-    rows.push({ key, session, d, crops, verdict: verdicts[key] ?? '', held });
+    if (d.inventory) ownedNow = d.inventory;
+    rows.push({ key, session, d, crops, verdict: verdicts[key] ?? '', held, current: currentAdvice(d, ownedNow) });
   }
   owned.push({ session, ids: drafts.findLast((x) => x.inventory)?.inventory ?? null });
 }
@@ -80,7 +104,7 @@ const kind = (v: string) =>
 const count = (k: string) => rows.filter((r) => kind(r.verdict) === k).length;
 const qs = rows.reduce((a, r) => a + r.d.stats.unsure, 0);
 const body = rows
-  .map(({ key, d, crops, verdict, held }) => {
+  .map(({ key, d, crops, verdict, held, current }) => {
     const s = d.stats;
     const take = d.live.shown.takeId;
     return `<tr class="${kind(verdict)}"><td>${esc(key)}<br>R${d.round} C${d.choice}</td>
@@ -88,7 +112,8 @@ const body = rows
 <td>${s.items.length ? s.items.map((id, k) => esc(iname(id)) + (d.enhanced[k] ? ' <b>(enhanced)</b>' : '')).join('<br>') + (held >= 0 ? `<br><small>recording too short to settle: frame ${held} held on screen</small>` : '') : 'nothing accepted'}</td>
 <td>${esc(hname(d.hero || d.live.hero.id))}<br><small>live: ${d.live.hero.source}</small></td>
 <td>${d.rerolls ?? 'n/a'}</td><td>${s.unsure}</td>
-<td>${take ? esc(iname(take)) : 'none'}</td>
+<td>${d.live.shown.reroll ? 'Re-roll' : take ? esc(iname(take)) : 'none'}</td>
+<td><b>${esc(current)}</b></td>
 <td>${s.adviceMs === null ? 'none' : Math.round(s.adviceMs) + ' ms'}</td>
 <td>${d.diff.length ? 'differs from live<br><small>' + esc(d.diff.join('; ')) + '</small>' : 'same as live'}</td>
 <td>${esc(verdict || 'MISSING')}</td></tr>`;
@@ -108,7 +133,7 @@ writeFileSync(
 <h1>Read report for 0.4.0-rc.1</h1>
 <p><b>${rows.length} drafts: ${count('right')} Right, ${count('wrong')} Wrong, ${count('unsure')} Unsure, ${count('none')} without a verdict. ? plates in the replay: ${qs}.</b></p>
 <p>Replayed on the current code from the recorded crops. Crops are the card pictures from the frame the set was accepted on (the last frame with all three when none was).</p>
-<table><tr><th>Draft</th><th>Cards</th><th>Read as</th><th>Hero</th><th>Re-rolls</th><th>?</th><th>Advised (live)</th><th>Advice</th><th>Live</th><th>Verdict</th></tr>
+<table><tr><th>Draft</th><th>Cards</th><th>Read as</th><th>Hero</th><th>Re-rolls</th><th>?</th><th>Advised (live)</th><th>Current advice</th><th>Advice</th><th>Live</th><th>Verdict</th></tr>
 ${body}</table>
 <h2>Owned list after the last draft (replay)</h2><ul>${ownedHtml}</ul></html>`,
 );
@@ -120,6 +145,7 @@ writeFileSync(
       items: r.d.stats.items.map((id, k) => iname(id) + (r.d.enhanced[k] ? ' (enhanced)' : '')),
       unsure: r.d.stats.unsure,
       live: r.d.live.items.map(iname),
+      current: r.current,
     })),
     null,
     1,
