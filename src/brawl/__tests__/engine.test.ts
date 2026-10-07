@@ -26,7 +26,7 @@ describe('adviseDraft: rare tier bump', () => {
 });
 
 describe('scoreOffer: enhanced', () => {
-  it('adds exactly BRAWL_WEIGHTS.enhanced to the enhanced part of the score', () => {
+  it('adds BRAWL_WEIGHTS.enhanced plus the upgrade carry to the enhanced part of the score', () => {
     const bases = baseScores(infernus);
     const pair = pairLifts(infernus);
     const state = { round: 1, owned: [], enemies: [], sets: [] };
@@ -34,8 +34,35 @@ describe('scoreOffer: enhanced', () => {
     const plain = scoreOffer(infernus, bases, pair, state, { itemId: item.id, enhanced: false });
     const enhanced = scoreOffer(infernus, bases, pair, state, { itemId: item.id, enhanced: true });
     expect(plain.parts.enhanced).toBe(0);
-    expect(enhanced.parts.enhanced).toBeCloseTo(BRAWL_WEIGHTS.enhanced, 10);
+    const carry = bases.get(item.id)!.carry;
+    expect(carry).toBeGreaterThan(0); // Improved Spirit builds into Boundless Spirit
+    expect(enhanced.parts.enhanced).toBeCloseTo(BRAWL_WEIGHTS.enhanced + BRAWL_WEIGHTS.enhancedCarry * carry, 10);
     expect(enhanced.score).toBeGreaterThan(plain.score);
+  });
+
+  it('values an enhanced card by the best item it upgrades into, since the enhancement survives the upgrade', () => {
+    const bases = baseScores(infernus);
+    expect(bases.get(itemByName('Grit').id)!.carryInto?.item_tier).toBe(4);
+    expect(bases.get(itemByName('Healbane').id)!.carry).toBe(0); // builds into nothing
+    const pair = pairLifts(infernus);
+    const state = { round: 1, owned: [], enemies: [], sets: [] };
+    const score = (name: string, enhanced = false) =>
+      scoreOffer(infernus, bases, pair, state, { itemId: itemByName(name).id, enhanced }).score;
+    // a good enhanced 800 card beats a strong rare tier-2 card; a weak one does not
+    expect(score('Extra Spirit', true)).toBeGreaterThan(score('Healbane'));
+    expect(score('Mystic Burst', true)).toBeLessThan(score('Healbane'));
+  });
+
+  it('re-rolls a round-1 set whose enhanced 800 card is weak, to draw another enhanced 800 card', () => {
+    const set = ['Healbane', 'Mystic Burst', 'Mystic Regeneration'].map((n) => ({
+      itemId: itemByName(n).id,
+      enhanced: n === 'Mystic Burst',
+    }));
+    const advice = adviseDraft(infernus, { round: 1, owned: [], enemies: [], sets: [set, [], []] });
+    expect(advice.reroll?.set).toBe(0);
+    // the same set without the enhanced slot is kept
+    const plain = set.map((o) => ({ ...o, enhanced: false }));
+    expect(adviseDraft(infernus, { round: 1, owned: [], enemies: [], sets: [plain, [], []] }).reroll).toBeNull();
   });
 });
 
