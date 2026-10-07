@@ -77,8 +77,17 @@ beforeAll(async () => {
   frames.oldCardsNewLabel = mix(c1, c2, labelsAndGrid); // picked: label and grid moved on, old cards still up
   frames.newCardsOldLabel = mix(c2, c1, [3, 4]); // the new cards in before the label
   frames.halfSwapped = mix(c2, c1, [1, 2]); // only the left card replaced so far
-  // A re-roll: same labels and grid, three new cards with their names.
-  frames.rerolled = mix(c1, c2, [0, 1, 2, ...[...regions.keys()].slice(-6)]);
+  // A re-roll: same labels and grid, the cards fade out, then three new cards with their names.
+  const nameEnds = [...regions.keys()].slice(-6); // two per card, left card first
+  frames.rerolled = mix(c1, c2, [0, 1, 2, ...nameEnds]);
+  frames.faded = Buffer.from(c1);
+  for (const k of [0, 1, 2, ...nameEnds]) {
+    const r = regions[k]!;
+    for (let y = r.y; y < r.y + r.height; y++)
+      for (let x = r.x; x < r.x + r.width; x++) frames.faded.fill(20, (y * W + x) * 4, (y * W + x) * 4 + 3);
+  }
+  // The hover tooltip: another item's name printed over the left card's name line, with no fade before it.
+  frames.tooltipName = mix(c1, c2, [0, ...nameEnds.slice(0, 2)]);
   // Hover states on choice1's left card: a glow over the card, the icon nudged a few px (the search lands on another
   // step), and the icon covered by a dark tooltip.
   const [sq] = cardSquares(W, H);
@@ -159,12 +168,16 @@ describe('worker: the draft gate on real frames', () => {
     // every state of a hover, a few times over: the accepted set never drops, never re-accepts, never moves
     const squares = cardSquares(W, H);
     const hover: Out[] = [];
-    for (let i = 0; i < 4; i++) for (const f of ['glow', 'nudged', 'covered', 'c1']) hover.push(...(await run(f, 2)));
+    for (let i = 0; i < 4; i++)
+      for (const f of ['glow', 'nudged', 'covered', 'tooltipName', 'c1']) hover.push(...(await run(f, 2)));
+    hover.push(...(await run('tooltipName', 12))); // a tooltip held up long enough for its name to be read
+    hover.push(...(await run('c1', 2)));
     expect(hover.every((o) => o.live && !o.accepted)).toBe(true);
     expect(hover.every((o) => !o.key || o.key.replace(/\+/g, '') === c1Key)).toBe(true);
     for (const o of hover)
       expect(o.reads.map((r) => [r.match.x, r.match.y, r.match.edge])).toEqual(squares.map((q) => [q.x, q.y, q.edge]));
-    // A re-roll: the old advice goes at once, the new cards are advised under the same labels.
+    // A re-roll: the cards fade, then the old advice goes at once and the new cards are advised under the same labels.
+    await run('faded', 2);
     const after = await run('rerolled', 16);
     expect(after.slice(0, 2).some((o) => !o.live)).toBe(true);
     const got = accepts(after);
