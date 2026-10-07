@@ -61,7 +61,7 @@ that one session; do not add a new case or a second app launch. Commands live in
 
 ## Debug mode, sessions, replay
 
-Debug mode (`src/debugMode.ts`) is on in dev and in any `-rc` version (last rc was `0.3.0-rc.1`; `0.3.0` is final, debug off); the title bar shows `DEBUG`.
+Debug mode (`src/debugMode.ts`) is on in dev and in any `-rc` version (last rc is `0.4.0-rc.1`; `0.3.0` was final, debug off); the title bar shows `DEBUG`.
 Ctrl+Shift+D (or the tray entry, channel `debugToggle`) toggles the Debug panel: Start/Stop capture, Detect now (F8 still
 works without it), test mode, round/choice/re-rolls, enemies, owned, advice list, ability order, and the **session report**
 (one row per draft with its crops, items, shown plates, advice ms, and `Mark wrong`). The main view has only the status
@@ -109,7 +109,7 @@ enhanced, carried as `OverlayAdviceCard.enhancedBonus`, `bonusesFromAdvice`), an
 is shared in `plateGeometry` (`draw.ts`); the `Reading` sign sits above the middle plate by max(6 px, 0.35 plate height), below it if clamped.
 A re-roll call is a filled teal `RE-ROLL` plate (card-plate size) centred above the button plus a 4 px teal outline, and all cards go grey and veiled.
 `scripts/render-ux.ts` (with `scripts/lib/svgCtx.ts`) renders before/after pictures into `plans/eval-artifacts/ux-pass/`; it needs the old
-drawing as `src/brawl/draw.before.ts` (`git show b4c0e95:src/brawl/draw.ts`, not committed). The wiki page was not updated: do it by hand.
+drawing as `src/brawl/draw.before.ts` (`git show b4c0e95:src/brawl/draw.ts`, not committed). The overlay wiki page was updated for 0.4.0-rc.1.
 The e2e debug checks follow `debugDefault`: off at start in a final version, on in dev or `-rc`; the harness then turns it on to reach test mode.
 
 ## Window and overlay look
