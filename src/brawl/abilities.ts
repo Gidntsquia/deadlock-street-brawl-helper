@@ -84,7 +84,7 @@ export function brawlAbilityOrder(input: BrawlInput): BrawlAbilityOrder {
 export const abilityStepIndex = (round: number, choice: number) => (round - 1) * 3 + choice - 1;
 
 /** Ability points Street Brawl hands out per round (rounds 1-5; deadlock.wiki "Street Brawl", `m_vecAPPerRound`). */
-const AP_PER_ROUND = [6, 6, 5, 5, 10] as const;
+export const AP_PER_ROUND = [6, 6, 5, 5, 10] as const;
 /** Cost of the tier 1 / 2 / 3 point pill. Four abilities fully upgraded cost 32, the five rounds' total. */
 const PILL_COST = [1, 2, 5] as const;
 
@@ -148,16 +148,60 @@ function pillRounds(order: BrawlAbilityOrder, hero: Hero): Map<string, number> {
   return out;
 }
 
+/** A player's own order for one hero: the round (1-5) that buys each pill, 12 numbers in bar order, tier 1/2/3 per
+ *  ability (index `ability * 3 + tier - 1`). */
+export type CustomOrder = number[];
+
+/** The standard order as a `CustomOrder`, the starting point of the editor. */
+export function standardCustom(order: BrawlAbilityOrder, hero: Hero): CustomOrder {
+  const rounds = pillRounds(order, hero);
+  return hero.abilities.slice(0, 4).flatMap((cls) => [1, 2, 3].map((t) => rounds.get(`${cls}:${t}`) ?? 5));
+}
+
+/** Why a custom order cannot be followed, or null when it can: a tier bought before the one under it, or a round
+ *  that spends more points than it and the earlier rounds hand out. */
+export function customOrderProblem(custom: CustomOrder): string | null {
+  if (custom.length !== 12 || custom.some((r) => !Number.isInteger(r) || r < 1 || r > 5))
+    return 'Pick a round for every point.';
+  for (let a = 0; a < 4; a++) {
+    const [t1, t2, t3] = custom.slice(a * 3, a * 3 + 3) as [number, number, number];
+    if (t2 < t1 || t3 < t2)
+      return `Ability ${a + 1}: a ${t3 < t2 ? 5 : 2} point upgrade comes before the one under it.`;
+  }
+  let cap = 0;
+  let spent = 0;
+  for (let r = 1; r <= 5; r++) {
+    cap += AP_PER_ROUND[r - 1]!;
+    spent += custom.reduce((n, at, k) => n + (at === r ? PILL_COST[k % 3]! : 0), 0);
+    if (spent > cap) return `Round ${r}: ${spent} points spent by now, only ${cap} handed out.`;
+  }
+  return null;
+}
+
+/** Points the custom order spends in each round 1-5. */
+export const customRoundPoints = (custom: CustomOrder): number[] =>
+  [1, 2, 3, 4, 5].map((r) => custom.reduce((n, at, k) => n + (at === r ? PILL_COST[k % 3]! : 0), 0));
+
 /** The standard order's points as the panel shows them for `round`: pills bought with this round's points are
- *  `now`, those bought earlier `done`, the rest `later`. */
+ *  `now`, those bought earlier `done`, the rest `later`. A valid `custom` order replaces the standard one. */
 export function abilityPanelFor(
   order: BrawlAbilityOrder,
   hero: Hero,
   abilities: Ability[],
   round: number,
+  custom?: CustomOrder | null,
 ): AbilityPanelData {
+  const mine = custom && !customOrderProblem(custom) ? custom : null;
   const reliable = !!order.support && order.support.matches >= MIN_ORDER_MATCHES;
-  const rounds = reliable ? pillRounds(order, hero) : new Map<string, number>();
+  const rounds = mine
+    ? new Map(
+        hero.abilities
+          .slice(0, 4)
+          .flatMap((cls, a) => [1, 2, 3].map((t) => [`${cls}:${t}`, mine[a * 3 + t - 1]!] as const)),
+      )
+    : reliable
+      ? pillRounds(order, hero)
+      : new Map<string, number>();
   const slots = hero.abilities.slice(0, 4).map((cls, i): PanelSlot => {
     const at = (tier: number): PointState => {
       const r = rounds.get(`${cls}:${tier}`);
@@ -171,5 +215,10 @@ export function abilityPanelFor(
       tiers: [at(3), at(2), at(1)],
     };
   });
-  return { round, points: AP_PER_ROUND[round - 1] ?? 0, slots, evidence: evidenceLine(order.support) };
+  return {
+    round,
+    points: AP_PER_ROUND[round - 1] ?? 0,
+    slots,
+    evidence: mine ? 'Your order' : evidenceLine(order.support),
+  };
 }

@@ -90,6 +90,10 @@ describe('BrawlView main view (Electron)', () => {
     await waitFor(() => expect(screen.getByRole('status').textContent).toBe('Waiting for Deadlock'));
     expect(screen.queryByRole('button', { name: /start capture|stop capture|detect now/i })).toBeNull();
     expect(container.querySelectorAll('select').length).toBe(0);
+    // The only other thing in the main view is the collapsed ability order editor.
+    const editor = container.querySelector('details.brawl-my-order')!;
+    expect(editor.hasAttribute('open')).toBe(false);
+    editor.remove();
     expect(container.textContent).not.toMatch(/top items|Owned|Cards on screen|Ability order|Round|Debug/);
   });
 
