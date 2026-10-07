@@ -40,7 +40,8 @@ interface Labelled {
 }
 
 export interface GateState {
-  cand: (Labelled & { since: number; frames: number }) | null; // the triple the screen currently holds
+  // the triple the screen currently holds; `full`: when its names were first all read (no `?`), null until then
+  cand: (Labelled & { since: number; frames: number; full: number | null }) | null;
   last: (Labelled & { inv: number[] | null }) | null; // the most recently accepted set
   live: boolean; // `last` is what is on screen now, so its advice stands
   missing: number; // consecutive key-less frames while live
@@ -133,9 +134,10 @@ export function stepGate(s: GateState, f: GateFrame): GateOut {
     return out(false);
   }
 
+  const full = /^[^?]*$/.test(f.key) ? f.now : null;
   if (cand && sameSet(cand.key, now.key) && sameLabels(cand, now))
-    cand = { ...cand, round: cand.round || now.round, frames: cand.frames + 1 };
-  else cand = { ...now, since: f.now, frames: 1 };
+    cand = { ...cand, round: cand.round || now.round, frames: cand.frames + 1, full: cand.full ?? full };
+  else cand = { ...now, since: f.now, frames: 1, full };
 
   // Two frames of something other than the accepted screen: a different set (the old advice is stale), or the same
   // cards under new labels (the player picked from them and they linger under the next choice's label, or they were
@@ -148,7 +150,10 @@ export function stepGate(s: GateState, f: GateFrame): GateOut {
   // The set that was just up comes back under the same labels (a hover tooltip moved away): no need to wait.
   const returning = last !== null && sameSet(last.key, f.key) && sameLabels(last, now);
   const need = returning ? 0 : relabel || back ? RELABEL_SETTLE_MS : SETTLE_MS;
-  if (!f.force && (f.now - cand.since < need || f.ready === false)) return out(false);
+  // A new set settles from its first sight, names still being read; the same cards under new labels wait from the first
+  // frame that names them all, so the inventory read has time to show the pick that makes them spent.
+  const from = relabel || back ? (cand.full ?? f.now) : cand.since;
+  if (!f.force && (f.now - from < need || f.ready === false)) return out(false);
 
   last = { key: f.key, round: cand.round, choice: f.choice, inv: f.inventory ?? last?.inv ?? null };
   live = true;

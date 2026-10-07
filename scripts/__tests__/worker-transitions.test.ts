@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import sharp from 'sharp';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { cardSquares, draftRegions } from '../../src/brawl/recognise';
+import { CARD_NAME, cardSquares, draftRegions } from '../../src/brawl/recognise';
 import type { WorkerIn, WorkerOut } from '../../src/brawl/worker';
 import type { Item } from '../../src/types';
 
@@ -88,6 +88,26 @@ beforeAll(async () => {
   }
   // The hover tooltip: another item's name printed over the left card's name line, with no fade before it.
   frames.tooltipName = mix(c1, c2, [0, ...nameEnds.slice(0, 2)]);
+  // A tooltip before the first read: the right card's name printed over the middle card's name line.
+  {
+    const sqs = cardSquares(W, H);
+    frames.twinName = Buffer.from(c1);
+    const band = (q: (typeof sqs)[number]) => ({
+      x: Math.round(q.x + q.edge / 2 - CARD_NAME.halfWidth * q.edge),
+      y: Math.round(q.y + CARD_NAME.top * q.edge),
+    });
+    const from = band(sqs[2]!),
+      to = band(sqs[1]!),
+      w = Math.round(2 * CARD_NAME.halfWidth * sqs[1]!.edge),
+      h = Math.round((CARD_NAME.bottom - CARD_NAME.top) * sqs[1]!.edge);
+    for (let y = 0; y < h; y++)
+      c1.copy(
+        frames.twinName,
+        ((to.y + y) * W + to.x) * 4,
+        ((from.y + y) * W + from.x) * 4,
+        ((from.y + y) * W + from.x + w) * 4,
+      );
+  }
   // Hover states on choice1's left card: a glow over the card, the icon nudged a few px (the search lands on another
   // step), and the icon covered by a dark tooltip.
   const [sq] = cardSquares(W, H);
@@ -158,6 +178,20 @@ describe('worker: the draft gate on real frames', () => {
     expect(got[0]![2]).toBe(2);
     expect(got[0]![0]).not.toBe(c1Key);
     expect(second.at(-1)!.live).toBe(true);
+  });
+
+  it('never advises one item twice when a tooltip prints the next card name over a card before it is read', async () => {
+    send({ type: 'reset' });
+    const c1Key = '1548066885,2829638276,3633614685';
+    const names: number[] = [];
+    const outs: Out[] = [];
+    for (let i = 0; i < 12; i++) {
+      outs.push(await frame('twinName'));
+      for (const m of posted) if (m.type === 'name' && m.slot === 1) names.push(m.itemId);
+    }
+    expect(names).toContain(3633614685); // the middle line really read as the right card's item
+    for (let i = 0; i < 60 && !outs.some((o) => o.accepted && o.key === c1Key); i++) outs.push(await frame('c1'));
+    expect(accepts(outs)).toEqual([[c1Key, 1, 1]]);
   });
 
   it('keeps the advice and the circles still through hovers, and moves to re-rolled cards', async () => {
