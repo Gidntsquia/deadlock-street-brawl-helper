@@ -26,7 +26,7 @@ describe('adviseDraft: rare tier bump', () => {
 });
 
 describe('scoreOffer: enhanced', () => {
-  it('adds BRAWL_WEIGHTS.enhanced plus the upgrade carry to the enhanced part of the score', () => {
+  it('adds the flat enhanced bonus plus the upgrade carry, more for an 800-soul card', () => {
     const bases = baseScores(infernus);
     const pair = pairLifts(infernus);
     const state = { round: 1, owned: [], enemies: [], sets: [] };
@@ -37,6 +37,13 @@ describe('scoreOffer: enhanced', () => {
     const carry = bases.get(item.id)!.carry;
     expect(carry).toBeGreaterThan(0); // Improved Spirit builds into Boundless Spirit
     expect(enhanced.parts.enhanced).toBeCloseTo(BRAWL_WEIGHTS.enhanced + BRAWL_WEIGHTS.enhancedCarry * carry, 10);
+    // an 800-soul card uses the larger 800 weights
+    const es = itemByName('Extra Spirit');
+    const esEnh = scoreOffer(infernus, bases, pair, state, { itemId: es.id, enhanced: true });
+    expect(esEnh.parts.enhanced).toBeCloseTo(
+      BRAWL_WEIGHTS.enhanced800 + BRAWL_WEIGHTS.enhancedCarry800 * bases.get(es.id)!.carry,
+      10,
+    );
     expect(enhanced.score).toBeGreaterThan(plain.score);
   });
 
