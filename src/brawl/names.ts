@@ -45,12 +45,18 @@ export type NameList = { id: number; key: string }[];
 /** Item names prepared for matchItemName: only items the icon index can show (the draft pool). */
 export function nameList(ids: Iterable<number>, names: Record<number, string>): NameList {
   const out: NameList = [];
-  const seen = new Set<number>();
+  const seen = new Set<number>(),
+    keys = new Set<string>();
   for (const id of ids) {
     const n = names[id];
     if (!n || seen.has(id)) continue;
     seen.add(id);
-    out.push({ id, key: norm(n) });
+    // Two ids under one name (Silencer has a disabled twin in the index's extras) would tie on every read and match
+    // nothing: the first id, a main icon ahead of the extras, keeps the name.
+    const key = norm(n);
+    if (keys.has(key)) continue;
+    keys.add(key);
+    out.push({ id, key });
   }
   return out;
 }

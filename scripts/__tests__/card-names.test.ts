@@ -42,3 +42,11 @@ describe('card name OCR', () => {
     }
   });
 });
+
+describe('the draft name list', () => {
+  it('matches every item name in it exactly, including one the index holds under two ids', () => {
+    // Silencer has a disabled twin among the index's extras: a tie used to make an exact "Silencer" match nothing.
+    expect(matchItemName('Silencer', list)?.itemId).toBe(1113837674);
+    for (const { id } of list) expect(matchItemName(items.find((i) => i.id === id)!.name, list)?.itemId).toBe(id);
+  });
+});
