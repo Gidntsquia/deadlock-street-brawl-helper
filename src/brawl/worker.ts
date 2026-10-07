@@ -260,7 +260,15 @@ const applyNames = (
           post({ type: 'name', slot, icon, text, itemId: m?.itemId ?? 0, ms });
           if (gen !== nameGen) return;
           const prev = locks[slot];
-          if (m && prev && prev.id !== m.itemId && !rerolling(performance.now())) {
+          const twin = m ? locks.findIndex((l, i) => i !== slot && l?.id === m.itemId) : -1;
+          if (twin >= 0 && !gate.live) {
+            // A draft never offers one item twice: one of the two lines showed the hover tooltip's title (the hovered
+            // card's name). Before the set is advised, both slots are read again; neither picture is re-read at once.
+            const at = performance.now();
+            nameFail[twin] = { sig: locks[twin]!.sig, at, since: nameFail[twin]?.since ?? at };
+            nameFail[slot] = { sig, at, since: nameFail[slot]?.since ?? t };
+            locks[twin] = locks[slot] = null;
+          } else if (m && ((prev && prev.id !== m.itemId && !rerolling(performance.now())) || twin >= 0)) {
             // another item's name over a locked card without a re-roll: the hover tooltip's title. Keep the lock, and
             // do not read this same picture again for a moment.
             nameFail[slot] = { sig, at: performance.now(), since: nameFail[slot]?.since ?? t };
@@ -323,6 +331,7 @@ const squareReads = (img: Parameters<typeof cardNameCrop>[0]): CardRead[] =>
     };
   });
 let lastKey = '',
+  lastSetKey = '',
   acceptedKey = '';
 let lastInv = '',
   sentInv = '';
@@ -345,8 +354,22 @@ const forgetRerolls = () => {
   rrGen++;
 };
 /** Starts a caption read for the set `set` when one is due; `onChange` runs when a re-read moves the settled value. */
+/** Two card keys name the same cards; a `?` (a name still being read) stands for whatever the other has there. */
+const sameCards = (a: string, b: string) => {
+  if (!a || !b) return false;
+  const x = a.replace(/\+/g, '').split(','),
+    y = b.replace(/\+/g, '').split(',');
+  return x.length === y.length && x.every((v, i) => v === y[i] || v === '?' || y[i] === '?');
+};
+const sameRerollSet = (a: string, b: string) => {
+  const [ca, ka] = a.split('|'),
+    [cb, kb] = b.split('|');
+  return ca === cb && sameCards(ka ?? '', kb ?? '');
+};
 const readRerolls = (img: Parameters<typeof readRerollsRemaining>[0], set: string, onChange: (v: number) => void) => {
-  if (rr.set !== set) (forgetRerolls(), (rr.set = set));
+  // The read started on the provisional set (a `?` per unread name) carries over once the names fill it in.
+  if (rr.set !== set && !sameRerollSet(rr.set, set)) forgetRerolls();
+  rr.set = set;
   const now = performance.now();
   if (rr.busy || (rr.value !== null && now - rr.at < REROLL_REREAD_MS)) return;
   rr.busy = true;
@@ -452,7 +475,7 @@ let frozenReads: CardRead[] | null = null; // the accepted set's reads, sent unc
 
 const forgetDraft = () => {
   forgetNames();
-  lastKey = acceptedKey = lastInv = sentInv = '';
+  lastKey = lastSetKey = acceptedKey = lastInv = sentInv = '';
   forgetRerolls();
   wasShop = false;
   offFrames = 0;
@@ -652,7 +675,10 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
   const fbKey = fbDue ? fbReads.map((r) => (r.unsure ? '?' : `${r.itemId}${r.enhanced ? '+' : ''}`)).join(',') : '';
   let meta: DraftMeta | null = null,
     inventory: number[] | null = null;
-  if (key && key === lastKey) {
+  // The grid is read while the names are still coming in too: the inventory at accept time is what a pick is spotted
+  // against, and an accept on the first frame that names every card would otherwise have none.
+  const setKey = key || provisionalKey;
+  if (sameCards(setKey, lastSetKey)) {
     // the inventory grid is only on the draft screen; a read counts once two frames agree
     const inv: InventoryRead[] = stage('inventory', () => readInventory(img, idx, msg.prefer));
     const ids = inv
@@ -662,7 +688,7 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
     const ik = ids.join(',');
     if (ik === lastInv) stableInv = ids;
     lastInv = ik;
-  } else if (!key) lastInv = '';
+  } else if (!setKey) lastInv = '';
   // Read the hero bar while the set is still settling (a first draft of a match has no cached bar), so the accept does
   // not wait for it. Only once the same three cards are up on two frames, so a transition frame never pays for it.
   if (
@@ -677,7 +703,7 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
   }
   // The re-roll caption is read for every full set (its own key: the '+' flags wobble), and the gate holds the accept
   // until it is in, so the first advice already knows whether a re-roll is left.
-  const set = key ? `${labels.choice}|${key.replace(/\+/g, '')}` : '';
+  const set = setKey ? `${labels.choice}|${setKey.replace(/\+/g, '')}` : '';
   if (set)
     readRerolls(img, set, (v) => {
       if (acceptedKey) post({ type: 'rerolls', forKey: acceptedKey, rerollsRemaining: v });
@@ -732,6 +758,7 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
   const sent = g.live && frozenReads ? frozenReads : reads;
   if (g.live && fbDue) acceptedKey = fbKey;
   lastKey = key;
+  lastSetKey = setKey;
   pendingSig = key ? sig : null;
   pendingReads = raw;
   pendingChoice = labels.choice;
@@ -758,7 +785,7 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
 
 const nonShopResult = (t0: number): FrameResult => {
   forgetNames();
-  lastKey = acceptedKey = lastInv = sentInv = '';
+  lastKey = lastSetKey = acceptedKey = lastInv = sentInv = '';
   settledSig = pendingSig = null;
   knownHero = null;
   acceptedRound = acceptedChoice = 0;

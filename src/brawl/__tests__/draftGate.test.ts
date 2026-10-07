@@ -4,7 +4,7 @@ import { RELABEL_SETTLE_MS, SETTLE_MS, initialGate, offScreenGate, stepGate, typ
 // Frames 70 ms apart (the draft capture rate): a screen state that lasts a few frames is a transition, one that lasts
 // past SETTLE_MS is a screen the player is looking at.
 const DT = 70;
-type F = { key: string; round?: number; choice: number; inv?: number[] | null; present?: number[] };
+type F = { key: string; round?: number; choice: number; inv?: number[] | null; present?: number[]; ready?: boolean };
 
 function run(frames: F[], start = initialGate()) {
   let s = start,
@@ -18,6 +18,7 @@ function run(frames: F[], start = initialGate()) {
       choice: f.choice,
       now: t,
       inventory: f.inv ?? null,
+      ready: f.ready,
     });
     outs.push(o);
     s = o.state;
@@ -79,6 +80,26 @@ describe('draftGate', () => {
     const { outs, accepted } = run([...hold({ key: A, choice: 1 }, 500), ...hold({ key: A, choice: 2 }, 900)]);
     expect(accepted).toHaveLength(1);
     expect(outs.at(-1)!.live).toBe(false);
+  });
+
+  it('a new set settles while its names are read, but old cards under a new label wait from their full read', () => {
+    // `?` slots: names still being read (the worker holds the accept until they are in). A new set's settle time runs
+    // from its first sight.
+    const fresh = run([
+      ...hold({ key: '?,?,?', choice: 1, ready: false }, SETTLE_MS),
+      { key: A, choice: 1 },
+      { key: A, choice: 1 },
+    ]);
+    expect(fresh.accepted.map((a) => a.key)).toEqual([A]);
+    // The same cards under the next label: the provisional frames do not count toward the long settle.
+    const linger = run(
+      [
+        ...hold({ key: '?,?,?', choice: 2, ready: false }, RELABEL_SETTLE_MS),
+        ...hold({ key: A, choice: 2 }, RELABEL_SETTLE_MS - DT),
+      ],
+      fresh.state,
+    );
+    expect(linger.accepted).toEqual([]);
   });
 
   it('a set first read under a stale label is re-accepted under the right one once that settles', () => {
