@@ -18,6 +18,14 @@ export interface ReplayDraft {
   /** Differences from what the app showed live, as sentences; empty when it matches. */
   diff: string[];
   live: DraftRecord;
+  /** Index in frames.json of the frame on which the set was first accepted, -1 when none was. */
+  acceptFrame: number;
+  /** What the worker read on the way: the player's hero id (0 unread), re-rolls remaining, owned items. */
+  hero: number;
+  rerolls: number | null;
+  inventory: number[] | null;
+  /** Last frame on which all three cards had a read, -1 when none. */
+  lastFull: number;
 }
 
 let clock = 0;
@@ -56,13 +64,20 @@ interface FramesFile {
  *  machine; real recordings keep the fixed beat, since their timing is part of what they pin. */
 export interface ReplayOpts {
   waitNames?: boolean;
+  /** Replay the recorded frames up to this one, then post it four more times 400 ms apart: what the app reads of a screen that stays up. */
+  hold?: number;
 }
 
 /** Replays one draft folder (`dNNN` with draft.json, frames.json and the crops). */
 export async function replayDraft(dir: string, opts: ReplayOpts = {}): Promise<ReplayDraft> {
   await boot();
   const live: DraftRecord = JSON.parse(readFileSync(path.join(dir, 'draft.json'), 'utf8'));
-  const frames: FramesFile[] = JSON.parse(readFileSync(path.join(dir, 'frames.json'), 'utf8'));
+  let frames: FramesFile[] = JSON.parse(readFileSync(path.join(dir, 'frames.json'), 'utf8'));
+  if (opts.hold !== undefined && frames[opts.hold])
+    frames = [
+      ...frames.slice(0, opts.hold + 1),
+      ...Array.from({ length: 4 }, (_, i) => ({ ...frames[opts.hold!]!, t: frames[opts.hold!]!.t + (i + 1) * 400 })),
+    ];
   handler({ data: { type: 'reset' } });
   // The recorder keeps sparse frames, so a long silence between two of them (capture idle, nothing sent) is shortened:
   // the worker's timers (settle, fallback) must not see minutes pass between two neighbouring pictures.
@@ -71,7 +86,12 @@ export async function replayDraft(dir: string, opts: ReplayOpts = {}): Promise<R
   let virtual = 0;
   const stat: StatFrame[] = [];
   let first = true;
-  for (const f of frames) {
+  let acceptFrame = -1;
+  let lastFull = -1;
+  let hero = 0;
+  let rerolls: number | null = null;
+  let inventory: number[] | null = null;
+  for (const [fi, f] of frames.entries()) {
     virtual += Math.min(f.t - prevT, GAP_MS);
     prevT = f.t;
     clock = virtual + 1000;
@@ -96,8 +116,13 @@ export async function replayDraft(dir: string, opts: ReplayOpts = {}): Promise<R
     )
       await new Promise((r) => setTimeout(r, 20));
     first = false;
+    for (const m of posted) if (m.type === 'rerolls') rerolls = m.rerollsRemaining;
     const res = posted.find((m): m is Result => m.type === 'result');
     if (!res) continue;
+    if (res.accepted && acceptFrame < 0) acceptFrame = fi;
+    if (res.reads.length === 3 && res.reads.every((x) => x.present && !x.unsure)) lastFull = fi;
+    if (res.meta?.self) hero = res.meta.self;
+    if (res.inventory) inventory = res.inventory;
     stat.push({
       t: clock,
       shop: res.shop,
@@ -119,7 +144,20 @@ export async function replayDraft(dir: string, opts: ReplayOpts = {}): Promise<R
   if (stats.unsure !== live.unsure) diff.push(`unsure ${live.unsure} became ${stats.unsure}`);
   if (stats.changes !== live.changes) diff.push(`changes ${live.changes} became ${stats.changes}`);
   if (stats.dropouts !== live.dropouts) diff.push(`dropouts ${live.dropouts} became ${stats.dropouts}`);
-  return { n: 0, name: path.basename(dir), round: live.round, choice: live.choice, stats, diff, live };
+  return {
+    n: 0,
+    name: path.basename(dir),
+    round: live.round,
+    choice: live.choice,
+    stats,
+    diff,
+    live,
+    acceptFrame,
+    hero,
+    rerolls,
+    inventory,
+    lastFull,
+  };
 }
 
 /** Replays every draft of a session folder (`m-...`). */

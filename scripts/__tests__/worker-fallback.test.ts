@@ -66,6 +66,7 @@ beforeAll(async () => {
   send = (m) => handler({ data: m });
   frames.c1 = await load('choice1');
   frames.bad = blank(frames.c1, 0);
+  frames.slide = blank(blank(frames.c1, 1), 2); // two cards have not slid in yet (release 0.4.0-rc.1: s1 d013 showed `?` on them)
   frames.enh = (await sharp('scripts/__tests__/data/enhanced-middle.png').ensureAlpha().raw().toBuffer()) as Buffer; // a real frame: Reactive Barrier enhanced, middle card
   // the same frame before the ENHANCED label has drawn: the box under the middle card's name painted flat grey
   frames.enhR = (await sharp('scripts/__tests__/data/enhanced-right.png').ensureAlpha().raw().toBuffer()) as Buffer; // Intensifying Magazine enhanced, right card
@@ -131,6 +132,16 @@ describe('worker: the 2.5 s fallback', () => {
     // nothing earlier showed a card at all, and the set then stays unchanged
     for (const o of outs.slice(0, outs.indexOf(first))) expect(o.live).toBe(false);
     for (const o of outs.slice(outs.indexOf(first) + 1)) expect(o.live).toBe(true);
+  });
+});
+
+describe('worker: cards still sliding in', () => {
+  it('shows no question marks while two slots are still empty, and the fallback runs once two cards are up', async () => {
+    send({ type: 'reset' });
+    const outs = await run('slide', 50); // 3.5 s with one card on screen
+    expect(outs.some((o) => o.accepted || o.live)).toBe(false);
+    const later = await run('bad', 60); // two cards on screen: the fallback runs
+    expect(later.some((o) => o.accepted)).toBe(true);
   });
 });
 
