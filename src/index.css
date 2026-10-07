@@ -1693,3 +1693,12 @@ body:not(.overlay-window) #root {
   padding-left: 0;
   list-style: none;
 }
+
+.brawl-my-order summary {
+  cursor: pointer;
+}
+.brawl-my-order-table td,
+.brawl-my-order-table th {
+  padding: 2px 6px;
+  text-align: left;
+}

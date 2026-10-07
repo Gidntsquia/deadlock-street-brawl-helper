@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { abilityPanelFor, brawlAbilityOrder } from '../abilities';
+import {
+  abilityPanelFor,
+  brawlAbilityOrder,
+  customOrderProblem,
+  customRoundPoints,
+  standardCustom,
+} from '../abilities';
 import { CLOSE_FRAMES, initialTip, stepTip, TIP_MS } from '../abilityPanelTimer';
 import { overlayHasContent } from '../overlayContent';
 import { heroByName, inputFor } from './testData';
@@ -87,5 +93,45 @@ describe('abilityPanelFor', () => {
     expect(sum(5, 'later')).toBe(0);
     expect(sum(1, 'done')).toBe(0);
     expect(sum(1, 'now')).toBeGreaterThan(1);
+  });
+});
+
+describe('custom ability order', () => {
+  const hero = heroByName('Infernus');
+  const input = inputFor(hero.id);
+  const order = brawlAbilityOrder(input);
+  // R1: 3 in 2, 3 in 4. R2: 5 in 2, 1 in 3. R3: 5 in 4. R4: 2 in 3, 3 in 1. R5: the rest.
+  const mine = [4, 4, 5, 1, 1, 2, 2, 4, 5, 1, 1, 3];
+
+  it('is valid and spends each round exactly', () => {
+    expect(customOrderProblem(mine)).toBeNull();
+    expect(customRoundPoints(mine)).toEqual([6, 6, 5, 5, 10]);
+  });
+
+  it('drives the panel', () => {
+    const p = abilityPanelFor(order, hero, input.abilities, 2, mine);
+    expect(p.evidence).toBe('Your order');
+    // tiers are listed 5/2/1 top to bottom
+    expect(p.slots.map((s) => s.tiers)).toEqual([
+      ['later', 'later', 'later'],
+      ['now', 'done', 'done'],
+      ['later', 'later', 'now'],
+      ['later', 'done', 'done'],
+    ]);
+  });
+
+  it('rejects overspending and tiers out of order, and the panel falls back to the standard order', () => {
+    expect(customOrderProblem([1, 1, 1, 1, 1, 1, 5, 5, 5, 5, 5, 5])).toMatch(/^Round 1/);
+    expect(customOrderProblem([2, 1, 5, 1, 1, 2, 2, 4, 5, 1, 3, 3])).toMatch(/^Ability 1/);
+    const bad = abilityPanelFor(order, hero, input.abilities, 1, [5, 5, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]);
+    expect(bad).toEqual(abilityPanelFor(order, hero, input.abilities, 1));
+  });
+
+  it('starts the editor from the standard order', () => {
+    const std = standardCustom(order, hero);
+    expect(customOrderProblem(std)).toBeNull();
+    expect(abilityPanelFor(order, hero, input.abilities, 3, std).slots).toEqual(
+      abilityPanelFor(order, hero, input.abilities, 3).slots,
+    );
   });
 });

@@ -65,7 +65,9 @@ Debug mode (`src/debugMode.ts`) is on in dev and in any `-rc` version (last rc w
 Ctrl+Shift+D (or the tray entry, channel `debugToggle`) toggles the Debug panel: Start/Stop capture, Detect now (F8 still
 works without it), test mode, round/choice/re-rolls, enemies, owned, advice list, ability order, and the **session report**
 (one row per draft with its crops, items, shown plates, advice ms, and `Mark wrong`). The main view has only the status
-sentence, a one-sentence problem (`src/brawl/problems.ts`, also drawn on the overlay for 5 s) and `Hero not read. Using <name>`.
+sentence, a one-sentence problem (`src/brawl/problems.ts`, also drawn on the overlay for 5 s), `Hero not read. Using <name>` and
+the collapsed per-hero ability order editor (`AbilityOrderEditor.tsx`; `brawl.customOrders`, 12 rounds per hero, one per pill;
+a valid one replaces the standard order in the ability panel, `abilityPanelFor`'s `custom`, evidence line `Your order`).
 With debug on, `electron/sessionStore.ts` records the last 3 matches under `userData/sessions/m-<id>/dNNN/` (crops only, 300 MB
 cap, oldest deleted first; never commit them). `npm run brawl:replay -- <session folder>` re-runs each draft through the real
 worker and gate on a virtual clock and prints items, `?` count, changes, drop-outs, advice ms and `same as live` or `differs

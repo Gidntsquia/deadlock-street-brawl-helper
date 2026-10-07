@@ -19,6 +19,8 @@ import {
   brawlAbilityOrder,
   abilityStepIndex,
   abilityPanelFor,
+  standardCustom,
+  type CustomOrder,
   initialTip,
   stepTip,
   shopProbeRect,
@@ -51,6 +53,7 @@ import type { DraftRecord, RegionShot } from '../../electron/sessionStore';
 import { unknownCeiling } from '../brawl/engine';
 import { itemTiers, type BrawlTierListData } from '../brawl/tierlist';
 import { AbilityPanel } from './AbilityPanel';
+import { AbilityOrderEditor } from './AbilityOrderEditor';
 import { AdvicePanel } from './AdvicePanel';
 import { ItemTile } from './ItemTile';
 import { log } from '../log';
@@ -95,7 +98,10 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
   const [choice, setChoice] = useState(1);
   const [rerollsLeft, setRerollsLeft] = useState<number | null>(null); // null: however many the round starts with; set from the on-screen "N Re-Roll Remaining" caption once a frame is read
   const isEnemies = (v: unknown): v is number[] => isNumberArray(v) && v.length === ENEMY_SLOTS;
+  const isCustomOrders = (v: unknown): v is Record<string, CustomOrder> =>
+    !!v && typeof v === 'object' && Object.values(v).every((o) => isNumberArray(o) && o.length === 12);
   const [enemies, setEnemies] = usePersisted('enemies', isEnemies, Array(ENEMY_SLOTS).fill(0));
+  const [customOrders, setCustomOrders] = usePersisted<Record<string, CustomOrder>>('customOrders', isCustomOrders, {});
   const [owned, setOwned] = useState<number[]>([]);
   const [cards, setCards] = useState<Offer[]>([]);
   /** Cards of the accepted set the fallback could not read (shown as grey `?` plates, never ranked). */
@@ -298,9 +304,18 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
   const abilityOrder = useMemo(() => (input ? brawlAbilityOrder(input) : null), [input]);
   const abilityStepNow = abilityStepIndex(round, choice);
   // The standard point allocation for this round, shown ~15 s after the draft closes (latched then).
+  const customOrder = customOrders[String(hero.id)] ?? null;
+  const setCustomOrder = (next: CustomOrder | null) =>
+    setCustomOrders((all) => {
+      const { [String(hero.id)]: _, ...rest } = all;
+      return next ? { ...rest, [String(hero.id)]: next } : rest;
+    });
   const abilityTarget = useMemo(
-    () => (abilityOrder && input && !heroNotRead ? abilityPanelFor(abilityOrder, hero, input.abilities, round) : null),
-    [abilityOrder, input, hero, round, heroNotRead],
+    () =>
+      abilityOrder && input && !heroNotRead
+        ? abilityPanelFor(abilityOrder, hero, input.abilities, round, customOrder)
+        : null,
+    [abilityOrder, input, hero, round, heroNotRead, customOrder],
   );
   useEffect(() => {
     abilityTargetRef.current = abilityTarget;
@@ -1309,6 +1324,16 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
         )}
         {heroNotRead && draftOpen && <div className="muted brawl-hero-note">{`Hero not read. Using ${hero.name}`}</div>}
       </div>
+
+      {abilityOrder && (
+        <AbilityOrderEditor
+          heroName={hero.name}
+          names={hero.abilities.slice(0, 4).map((cls) => abilities.find((a) => a.class_name === cls)?.name ?? cls)}
+          standard={standardCustom(abilityOrder, hero)}
+          value={customOrder}
+          onChange={setCustomOrder}
+        />
+      )}
 
       {debug && (
         <div className="panel brawl-debug" aria-label="Debug panel">
