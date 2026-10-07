@@ -26,9 +26,19 @@ Then:
 2. Run the app. It finds the Deadlock window on its own.
 3. Play a Street Brawl draft. The advice appears over the draft screen.
 
-No game running? Press **Ctrl+Shift+D** in the app window to open the Debug panel and turn on Test mode.
+Quickstart:
 
-The match data was last refreshed on 2026-10-02 (see `public/data/manifest.json`). To refresh it, run
+- **F8 (Detect now)**: press it once the draft screen is up to read it right away. The app also finds the
+  draft by itself; F8 is the quick way to ask. If no draft is on screen the status says `No draft found`.
+- **Test mode**: no game running? Press **Ctrl+Shift+D** to open the Debug panel and turn on Test mode.
+  It opens a dummy Deadlock window with a real draft screenshot so you can try the overlay.
+- **Custom ability order**: open the ability order editor in the main view, pick your hero and set the
+  points for each of the 12 rounds. A valid order replaces the standard one in the ability panel.
+- **Release candidates (`-rc`) run with debug mode on**: the title bar shows `DEBUG`, the Debug panel
+  has the session report, and the last 3 matches are recorded locally so a misread can be replayed.
+  The final release has debug mode off.
+
+The match data was last refreshed on 2026-10-07 (see `public/data/manifest.json`). To refresh it, run
 `npm run fetch-data` and commit the result.
 
 Developing (needs [Node.js](https://nodejs.org) 20 or newer):
