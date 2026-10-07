@@ -77,7 +77,8 @@ from live`. `npm run brawl:fixture -- <session folder>` copies every marked-wron
 While the game is foreground and capture is off, the probe tick also grabs the "Joining the fight as..." name box
 (`loadingNameRect`, `probeLoadingName` in `electron/shopProbe.ts`; cream-on-dark test `looksLikeLoadingName`). A hit sends
 the pixels over `loadingName` (at most 3 times per screen) to `BrawlView`, which OCRs them (`readHeroName`), matches the
-text to a hero name and uses it ahead of the portrait read for that match (valid 60 min). A hand-picked hero (`pinned`)
+text to a hero name (`matchHeroName`, score >= 0.85: one wrong letter in "SHIP" once read as Shiv) and uses it only
+when the portrait read fails, for that match (valid 60 min). A hand-picked hero (`pinned`)
 beats both. Not verified on real Windows: only the one frame in `scripts/fixtures/loading/` is tested.
 
 ## Reading sign and the fallback

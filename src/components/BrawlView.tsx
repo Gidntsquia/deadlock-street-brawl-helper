@@ -104,7 +104,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
   const [heroNotRead, setHeroNotRead] = useState(false);
   const heroNotReadRef = useRef(false);
   const lastSureHeroRef = useRef(0);
-  // The hero the loading screen named ("Joining the fight as..."): exact text, so it outranks the portrait read.
+  // The hero the loading screen named ("Joining the fight as..."): used only when the portrait read fails.
   const loadedHeroRef = useRef<{ id: number; at: number } | null>(null);
   /** The overlay state of the set on screen, held unchanged until that set is no longer live. */
   const frozenRef = useRef<{ key: string; state: OverlayState } | null>(null);
@@ -656,7 +656,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
       void (async () => {
         try {
           const { readHeroName, terminateOCR } = await import('../brawl/ocr');
-          const { matchItemName, nameList } = await import('../brawl/names');
+          const { matchHeroName, nameList } = await import('../brawl/names');
           const text = await readHeroName({
             width: crop.width,
             height: crop.height,
@@ -665,7 +665,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
           });
           void terminateOCR();
           const hs = loopCtxRef.current.heroes;
-          const m = matchItemName(
+          const m = matchHeroName(
             text,
             nameList(
               hs.map((h) => h.id),
@@ -1071,7 +1071,9 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
         const loadedFresh = loaded && Date.now() - loaded.at < 60 * 60_000 ? loaded.id : 0;
         if (meta.round === 1 && meta.choice === 1 && !loadedFresh) lastSureHeroRef.current = 0; // a new match: last match's hero is not kept
         const portrait = meta.self && heroes.some((h) => h.id === meta.self) ? meta.self : 0;
-        const read = loadedFresh || portrait;
+        // A sure portrait read wins: the loading-screen OCR fills in only when the portrait does not read (a misread
+        // name there once held a hero who was not in the match for the whole game).
+        const read = portrait || loadedFresh;
         const pick = pinned
           ? { heroId, source: 'selected' as const }
           : chooseHero(read, lastSureHeroRef.current, heroId);

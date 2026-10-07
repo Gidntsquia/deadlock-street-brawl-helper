@@ -72,3 +72,13 @@ export function matchItemName(text: string, list: NameList): NameMatch | null {
   if (best.s < NAME_MIN_SCORE || margin < NAME_MIN_MARGIN) return null;
   return { itemId: best.id, score: best.s, margin };
 }
+
+/** A hero name read off the loading screen must be this close: hero names are short, so one wrong letter in a
+ *  four-letter read ("SHIP") already scores 0.75 against "Shiv". */
+export const HERO_MIN_SCORE = 0.85;
+
+/** The hero the loading screen's text names, or null when the read is not near-exact. */
+export function matchHeroName(text: string, list: NameList): NameMatch | null {
+  const m = matchItemName(text, list);
+  return m && m.score >= HERO_MIN_SCORE ? m : null;
+}
