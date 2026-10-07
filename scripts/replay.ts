@@ -122,6 +122,8 @@ export async function replayDraft(dir: string, opts: ReplayOpts = {}): Promise<R
     if (res.accepted && acceptFrame < 0) acceptFrame = fi;
     if (res.reads.length === 3 && res.reads.every((x) => x.present && !x.unsure)) lastFull = fi;
     if (res.meta?.self) hero = res.meta.self;
+    // the accepted set carries the count it was accepted with; later changes arrive as separate 'rerolls' messages
+    if (res.meta && res.meta.rerollsRemaining >= 0) rerolls = res.meta.rerollsRemaining;
     if (res.inventory) inventory = res.inventory;
     stat.push({
       t: clock,
