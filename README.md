@@ -1,7 +1,7 @@
 # Deadlock Street Brawl Helper 🃏
 
 <p align="center">
-  <img alt="The draft advisor ranking the three cards of a Street Brawl set, with an enhanced Reactive Barrier marked TAKE" src="docs/brawl-overlay.png">
+  <img alt="A real Street Brawl draft: the Reading sign, then plates with scores on three cards and the advised Transcendent Cooldown marked in teal" src="docs/brawl-overlay.gif">
 </p>
 
 A draft advisor for [Deadlock](https://store.steampowered.com/app/1422450/Deadlock/)'s Street Brawl mode. It reads the draft screen while you play, ranks the three cards you're offered, and says whether the set is worth a re-roll. The advice is drawn over the draft screen. Scores are built from 30 days of Street Brawl matches from [deadlock-api.com](https://deadlock-api.com).

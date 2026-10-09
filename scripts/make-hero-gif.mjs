@@ -15,7 +15,8 @@ if (!(dur >= 4 && dur <= 8)) {
   process.exit(2);
 }
 const ffmpeg = process.env.FFMPEG || 'ffmpeg';
-const vf = 'fps=12,scale=1280:-2:flags=lanczos';
+const width = Number(process.env.GIF_WIDTH) || 1280;
+const vf = `fps=12,scale=${width}:-2:flags=lanczos`;
 const r = spawnSync(
   ffmpeg,
   ['-y', '-ss', start, '-t', String(dur), '-i', clip, '-an', '-filter_complex',

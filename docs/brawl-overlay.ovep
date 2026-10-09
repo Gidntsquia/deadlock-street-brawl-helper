@@ -1,0 +1,113 @@
+{
+ "version": 1,
+ "width": 1280,
+ "height": 720,
+ "fps": 30,
+ "media": {
+  "m1": {
+   "id": "m1",
+   "path": "D:\\obs videos\\2026-10-09 00-46-30.mkv",
+   "name": "2026-10-09 00-46-30.mkv",
+   "w": 1280,
+   "h": 720,
+   "fps": 30,
+   "dur": 3092.41,
+   "hasAudio": true,
+   "vcodec": "h264",
+   "bitrate": 2664405,
+   "container": "matroska,webm"
+  }
+ },
+ "tracks": [
+  {
+   "id": "V1",
+   "kind": "video",
+   "name": "V1"
+  },
+  {
+   "id": "V2",
+   "kind": "video",
+   "name": "V2"
+  },
+  {
+   "id": "V3",
+   "kind": "video",
+   "name": "V3"
+  },
+  {
+   "id": "A1",
+   "kind": "audio",
+   "name": "A1"
+  },
+  {
+   "id": "A2",
+   "kind": "audio",
+   "name": "A2"
+  },
+  {
+   "id": "A3",
+   "kind": "audio",
+   "name": "A3"
+  }
+ ],
+ "clips": [
+  {
+   "id": "c1",
+   "kind": "video",
+   "trackId": "V1",
+   "start": 0,
+   "in": 392.5,
+   "dur": 7,
+   "speed": 1,
+   "volume": 1,
+   "keys": [],
+   "fadeIn": 0,
+   "fadeOut": 0,
+   "transition": 0,
+   "transOut": 0,
+   "brightness": 1,
+   "contrast": 1,
+   "saturation": 1,
+   "crop": {
+    "l": 0,
+    "r": 0,
+    "t": 0,
+    "b": 0
+   },
+   "scale": 1,
+   "posX": 0,
+   "posY": 0,
+   "mediaId": "m1",
+   "link": "l1"
+  },
+  {
+   "id": "c2",
+   "kind": "audio",
+   "trackId": "A1",
+   "start": 0,
+   "in": 392.5,
+   "dur": 7,
+   "speed": 1,
+   "volume": 1,
+   "keys": [],
+   "fadeIn": 0,
+   "fadeOut": 0,
+   "transition": 0,
+   "transOut": 0,
+   "brightness": 1,
+   "contrast": 1,
+   "saturation": 1,
+   "crop": {
+    "l": 0,
+    "r": 0,
+    "t": 0,
+    "b": 0
+   },
+   "scale": 1,
+   "posX": 0,
+   "posY": 0,
+   "mediaId": "m1",
+   "link": "l1"
+  }
+ ]
+}
