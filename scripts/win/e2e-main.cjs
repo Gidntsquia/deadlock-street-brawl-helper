@@ -361,31 +361,31 @@ async function main() {
       `strip=${JSON.stringify(strip)} bounds=${JSON.stringify(cb)} content=${JSON.stringify(cc)} menu=${control.isMenuBarVisible()}`,
     );
     if (SLOW > 1) {
-      // CDP Emulation.setCPUThrottlingRate on the control page and on every worker target it spawns
-      // (the recogniser runs in a Web Worker, so throttling the page alone would not slow the reads).
-      const dbgr = control.webContents.debugger;
-      const applied = [];
+      // CDP throttling cannot reach Web Workers ("only supported for pages"), and the recogniser runs in one.
+      // So: pin this app's whole process tree to one logical core and start (SLOW - 1) busy processes pinned to
+      // the same core. Equal-priority threads then share that core, so every app thread, workers included,
+      // gets about 1/SLOW of it (and no parallelism), like a weak PC.
+      const { spawn, execFileSync } = require('node:child_process');
+      const burners = [];
+      let method;
       try {
-        dbgr.attach('1.3');
-        dbgr.on('message', async (_e, method, params) => {
-          if (method !== 'Target.attachedToTarget') return;
-          const t = params.targetInfo.type;
-          try {
-            await dbgr.sendCommand('Emulation.setCPUThrottlingRate', { rate: SLOW }, params.sessionId);
-            applied.push(t);
-          } catch (e) {
-            applied.push(`${t}:failed(${e.message})`);
-          }
-        });
-        await dbgr.sendCommand('Emulation.setCPUThrottlingRate', { rate: SLOW });
-        applied.push('page');
-        await dbgr.sendCommand('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
-        await sleep(500);
+        for (let i = 1; i < SLOW; i++) {
+          burners.push(spawn(process.execPath, ['-e', 'for(;;){}'], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, stdio: 'ignore' }));
+        }
+        process.on('exit', () => burners.forEach((b) => { try { b.kill(); } catch {} }));
+        const ps =
+          `$r=@(${process.pid});$all=Get-CimInstance Win32_Process;$q=@(${process.pid});` +
+          `while($q.Count){$n=@();foreach($x in $q){$n+=$all|?{$_.ParentProcessId -eq $x}|%{$_.ProcessId}};$r+=$n;$q=$n};` +
+          `$r+=@(${burners.map((b) => b.pid).join(',')});$c=0;` +
+          `foreach($i in $r){try{(Get-Process -Id $i -ErrorAction Stop).ProcessorAffinity=[IntPtr]1;$c++}catch{}};Write-Output $c`;
+        const out = execFileSync('powershell.exe', ['-NoProfile', '-Command', ps], { encoding: 'utf8' }).trim();
+        method = `1 core shared with ${SLOW - 1} busy processes (processor affinity): ${out} processes pinned`;
       } catch (e) {
-        applied.push(`error(${e.message})`);
+        method = `failed(${e.message})`;
       }
-      throttle.cpuThrottleMethod = `CDP Emulation.setCPUThrottlingRate x${SLOW}: ${applied.join(',')}`;
+      throttle.cpuThrottleMethod = `x${SLOW}: ${method}`;
       console.log(`cpu throttle ${throttle.cpuThrottleMethod}`);
+      await sleep(500);
     }
     const namesOf = (l) => Object.values(l.cards);
     const waitAdvice = async (label, round, choice, timeoutMs) => {

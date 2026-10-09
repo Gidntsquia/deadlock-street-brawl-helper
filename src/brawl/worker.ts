@@ -559,6 +559,9 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
     index ??= decodeIconIndex(msg.index);
     tiers = msg.tiers;
     setNames(msg.names);
+    // Load the OCR engines now too: on a slow PC they take seconds to start, which used to land inside the first
+    // draft's 2.5 s. (They are freed OCR_KEEP_MS after a 'stop', and loaded again by the next 'init'/'reset'.)
+    warmOCR();
     return;
   }
   if (msg.type === 'init' || msg.type === 'reset') {
