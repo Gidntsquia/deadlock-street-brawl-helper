@@ -14,15 +14,13 @@ import {
   cardNameCrop,
   readMarkers,
   cardSquares,
-  matchIcon,
-  CARD_EDGE,
   type CardRead,
   type DecodedIndex,
   type DraftMeta,
   type InventoryRead,
 } from './recognise';
 import { readCardName, readRerollsRemaining, terminateOCR, warmOCR, type NameCrop } from './ocr';
-import { matchItemName, nameCandidates, nameList, type NameList } from './names';
+import { matchItemName, nameList, type NameList } from './names';
 import { initialGate, offScreenGate, stepGate } from './draftGate';
 import type { IconIndex } from './types';
 
@@ -125,10 +123,6 @@ interface SlotLock {
 let locks: (SlotLock | null)[] = [null, null, null];
 let nameFail: ({ sig: Uint8Array; at: number; since: number } | null)[] = [null, null, null];
 const nameBusy = [false, false, false];
-/** Items a slot's name read fits about equally (a half-covered name): the card's icon picks among them. */
-let nameHint: (number[] | null)[] = [null, null, null];
-const HINT_ICON_SCORE = 0.6,
-  HINT_ICON_MARGIN = 0.03;
 let nameChoice = 0,
   nameGen = 0; // bumped when locks are dropped, so a read started before that lands nowhere
 /** For this long after a re-roll is seen, a changed name line is a new card rather than a hover. */
@@ -141,7 +135,6 @@ const advising = () => gate.live && acceptedChoice === nameChoice;
 const forgetNames = () => {
   locks = [null, null, null];
   nameFail = [null, null, null];
-  nameHint = [null, null, null];
   nameChoice = 0;
   rerollAt = null;
   nameGen++;
@@ -289,12 +282,9 @@ const applyNames = (
           } else if (m) {
             locks[slot] = prev?.id === m.itemId ? { ...prev, sig } : { id: m.itemId, sig, enhanced, rare };
             nameFail[slot] = null;
-            nameHint[slot] = null;
           } else {
             const f = nameFail[slot];
             nameFail[slot] = { sig, at: performance.now(), since: f?.since ?? t };
-            const cands = nameCandidates(text, list);
-            nameHint[slot] = cands.length >= 2 ? cands : null;
           }
         })
         .catch(() => {}) // the OCR engine was freed (capture stopped) while this was running
@@ -320,22 +310,6 @@ const applyNames = (
     // No lock yet. A sure icon offers its set to the gate so the settle time runs while the name is read (`pending`
     // holds the accept until it is in); a shaky one keeps the set out. After the name has failed to read for a while,
     // the icon guess stands.
-    // A name that fits several items (half of it covered): the icon, searched among those items only, settles it.
-    const hint = nameHint[slot];
-    if (hint && index && r.match.edge > 0) {
-      const edge = r.match.edge / CARD_EDGE;
-      const ic = matchIcon(img, index, r.match.x + r.match.edge / 2, r.match.y + r.match.edge / 2, edge, hint, {
-        search: 12,
-        scales: [0.92, 0.97],
-      });
-      if (ic.itemId && ic.score >= HINT_ICON_SCORE && ic.margin >= HINT_ICON_MARGIN) {
-        locks[slot] = { id: ic.itemId, sig: sig ?? new Uint8Array(0), enhanced: r.enhanced, rare: r.rare };
-        nameHint[slot] = null;
-        nameFail[slot] = null;
-        slotSure[slot] = true;
-        return asLock(locks[slot]!);
-      }
-    }
     const f = nameFail[slot];
     // Only a clear icon stands on its own once the name will not read: a shaky guess is never put on screen.
     if (f && now - f.since > NAME_GIVE_UP_MS && r.present && sure) {

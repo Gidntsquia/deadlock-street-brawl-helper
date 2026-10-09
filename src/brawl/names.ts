@@ -37,17 +37,7 @@ const similarity = (t: string, n: string): number => {
   // read of six or more letters that is the exact start or end of a longer name counts by how much of it was seen.
   const part =
     t.length >= 6 && n.length > t.length && (n.endsWith(t) || n.startsWith(t)) ? 0.7 + (0.3 * t.length) / n.length : 0;
-  // The same, with the letters at the cut misread too ("ig Round" for "...ing Rounds"): the read is compared with every
-  // stretch of the name about its length, and trusted less the worse it fits. Six letters or more, one error in six at most.
-  let fuzzy = 0;
-  if (t.length >= 6 && n.length > t.length) {
-    for (let k = t.length - 1; k <= t.length + 1; k++)
-      for (let i = 0; i + k <= n.length; i++) {
-        const q = 1 - lev(t, n.slice(i, i + k)) / Math.max(t.length, k);
-        if (q >= 0.8) fuzzy = Math.max(fuzzy, 0.45 + 0.4 * q + 0.15 * (t.length / n.length));
-      }
-  }
-  return Math.max(whole, inside, part, fuzzy);
+  return Math.max(whole, inside, part);
 };
 
 export type NameList = { id: number; key: string }[];
@@ -87,19 +77,6 @@ export function matchItemName(text: string, list: NameList): NameMatch | null {
   const margin = best.s - Math.max(0, second);
   if (best.s < NAME_MIN_SCORE || margin < NAME_MIN_MARGIN) return null;
   return { itemId: best.id, score: best.s, margin };
-}
-
-/** The items a read names about equally well (two or more when the readable letters fit several, as "ig Round" fits
- *  Opening and Rapid Rounds): the card's icon then tells them apart. Best first; at most four. */
-export function nameCandidates(text: string, list: NameList): number[] {
-  const t = norm(text);
-  if (t.length < 3) return [];
-  return list
-    .map(({ id, key }) => ({ id, s: similarity(t, key) }))
-    .filter((x) => x.s >= NAME_MIN_SCORE)
-    .sort((a, b) => b.s - a.s)
-    .slice(0, 4)
-    .map((x) => x.id);
 }
 
 /** A hero name read off the loading screen must be this close: hero names are short, so one wrong letter in a
