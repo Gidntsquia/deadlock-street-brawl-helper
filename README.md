@@ -1,7 +1,7 @@
 # Deadlock Street Brawl Helper 🃏
 
 <p align="center">
-  <img alt="A real Street Brawl draft at 1.45x speed: the Reading sign, then score plates on three cards with the advised Warp Stone marked in teal" src="docs/brawl-overlay.gif">
+  <img alt="Three real Street Brawl drafts at 3x speed: each shows the Reading sign, then score plates on the cards with the advised one marked in teal" src="docs/brawl-overlay.gif">
 </p>
 
 A draft advisor for [Deadlock](https://store.steampowered.com/app/1422450/Deadlock/)'s Street Brawl mode. It reads the draft screen while you play, ranks the three cards you're offered, and says whether the set is worth a re-roll. The advice is drawn over the draft screen. Scores are built from 30 days of Street Brawl matches from [deadlock-api.com](https://deadlock-api.com).
