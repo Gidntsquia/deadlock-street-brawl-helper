@@ -684,6 +684,7 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
   const fullKey = seen === 3 ? reads.map((r) => `${r.itemId}${r.enhanced ? '+' : ''}`).join(',') : '';
   const fbDue =
     !gate.live &&
+    seen > 0 && // all three cards still empty (sliding in, or the game is slow): nothing to put a `?` on, keep waiting
     readingSince !== null &&
     (nowMs - readingSince >= FALLBACK_MS || nowMs - (readingFirst ?? nowMs) >= FALLBACK_MAX_MS) &&
     !gate.spent.some((k) => fullKey && k.replace(/\+/g, '') === fullKey.replace(/\+/g, ''));
