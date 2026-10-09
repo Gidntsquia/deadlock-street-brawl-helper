@@ -170,6 +170,7 @@ export async function replayDraft(dir: string, opts: ReplayOpts = {}): Promise<R
 /** Replays every draft of a session folder (`m-...`). */
 export async function replaySession(folder: string, opts: ReplayOpts = {}): Promise<ReplayDraft[]> {
   const out: ReplayDraft[] = [];
+  if (existsSync(path.join(folder, 'draft.json'))) return [{ ...(await replayDraft(folder, opts)), n: 1 }];
   const dirs = readdirSync(folder)
     .filter((n) => /^d\d+$/.test(n) && existsSync(path.join(folder, n, 'draft.json')))
     .sort();
