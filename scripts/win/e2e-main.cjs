@@ -370,9 +370,20 @@ async function main() {
       let method;
       try {
         for (let i = 1; i < SLOW; i++) {
-          burners.push(spawn(process.execPath, ['-e', 'for(;;){}'], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, stdio: 'ignore' }));
+          burners.push(
+            spawn(process.execPath, ['-e', 'for(;;){}'], {
+              env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+              stdio: 'ignore',
+            }),
+          );
         }
-        process.on('exit', () => burners.forEach((b) => { try { b.kill(); } catch {} }));
+        process.on('exit', () =>
+          burners.forEach((b) => {
+            try {
+              b.kill();
+            } catch {}
+          }),
+        );
         const ps =
           `$r=@(${process.pid});$all=Get-CimInstance Win32_Process;$q=@(${process.pid});` +
           `while($q.Count){$n=@();foreach($x in $q){$n+=$all|?{$_.ParentProcessId -eq $x}|%{$_.ProcessId}};$r+=$n;$q=$n};` +

@@ -20,8 +20,7 @@ if (!(outDur >= 4 && outDur <= 8)) {
 const ffmpeg = process.env.FFMPEG || 'ffmpeg';
 const width = Number(process.env.GIF_WIDTH) || 1280;
 const parts = segs.map(
-  ([a, b], i) =>
-    `[0:v]trim=${a}:${b},setpts=(PTS-STARTPTS)/${speed},fps=12,scale=${width}:-2:flags=lanczos[v${i}]`,
+  ([a, b], i) => `[0:v]trim=${a}:${b},setpts=(PTS-STARTPTS)/${speed},fps=12,scale=${width}:-2:flags=lanczos[v${i}]`,
 );
 const join = segs.map((_, i) => `[v${i}]`).join('') + `concat=n=${segs.length}:v=1:a=0`;
 const graph = `${parts.join(';')};${join},split[a][b];[a]palettegen=max_colors=128[p];[b][p]paletteuse=dither=bayer:bayer_scale=4`;
