@@ -1,5 +1,5 @@
 // Usage: node scripts/make-hero-gif.mjs <clip.mp4> <startSec> <endSec> [out.gif]
-// Cuts the clip, scales to 1280 px wide or less, 12 fps, two-pass palette, looping, no sound.
+// Cuts the clip, scales to 1280 px wide or less, 12 fps, optional SPEED=<x> speed-up, two-pass palette, looping, no sound.
 // ffmpeg comes from PATH, or from FFMPEG=<path> (Open Video Editor ships one in ffmpeg-static).
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -10,13 +10,15 @@ if (!clip || start === undefined || end === undefined || !existsSync(clip)) {
   process.exit(2);
 }
 const dur = Number(end) - Number(start);
-if (!(dur >= 4 && dur <= 8)) {
-  console.error(`duration ${dur}s is outside 4 to 8 s`);
+const speed = Number(process.env.SPEED) || 1;
+const outDur = dur / speed;
+if (!(outDur >= 4 && outDur <= 8)) {
+  console.error(`gif length ${outDur.toFixed(1)}s is outside 4 to 8 s`);
   process.exit(2);
 }
 const ffmpeg = process.env.FFMPEG || 'ffmpeg';
 const width = Number(process.env.GIF_WIDTH) || 1280;
-const vf = `fps=12,scale=${width}:-2:flags=lanczos`;
+const vf = `setpts=PTS/${speed},fps=12,scale=${width}:-2:flags=lanczos`;
 const r = spawnSync(
   ffmpeg,
   ['-y', '-ss', start, '-t', String(dur), '-i', clip, '-an', '-filter_complex',
