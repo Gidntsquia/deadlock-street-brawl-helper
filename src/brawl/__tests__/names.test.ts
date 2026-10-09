@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { matchItemName, nameList } from '../names';
+import { matchItemName, nameCandidates, nameList } from '../names';
 import { items } from './testData';
 
 const all = nameList(
@@ -23,5 +23,19 @@ describe('matchItemName', () => {
   });
   it.each(['', 'r', 'xqzvw kfj', 'Spirit'])('gives no item for %j', (text) => {
     expect(matchItemName(text, all)).toBeNull();
+  });
+});
+
+describe('nameCandidates', () => {
+  // The real read of a card whose left half a tooltip covered (session m-20261009T050536, round 2): it fits two items,
+  // so the name alone names none and the card's icon decides.
+  it('lists every item a half-covered name fits, and the name alone decides none', () => {
+    expect(matchItemName('ig Round', all)).toBeNull();
+    const c = nameCandidates('ig Round', all);
+    expect(c).toContain(idOf('Opening Rounds'));
+    expect(c.length).toBeGreaterThanOrEqual(2);
+  });
+  it('is one item for a clean read', () => {
+    expect(nameCandidates('Metal Skin', all)).toEqual([idOf('Metal Skin')]);
   });
 });
