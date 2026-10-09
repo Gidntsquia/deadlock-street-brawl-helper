@@ -1298,6 +1298,48 @@ export interface InventoryRead {
   sd: number;
 }
 
+/** The grid is the same picture for most of a match, and a slot's match depends only on the pixels around it, so a slot
+ *  whose surroundings are byte-identical to one already matched (same frame size, spot and search) reuses that match.
+ *  The answer is exactly what `matchIcon` returns; it only skips the search (400 to 600 ms for the grid on a draft that
+ *  settles over several frames, and the gate wants two agreeing reads). */
+const slotMatches = new Map<string, IconMatch>();
+const indexIds = new WeakMap<object, number>();
+let indexCount = 0;
+function cachedMatch(
+  img: RGBImage,
+  index: DecodedIndex,
+  cx: number,
+  cy: number,
+  edge: number,
+  search: number,
+  scales: readonly number[],
+): IconMatch {
+  const reach = (edge * Math.max(1, ...scales)) / 2 + search + 2;
+  const x0 = Math.max(0, Math.floor(cx - reach)),
+    y0 = Math.max(0, Math.floor(cy - reach)),
+    x1 = Math.min(img.width, Math.ceil(cx + reach)),
+    y1 = Math.min(img.height, Math.ceil(cy + reach)),
+    ch = img.channels,
+    d = img.data;
+  let h1 = 0x811c9dc5,
+    h2 = 0x01000193;
+  for (let y = y0; y < y1; y++)
+    for (let p = (y * img.width + x0) * ch, e = (y * img.width + x1) * ch; p < e; p++) {
+      const v = d[p]!;
+      h1 = Math.imul(h1 ^ v, 0x01000193);
+      h2 = Math.imul(h2 + v + 1, 0x85ebca6b) ^ (h2 >>> 13);
+    }
+  let iid = indexIds.get(index);
+  if (iid === undefined) indexIds.set(index, (iid = ++indexCount));
+  const key = `${iid}|${img.width}x${img.height}|${cx}|${cy}|${edge}|${search}|${scales.join(',')}|${x1 - x0}|${y1 - y0}|${h1 >>> 0}|${h2 >>> 0}`;
+  const hit = slotMatches.get(key);
+  if (hit) return { ...hit };
+  const m = matchIcon(img, index, cx, cy, edge, undefined, { search, scales });
+  if (slotMatches.size >= 600) slotMatches.clear();
+  slotMatches.set(key, m);
+  return { ...m };
+}
+
 /**
  * Item ids in the ten inventory slots (0 = empty or unreadable). `prefer` (every card offered this game + items already
  * owned) settles icon twins and lowers the score floor; an item outside it needs a near-perfect match.
@@ -1353,10 +1395,8 @@ function readInventoryAt(
         out.push({ slot: r * INVENTORY.cols + c, itemId: 0, score: 0, margin: 0, sd });
         continue;
       }
-      const m = matchIcon(img, index, cx, cy, edge, undefined, {
-        search: Math.round(INVENTORY.search * sx),
-        scales: INVENTORY.scales,
-      });
+      const search = Math.round(INVENTORY.search * sx);
+      const m = cachedMatch(img, index, cx, cy, edge, search, INVENTORY.scales);
       let id = m.itemId;
       if (!pref.has(id)) {
         const tw = index.twins.get(id) ?? [];
