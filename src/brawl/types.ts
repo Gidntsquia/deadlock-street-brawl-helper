@@ -17,6 +17,8 @@ export interface BrawlAnalytics {
   ability_order_stats?: AbilityOrderStat[];
   /** enemy hero id -> this hero's item stats in matches where that enemy was on the other team */
   vs: Record<string, VsStat[]>;
+  /** item stats under each of the hero's top full ability orders (`order` = ability ids in upgrade order) */
+  item_stats_by_order?: { order: number[]; matches: number; item_stats: VsStat[] }[];
 }
 
 /** public/data/brawl-config.json: the `street_brawl` block of the assets API generic data. */
@@ -53,6 +55,8 @@ export interface DraftState {
   round: number; // 1..5
   owned: number[]; // item ids already held (not sold)
   enemies: number[]; // enemy hero ids (0..4 known)
+  /** the active ability order as ability ids in upgrade order (custom or default); omitted: no Order term */
+  order?: number[];
   sets: Offer[][]; // 1..3 sets of up to 3 cards
 }
 
@@ -62,6 +66,7 @@ export interface ScoreParts {
   kit: number;
   tier: number;
   counter: number;
+  order: number;
   synergy: number;
   active: number;
   upgrade: number;

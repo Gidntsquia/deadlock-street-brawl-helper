@@ -222,3 +222,19 @@ export function abilityPanelFor(
     evidence: mine ? 'Your order' : evidenceLine(order.support),
   };
 }
+
+/** The active ability order as ability ids in upgrade order (what `item_stats_by_order` is keyed on): a valid custom
+ *  order sorted by round, then tier, then bar position; else the default (best blended) order's steps. */
+export function orderAbilityIds(
+  order: BrawlAbilityOrder,
+  hero: Hero,
+  abilities: Ability[],
+  custom?: CustomOrder | null,
+): number[] {
+  if (!custom || customOrderProblem(custom)) return order.steps.map((s) => s.ability.id);
+  const pills = hero.abilities.slice(0, 4).flatMap((cls, a) => {
+    const id = abilities.find((x) => x.class_name === cls)?.id;
+    return id === undefined ? [] : [1, 2, 3].map((t) => ({ id, a, t, r: custom[a * 3 + t - 1]! }));
+  });
+  return pills.sort((x, y) => x.r - y.r || x.t - y.t || x.a - y.a).map((p) => p.id);
+}

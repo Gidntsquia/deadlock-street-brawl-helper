@@ -8,12 +8,14 @@ interface Props {
   names: string[];
   /** The standard order, used when the player starts their own. */
   standard: CustomOrder;
+  /** `<n> matches, <w>% win rate` of the default (best blended) order, or `No reliable order`. */
+  defaultEvidence: string;
   value: CustomOrder | null;
   onChange: (next: CustomOrder | null) => void;
 }
 
 /** Lets the player set the round each ability point is bought in, for one hero. The ability panel follows it. */
-export function AbilityOrderEditor({ heroName, names, standard, value, onChange }: Props) {
+export function AbilityOrderEditor({ heroName, names, standard, defaultEvidence, value, onChange }: Props) {
   const problem = value ? customOrderProblem(value) : null;
   const spent = value ? customRoundPoints(value) : null;
   return (
@@ -23,6 +25,7 @@ export function AbilityOrderEditor({ heroName, names, standard, value, onChange 
       </summary>
       {!value ? (
         <div className="row">
+          <span className="muted">Default order: {defaultEvidence}</span>
           <button className="btn" onClick={() => onChange([...standard])}>
             Set my own order
           </button>
@@ -72,7 +75,7 @@ export function AbilityOrderEditor({ heroName, names, standard, value, onChange 
           )}
           <div className="row">
             <button className="btn" onClick={() => onChange(null)}>
-              Use the standard order
+              Reset to default order
             </button>
           </div>
         </>

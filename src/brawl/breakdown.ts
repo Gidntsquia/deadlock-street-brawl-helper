@@ -12,6 +12,7 @@ const LABELS: [keyof ScoreParts, string][] = [
   ['pop', 'Pick rate'],
   ['kit', 'Hero fit'],
   ['counter', 'Vs enemy team'],
+  ['order', 'Order'],
   ['synergy', 'With your items'],
   ['tier', 'Item tier'],
   ['active', 'Active items'],

@@ -19,6 +19,8 @@ import {
   brawlAbilityOrder,
   abilityStepIndex,
   abilityPanelFor,
+  evidenceLine,
+  orderAbilityIds,
   standardCustom,
   type CustomOrder,
   initialTip,
@@ -271,14 +273,20 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
   );
   const enemyIds = useMemo(() => enemies.filter(Boolean), [enemies]);
   const heroId = hero.id;
+  const abilityOrder = useMemo(() => (input ? brawlAbilityOrder(input) : null), [input]);
+  const customOrder = customOrders[String(hero.id)] ?? null;
+  const activeOrder = useMemo(
+    () => (input && abilityOrder ? orderAbilityIds(abilityOrder, hero, input.abilities, customOrder) : undefined),
+    [input, abilityOrder, hero, customOrder],
+  );
   const advice = useMemo(() => {
     // advise only once all 3 cards are read, or (fallback) the sure ones with the others shown as `?`
     if (!input || cards.length === 0 || cards.length + unsure < 3) return null;
     const sets: Offer[][] = [[], [], []];
     sets[choice - 1] = cards;
-    const a = adviseDraft(input, { round, owned, enemies: enemyIds, sets });
+    const a = adviseDraft(input, { round, owned, enemies: enemyIds, order: activeOrder, sets });
     return unsure ? { ...a, reroll: null } : a; // no re-roll call on a set with an unread card
-  }, [input, cards, unsure, round, owned, choice, enemyIds]);
+  }, [input, cards, unsure, round, owned, choice, enemyIds, activeOrder]);
   /** With an unread card the best sure card is only taken when it beats anything that card could be. */
   const takeOk = useMemo(() => {
     if (!unsure || !input || !advice) return true;
@@ -286,7 +294,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
     sets[choice - 1] = cards;
     const top = advice.sets[choice - 1]?.[0]?.score ?? -Infinity;
     return top > unknownCeiling(input, { round, owned, enemies: enemyIds, sets }, choice - 1);
-  }, [unsure, input, advice, cards, round, owned, choice, enemyIds]);
+  }, [unsure, input, advice, cards, round, owned, choice, enemyIds, activeOrder]);
   const unsureRef = useRef(0);
   unsureRef.current = unsure;
   const takeOkRef = useRef(true);
@@ -301,10 +309,8 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
   }, [reroll]);
   const tiers = input ? roundTiers(input, round) : [];
   const topItems = useMemo(() => (input ? topItemsByTier(input) : []), [input]);
-  const abilityOrder = useMemo(() => (input ? brawlAbilityOrder(input) : null), [input]);
   const abilityStepNow = abilityStepIndex(round, choice);
   // The standard point allocation for this round, shown ~15 s after the draft closes (latched then).
-  const customOrder = customOrders[String(hero.id)] ?? null;
   const setCustomOrder = (next: CustomOrder | null) =>
     setCustomOrders((all) => {
       const { [String(hero.id)]: _, ...rest } = all;
@@ -1330,6 +1336,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
           heroName={hero.name}
           names={hero.abilities.slice(0, 4).map((cls) => abilities.find((a) => a.class_name === cls)?.name ?? cls)}
           standard={standardCustom(abilityOrder, hero)}
+          defaultEvidence={evidenceLine(abilityOrder.support)}
           value={customOrder}
           onChange={setCustomOrder}
         />
