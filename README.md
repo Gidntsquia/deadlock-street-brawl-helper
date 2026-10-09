@@ -26,6 +26,7 @@ npm run dev                        # Browser version, for development only
 npm run brawl -- --hero 1 --round 2 --set "Improved Spirit,Enchanter's Emblem,Swift Striker"   # Advice without the screen reader
 npm run fetch-data                 # Refreshes the 30-day snapshot (~1400 requests, ~9 min)
 npm run win:dev                    # From WSL: runs the Windows app from a synced copy
+npm run win:e2e -- --slow 4        # From WSL: end-to-end check with the CPU throttled 4x (advice must still land within 2.5 s)
 ```
 
 ## Features 🔬

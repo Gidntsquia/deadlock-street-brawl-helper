@@ -19,9 +19,13 @@ cp "$REPO_ROOT/logs/win-e2e-verdicts.json" "$WIN_COPY/logs/win-e2e-verdicts.json
 
 # "--only a,b" forwarded to e2e-main.cjs unchanged.
 EXTRA=""
-if [ "${1:-}" = "--only" ]; then
-  EXTRA="--only $2"
-fi
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --only) EXTRA="$EXTRA --only $2"; shift 2 ;;
+    --slow) EXTRA="$EXTRA --slow ${2:-4}"; shift 2 ;;
+    *) shift ;;
+  esac
+done
 
 ELECTRON_BIN="node_modules\\.bin\\electron.cmd"
 powershell.exe -NoProfile -Command \

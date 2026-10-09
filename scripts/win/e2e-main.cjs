@@ -26,6 +26,10 @@ const only = onlyArg
       .map((s) => s.trim())
   : null;
 
+const slowArg = process.argv.indexOf('--slow');
+const SLOW = slowArg >= 0 ? Math.max(1, Number(process.argv[slowArg + 1]) || 4) : 1;
+const throttle = { cpuThrottle: SLOW, cpuThrottleMethod: SLOW > 1 ? 'pending' : 'none' };
+
 const checks = [];
 function check(name, pass, detail) {
   checks.push({ name, pass: !!pass, detail: detail ?? null });
@@ -154,7 +158,7 @@ async function main() {
 
   if (!checkNoRealGameOpen()) {
     clearTimeout(timeout);
-    const report = { platform: process.platform, electron: process.versions.electron, checks };
+    const report = { platform: process.platform, electron: process.versions.electron, ...throttle, checks };
     fs.mkdirSync(path.dirname(REPORT_PATH), { recursive: true });
     fs.writeFileSync(REPORT_PATH, JSON.stringify(report, null, 2));
     console.log(JSON.stringify(report));
@@ -356,6 +360,33 @@ async function main() {
         !control.isMenuBarVisible(),
       `strip=${JSON.stringify(strip)} bounds=${JSON.stringify(cb)} content=${JSON.stringify(cc)} menu=${control.isMenuBarVisible()}`,
     );
+    if (SLOW > 1) {
+      // CDP Emulation.setCPUThrottlingRate on the control page and on every worker target it spawns
+      // (the recogniser runs in a Web Worker, so throttling the page alone would not slow the reads).
+      const dbgr = control.webContents.debugger;
+      const applied = [];
+      try {
+        dbgr.attach('1.3');
+        dbgr.on('message', async (_e, method, params) => {
+          if (method !== 'Target.attachedToTarget') return;
+          const t = params.targetInfo.type;
+          try {
+            await dbgr.sendCommand('Emulation.setCPUThrottlingRate', { rate: SLOW }, params.sessionId);
+            applied.push(t);
+          } catch (e) {
+            applied.push(`${t}:failed(${e.message})`);
+          }
+        });
+        await dbgr.sendCommand('Emulation.setCPUThrottlingRate', { rate: SLOW });
+        applied.push('page');
+        await dbgr.sendCommand('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
+        await sleep(500);
+      } catch (e) {
+        applied.push(`error(${e.message})`);
+      }
+      throttle.cpuThrottleMethod = `CDP Emulation.setCPUThrottlingRate x${SLOW}: ${applied.join(',')}`;
+      console.log(`cpu throttle ${throttle.cpuThrottleMethod}`);
+    }
     const namesOf = (l) => Object.values(l.cards);
     const waitAdvice = async (label, round, choice, timeoutMs) => {
       let last = null;
@@ -438,10 +469,11 @@ async function main() {
     const first = await waitAdvice(c1, c1.round, c1.choice, 2_500);
     check('reading-before-plates', first.sawReading, `sawReading=${first.sawReading}`);
     console.log(`advice.time ${first.ms}ms`);
+    console.log(`advice ${first.ms} ms (limit 2500 ms, cpu x${SLOW})`);
     check(
       'advice-choice1',
-      first.ok,
-      `${first.ms}ms (limit 2500ms) head="${first.last?.head}" cards="${first.last?.cards}"`,
+      first.ok && (first.last?.scores?.length ?? 0) === 3,
+      `${first.ms}ms (limit 2500ms, cpu x${SLOW}) scores=${first.last?.scores} head="${first.last?.head}" cards="${first.last?.cards}"`,
     );
 
     // Overlay geometry + click-through while the draft is up.
@@ -727,7 +759,7 @@ async function checkPixels(overlay, drawn, bestPos) {
 }
 
 function finish(code) {
-  const report = { platform: process.platform, electron: process.versions.electron, checks };
+  const report = { platform: process.platform, electron: process.versions.electron, ...throttle, checks };
   fs.mkdirSync(path.dirname(REPORT_PATH), { recursive: true });
   fs.writeFileSync(REPORT_PATH, JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report));
