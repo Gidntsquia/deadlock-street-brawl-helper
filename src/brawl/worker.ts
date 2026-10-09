@@ -22,6 +22,8 @@ import {
 import { readCardName, readRerollsRemaining, terminateOCR, warmOCR, type NameCrop } from './ocr';
 import { matchItemName, nameList, type NameList } from './names';
 import { initialGate, offScreenGate, stepGate } from './draftGate';
+import { setLocked } from './brawlState';
+import { createTracker, type TrackOut } from './tracker';
 import type { IconIndex } from './types';
 
 export interface FrameRegion {
@@ -56,6 +58,9 @@ export type WorkerIn =
       height: number;
       buffer: ArrayBuffer;
     }
+  | { type: 'roundStart'; round: number } // the round banner probe hit: warm the OCR, log round.start
+  | { type: 'forceResync' } // F8: start from the next frame's labels again
+  | { type: 'advised'; itemId: number | null } // the card the overlay told the player to take (null: re-roll or none)
   | { type: 'idle' } // the page had no frame ready for the last tick
   | { type: 'reset' } // capture (re)started: forget the last draft and start ticking again
   | { type: 'stop' }; // capture stopped: forget the last draft (the OCR engines are freed after OCR_KEEP_MS); the worker then stays silent
@@ -69,6 +74,7 @@ export type WorkerOut =
   | { type: 'seen' } // the probe saw the draft screen: no cards are read yet
   | { type: 'tick'; full: boolean } // full: send a whole frame; otherwise just the probe crop
   | { type: 'rerolls'; forKey: string; rerollsRemaining: number }
+  | ({ type: 'track' } & TrackOut) // the state machine moved outside a frame (a round started)
   // a card's name line was read: what the icon said, the OCR text, and the item it names (0: no clear match)
   | { type: 'name'; slot: number; icon: number; text: string; itemId: number; ms: number };
 
@@ -85,6 +91,7 @@ interface FrameResult {
   spent: boolean; // the cards on screen are a set the player already selected from: advise nothing
   meta: DraftMeta | null; // round / choice / hero bar, on the accepted frame only
   inventory: number[] | null; // owned items from the inventory grid, once two consecutive reads agree; null otherwise
+  track?: TrackOut; // the state machine's summary and log lines, when something happened since the last result
   ms: number;
   stages?: Record<string, number>; // dev builds only: milliseconds per recogniser stage
 }
@@ -138,6 +145,7 @@ const forgetNames = () => {
   nameChoice = 0;
   rerollAt = null;
   nameGen++;
+  lockFp.fill(null);
 };
 
 // Fingerprint of a name line (the black-on-white OCR crop): ink share in a coarse grid over the text area.
@@ -182,7 +190,15 @@ const applyNames = (
   img: Parameters<typeof cardNameCrop>[0],
   raw: CardRead[],
   choice: number,
-): { reads: CardRead[]; waiting: boolean; pending: boolean; slotSure: boolean[]; changed: boolean; inked: boolean } => {
+): {
+  reads: CardRead[];
+  waiting: boolean;
+  pending: boolean;
+  slotSure: boolean[];
+  changed: boolean;
+  inked: boolean;
+  sigs: (Uint8Array | null)[];
+} => {
   const squares = cardSquares(img.width, img.height);
   // The RARE / ENHANCED marks are read at the fixed card square too: the icon search's wobble (an enhanced icon
   // matches poorly) must not move the box off the label.
@@ -201,6 +217,7 @@ const applyNames = (
       slotSure: pinned.map((r) => r.present),
       changed: false,
       inked: false,
+      sigs: [null, null, null],
     };
   if (choice !== nameChoice) {
     forgetNames(); // the next choice's cards
@@ -251,6 +268,7 @@ const applyNames = (
       if (!lock) nameFail[slot] = { sig: sig ?? new Uint8Array(0), at: now, since: fail?.since ?? now };
     } else if (!nameBusy[slot] && !failedThis) {
       nameBusy[slot] = true;
+      const fp0 = sigFp(slot, sig);
       const gen = nameGen,
         icon = r.present ? r.itemId : 0,
         t = now,
@@ -282,6 +300,10 @@ const applyNames = (
           } else if (m) {
             locks[slot] = prev?.id === m.itemId ? { ...prev, sig } : { id: m.itemId, sig, enhanced, rare };
             nameFail[slot] = null;
+            if (fp0) {
+              if (!prev || prev.id !== m.itemId || !lockFp[slot]) lockFp[slot] = fp0;
+              tracker.feed({ type: 'cardRead', slot: slot as 0 | 1 | 2, fp: fp0, itemId: m.itemId });
+            }
           } else {
             const f = nameFail[slot];
             nameFail[slot] = { sig, at: performance.now(), since: f?.since ?? t };
@@ -321,7 +343,7 @@ const applyNames = (
     else slotSure[slot] = true;
     return r;
   });
-  return { reads: out, waiting, pending, slotSure, changed, inked };
+  return { reads: out, waiting, pending, slotSure, changed, inked, sigs };
 };
 /** The three cards at their fixed squares with no icon search: the item comes from the name lock alone (the name
  *  under a card is exact; the icon search was the slowest part of the first read). Only the RARE / ENHANCED marks are
@@ -388,12 +410,16 @@ const readRerolls = (img: Parameters<typeof readRerollsRemaining>[0], set: strin
   readRerollsRemaining(img)
     .then((v) => {
       if (gen !== rrGen) return;
-      if (rr.value === null) rr.value = v;
-      else if (v === rr.value) rr.next = null;
+      if (rr.value === null) {
+        rr.value = v;
+        tracker.feed({ type: 'caption', rerollsLeft: v });
+        if (acceptedKey) onChange(v); // read after the accept (a match's first set): the page assumed one re-roll
+      } else if (v === rr.value) rr.next = null;
       else if (rr.next === v) {
         if (v < rr.value) rerollAt = performance.now(); // a re-roll was spent: the cards are being replaced
         rr.value = v;
         rr.next = null;
+        tracker.feed({ type: 'caption', rerollsLeft: v });
         onChange(v);
       } else rr.next = v;
     })
@@ -531,6 +557,115 @@ const sameBar = (a: Uint8Array, b: Uint8Array) => {
   for (let i = 0; i < a.length; i++) if (Math.abs(a[i]! - b[i]!) > 40 && ++changed > BAR_SIG_MAX_CHANGED) return false;
   return true;
 };
+
+// ---- the Street Brawl state machine, following what the reading sees ---------------------------------------------
+// brawlState.ts holds match, round, choice, re-roll used, the three slots and the owned list. The reading above is what
+// sees the screen; the machine gets its facts as named events (`trackFrame`, the name-read callback) and answers with
+// the things the page shows: `Resynced to round N choice M`, a re-roll used this round, per-slot read counts, where each
+// pick came from. It never changes what is advised.
+const tracker = createTracker(() => warmOCR());
+const slotFp: { sig: Uint8Array | null; n: number }[] = [0, 1, 2].map(() => ({ sig: null, n: 0 }));
+/** The fingerprint id of a slot while its lock stands: a hover changes the line but not the card. */
+const lockFp: (string | null)[] = [null, null, null];
+let advisedId: number | null = null;
+let blankAt: number | null = null;
+let forcePending = false;
+/** After a pick or re-roll the lines are told apart from the old set's, even when the same item is dealt again. */
+const PICK_WAIT_MS = 400;
+const sigFp = (slot: number, sig: Uint8Array | null): string | null => {
+  if (!sig || !hasInk(sig)) return null;
+  const f = slotFp[slot]!;
+  if (!f.sig || !sameName(f.sig, sig)) {
+    f.sig = sig;
+    f.n++;
+  }
+  return `${slot}:${f.n}`;
+};
+const resetFps = () => {
+  for (const f of slotFp) f.sig = null;
+  lockFp.fill(null);
+  blankAt = null;
+};
+const slotIds = [0, 1, 2] as const;
+
+/** A screen identical to the last one (the settled shortcut): only the pick wait can run out. */
+function trackIdle(now: number) {
+  const st = tracker.state();
+  if (blankAt === null || !setLocked(st) || st.phase !== 'drafting' || now - blankAt < PICK_WAIT_MS) return;
+  tracker.feed({ type: 'linesBlank' });
+  resetFps();
+}
+
+/** Feeds the machine this frame's facts, in the order the game produces them: a closing set first (pick or re-roll),
+ *  then the label, then the lines of the new set. */
+function trackFrame(
+  labels: { round: number; choice: number },
+  named: { sigs: (Uint8Array | null)[] },
+  g: { picked: number | null },
+  now: number,
+  stable: number[] | null,
+) {
+  let st = tracker.state();
+  let round = labels.round;
+  if (!round && st.round) round = st.round + (labels.choice === 1 && st.choice === 3 ? 1 : 0);
+  const sigs = named.sigs;
+  const blankAll = sigs.every((x) => !x || !hasInk(x));
+  const differs = round > 0 && st.round > 0 && (round !== st.round || labels.choice !== st.choice);
+  const advance =
+    differs &&
+    ((round === st.round && labels.choice === st.choice + 1) ||
+      (round === st.round + 1 && labels.choice === 1 && st.choice === 3));
+  const pick = (itemId: number | null, source: 'read' | undefined) => {
+    tracker.feed({ type: 'pick', itemId, advised: advisedId, source });
+    resetFps();
+  };
+  if (setLocked(st) && st.phase === 'drafting') {
+    if (g.picked !== null) pick(g.picked, 'read');
+    else if (advance) pick(null, undefined);
+    else if (!differs && blankAll) {
+      blankAt ??= now;
+      if (now - blankAt >= PICK_WAIT_MS) {
+        tracker.feed({ type: 'linesBlank' });
+        resetFps();
+      }
+    } else if (!differs && blankAt !== null) {
+      // the lines are back: the same cards (a blink) or new ones (a re-roll under the same label)
+      const same = sigs.every((x, i) => x && slotFp[i]!.sig && sameName(slotFp[i]!.sig!, x));
+      blankAt = null;
+      if (!same) {
+        tracker.feed({ type: 'linesBlank' });
+        resetFps();
+      }
+    }
+  }
+  if (round > 0) {
+    const before = tracker.state().resyncs;
+    tracker.feed({ type: 'label', round, choice: labels.choice });
+    if (tracker.state().round !== st.round || tracker.state().choice !== st.choice) resetFps();
+    if (forcePending) {
+      forcePending = false;
+      if (tracker.state().resyncs === before) tracker.feed({ type: 'forceResync' });
+      resetFps();
+    }
+  }
+  st = tracker.state();
+  for (const slot of slotIds) {
+    const fp = lockFp[slot] && locks[slot] ? lockFp[slot] : sigFp(slot, sigs[slot] ?? null);
+    if (!fp) continue;
+    tracker.feed({ type: 'cardLine', slot, fp });
+    const cur = tracker.state().slots[slot];
+    const lock = locks[slot],
+      sig = sigs[slot];
+    // the worker already holds this name (a resync, or a re-dealt card): the slot locks without a read
+    if (cur.kind === 'landing' && cur.fp === fp && lock && sig && sameName(lock.sig, sig)) {
+      lockFp[slot] = fp;
+      tracker.feed({ type: 'cardRead', slot, fp, itemId: lock.id, fromLock: true });
+    }
+  }
+  st = tracker.state();
+  if (stable && st.gridCheck && setLocked(st)) tracker.feed({ type: 'ownedGrid', ids: stable });
+}
+
 const post = (m: WorkerOut) => (self as unknown as { postMessage(m: unknown): void }).postMessage(m);
 let timer: ReturnType<typeof setTimeout> | undefined;
 // Capture stops between rounds, and loading the OCR engines again on the next draft took longer than FALLBACK_MS on a
@@ -574,7 +709,24 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
     forgetDraft();
     clearTimeout(ocrFree);
     warmOCR(); // capture only runs around the draft now: load the OCR engines with it (freed OCR_KEEP_MS after 'stop')
-    tick(0, false);
+    // Capture is started for a draft (the probe saw the CHOICE glyph, F8, test mode): ask for a whole frame at once rather
+    // than a probe crop first. A frame that is not a draft falls back to probing in its own handler.
+    tick(0, msg.type === 'reset');
+    return;
+  }
+  if (msg.type === 'roundStart') {
+    tracker.feed({ type: 'roundStart', round: msg.round });
+    resetFps();
+    const t = tracker.take();
+    if (t) post({ type: 'track', ...t });
+    return;
+  }
+  if (msg.type === 'forceResync') {
+    forcePending = true;
+    return;
+  }
+  if (msg.type === 'advised') {
+    advisedId = msg.itemId;
     return;
   }
   if (msg.type === 'idle') {
@@ -603,11 +755,15 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
     wasShop = false;
     return;
   }
+  draftFrame(msg, t0, idx);
+});
+
+function draftFrame(msg: Extract<WorkerIn, { type: 'frame' }>, t0: number, idx: DecodedIndex) {
   stages = DEV ? {} : undefined;
   const img = stage('paste', () => pasteRegions(msg.width, msg.height, msg.regions));
   // Skip card/inventory recognition entirely off the shop screen (menus, gameplay, the round-end transition
   // into the next shop) -- isShopScreen is one small glyph read instead of three full icon searches.
-  const labels = readRoundChoice(img);
+  const labels = stage('labels', () => readRoundChoice(img));
   if (labels.choice === 0) {
     // One unreadable CHOICE glyph on a draft screen (a hover glow, a frame caught mid-animation) is not the screen
     // closing: look at the next frames before forgetting the accepted set, or the plates blank and re-settle.
@@ -622,7 +778,7 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
   }
   wasShop = true;
   offFrames = 0;
-  const sig = frameSig(msg.regions);
+  const sig = stage('sig', () => frameSig(msg.regions));
   if (
     acceptedKey &&
     acceptedKey === lastKey &&
@@ -630,6 +786,7 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
     (labels.round === 0 || labels.round === acceptedRound) &&
     sameSig(settledSig, sig)
   ) {
+    trackIdle(performance.now());
     post({
       type: 'result',
       shop: true,
@@ -643,6 +800,7 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
       spent: false,
       meta: null,
       inventory: null,
+      track: tracker.take() ?? undefined,
       ms: performance.now() - t0,
       stages,
     });
@@ -662,7 +820,7 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
     : confirmed
       ? pendingReads
       : stage('cards', () => readDraftScreen(img, idx, (id) => tiers[id] ?? 0));
-  const named = applyNames(img, raw, labels.choice);
+  const named = stage('names', () => applyNames(img, raw, labels.choice));
   const reads = named.reads;
   const seen = reads.filter((r) => r.present).length;
   // A set with a shaky card whose name is still being read is not a full set yet: the gate must not settle on it.
@@ -700,6 +858,7 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
   // The grid is read while the names are still coming in too: the inventory at accept time is what a pick is spotted
   // against, and an accept on the first frame that names every card would otherwise have none.
   const setKey = key || provisionalKey;
+  const fresh = (labels.round === 1 || labels.round === 0) && labels.choice === 1 && gate.last === null;
   if (sameCards(setKey, lastSetKey)) {
     // the inventory grid is only on the draft screen; a read counts once two frames agree
     const inv: InventoryRead[] = stage('inventory', () => readInventory(img, idx, msg.prefer));
@@ -713,28 +872,24 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
   } else if (!setKey) lastInv = '';
   // Read the hero bar while the set is still settling (a first draft of a match has no cached bar), so the accept does
   // not wait for it. Only once the same three cards are up on two frames, so a transition frame never pays for it.
-  if (
-    key &&
-    key === lastKey &&
-    !gate.live &&
-    !earlyMeta &&
-    !(knownHero ?? (matchBar && sameBar(matchBar.sig, barSig(img))))
-  ) {
+  if (setKey && !gate.live && !earlyMeta && !(knownHero ?? (matchBar && sameBar(matchBar.sig, barSig(img))))) {
     const sig = barSig(img);
     earlyMeta = { sig, meta: stage('meta', () => readDraftMeta(img, idx, undefined, true)) };
   }
   // The re-roll caption is read for every full set (its own key: the '+' flags wobble), and the gate holds the accept
   // until it is in, so the first advice already knows whether a re-roll is left.
   const set = setKey ? `${labels.choice}|${setKey.replace(/\+/g, '')}` : '';
-  if (set)
-    readRerolls(img, set, (v) => {
-      if (acceptedKey) post({ type: 'rerolls', forKey: acceptedKey, rerollsRemaining: v });
-    });
+  if (set && !(fresh && !gate.live))
+    stage('rr', () =>
+      readRerolls(img, set, (v) => {
+        if (acceptedKey) post({ type: 'rerolls', forKey: acceptedKey, rerollsRemaining: v });
+      }),
+    );
   // The gate decides when this screen is settled enough to advise on, and spots the player's selection.
   const inFallback = !!gate.last && gate.live && gate.last.key.includes('?');
   const g = stepGate(gate, {
     changed: named.changed,
-    ready: !named.pending && (!set || (rr.set === set && rr.value !== null)),
+    ready: !named.pending && (!set || fresh || (rr.set === set && rr.value !== null)),
     key: fbDue ? fbKey : key || provisionalKey,
     force: fbDue,
     present: reads.filter((r, i) => r.present && (!inFallback || named.slotSure[i])).map((r) => r.itemId),
@@ -744,6 +899,7 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
     inventory: stableInv,
   });
   gate = g.state;
+  trackFrame(labels, named, g, performance.now(), stableInv);
   if (g.live && gate.last) acceptedRound = gate.last.round;
   const accepted = g.accept;
   if (accepted) {
@@ -761,7 +917,8 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
     earlyMeta = null;
     // the hero bar is constant while the draft screen stays up; keep it until the screen closes (nonShopResult)
     knownHero = meta.self ? { bar: meta.bar, self: meta.self } : null;
-    meta.rerollsRemaining = rr.value ?? meta.rerollsRemaining;
+    // A match starts with its one re-roll: advised on that, and the caption read (started now) corrects it if it is wrong.
+    meta.rerollsRemaining = rr.value ?? (fresh && meta.rerollsRemaining !== 0 ? 1 : meta.rerollsRemaining);
   }
   // The owned list changes the scores, so it reaches the page with the accepted set and not again while that set is up
   // (the player cannot gain an item without leaving it): a grid read that wobbles never re-ranks the cards on screen.
@@ -800,12 +957,17 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
     spent: g.spent,
     meta,
     inventory,
+    track: tracker.take() ?? undefined,
     ms: performance.now() - t0,
     stages,
   });
-});
+}
 
 const nonShopResult = (t0: number): FrameResult => {
+  // the draft screen went away with a set still locked: the player took a card (the last choice of a round ends this way)
+  const st = tracker.state();
+  if (setLocked(st) && st.phase === 'drafting') tracker.feed({ type: 'pick', itemId: null, advised: advisedId });
+  resetFps();
   forgetNames();
   lastKey = lastSetKey = acceptedKey = lastInv = sentInv = '';
   settledSig = pendingSig = null;
@@ -827,6 +989,7 @@ const nonShopResult = (t0: number): FrameResult => {
     spent: false,
     meta: null,
     inventory: null,
+    track: tracker.take() ?? undefined,
     ms: performance.now() - t0,
   };
 };

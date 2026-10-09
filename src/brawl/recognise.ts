@@ -611,6 +611,7 @@ export const HERO_BAR = {
 } as const;
 const MIN_HERO_SCORE = 0.6;
 const HERO_SHORTLIST = 8;
+const HERO_REFINE = 4;
 const MIN_HERO_MARGIN = 0.08;
 
 interface HeroMatch {
@@ -652,19 +653,58 @@ function matchHero(img: RGBImage, index: DecodedIndex, cx: number, cy: number, d
   const ks = [...pool].map((id) => index.heroIds.indexOf(id));
   const reach = (diameter * Math.max(...HERO_BAR.scales)) / 2 + search + 2;
   const ig = integralOf(img, cx - reach, cy - reach, cx + reach, cy + reach);
-  for (const sc of HERO_BAR.scales) {
-    const e = diameter * sc;
-    for (let dy = -search; dy <= search; dy += step)
-      for (let dx = -search; dx <= search; dx += step) {
-        const v = normalise(sampleFast(img, ig, cx - e / 2 + dx, cy - e / 2 + dy, e, index.size), index.size, mask);
-        for (const k of ks) {
-          const s = nccMasked(v, index.heroPixels[k], n, offs);
-          if (s > best.score) {
-            if (index.heroIds[k] !== best.heroId) second = best.score;
-            best = { heroId: index.heroIds[k], score: s, margin: 0 };
-          } else if (s > second && index.heroIds[k] !== best.heroId) second = s;
-        }
+  // Coarse-to-fine: every candidate is scored on a grid twice as wide as `step`, then only the few best candidates are
+  // refined on the full grid around their best coarse position. The same answers as the exhaustive search on every
+  // recorded bar, at about half the cost.
+  const R = Math.floor(search / step), // grid cells either side of the centre
+    W = 2 * R + 1;
+  const scores = new Map<number, number>(); // (scale, cell, candidate) -> score
+  const vecs = new Map<number, Float32Array>(); // (scale, cell) -> normalised window
+  const evalAt = (k: number, si: number, i: number, j: number) => {
+    const cell = (si * W + (j + R)) * W + (i + R);
+    const key = cell * 256 + k;
+    let s = scores.get(key);
+    if (s === undefined) {
+      let v = vecs.get(cell);
+      if (!v) {
+        const e = diameter * HERO_BAR.scales[si]!;
+        v = normalise(
+          sampleFast(img, ig, cx - e / 2 + i * step, cy - e / 2 + j * step, e, index.size),
+          index.size,
+          mask,
+        );
+        vecs.set(cell, v);
       }
+      s = nccMasked(v, index.heroPixels[k], n, offs);
+      scores.set(key, s);
+    }
+    return s;
+  };
+  const bestAt = new Map<number, { si: number; i: number; j: number; s: number }>();
+  for (const si of [1])
+    for (let j = -R; j <= R; j += 2)
+      for (let i = -R; i <= R; i += 2)
+        for (const k of ks) {
+          const s = evalAt(k, si, i, j);
+          const b = bestAt.get(k);
+          if (!b || s > b.s) bestAt.set(k, { si, i, j, s });
+        }
+  const tops = [...bestAt.entries()].sort((x, y) => y[1].s - x[1].s).slice(0, HERO_REFINE);
+  for (const [k, t] of tops)
+    for (let si = 0; si < HERO_BAR.scales.length; si++)
+      for (let j = Math.max(-R, t.j - 2); j <= Math.min(R, t.j + 2); j++)
+        for (let i = Math.max(-R, t.i - 2); i <= Math.min(R, t.i + 2); i++) evalAt(k, si, i, j);
+  // best hero by its best score; the runner-up by its own best
+  const perHero = new Map<number, number>();
+  for (const [key, s] of scores) {
+    const k = key % 256;
+    perHero.set(k, Math.max(perHero.get(k) ?? -1, s));
+  }
+  for (const [k, s] of perHero) {
+    if (s > best.score) {
+      if (index.heroIds[k] !== best.heroId) second = best.score;
+      best = { heroId: index.heroIds[k], score: s, margin: 0 };
+    } else if (s > second && index.heroIds[k] !== best.heroId) second = s;
   }
   best.margin = best.score - second;
   if (best.score < MIN_HERO_SCORE || best.margin < MIN_HERO_MARGIN) best.heroId = 0;
@@ -1201,6 +1241,26 @@ export function shopProbeRect(width: number, height: number) {
     height: Math.min(height, Math.ceil(b.y1 * sy) + 4) - y,
   };
 }
+
+/** The part of a frame the round banner probe reads: the ROUND digit at the top centre (it shows on the round's banner
+ *  and stays in the HUD), plus slack. Same scaling as `shopProbeRect`. */
+export function roundProbeRect(width: number, height: number) {
+  const sx = width / BRAWL_LAYOUT.ref.width,
+    sy = height / BRAWL_LAYOUT.ref.height;
+  const b = LABELS.round;
+  const x = Math.max(0, Math.floor(b.x0 * sx) - 4),
+    y = Math.max(0, Math.floor(b.y0 * sy) - 4);
+  return {
+    x,
+    y,
+    width: Math.min(width, Math.ceil(b.x1 * sx) + 4) - x,
+    height: Math.min(height, Math.ceil(b.y1 * sy) + 4) - y,
+  };
+}
+
+/** The round number (1 to 5) shown in the ROUND label, 0 when it does not read. Works on a `roundProbeRect` crop. */
+export const readRoundDigit = (img: RGBImage): number =>
+  readDigit(img, LABELS.round, lightText, ROUND_DIGITS, ROUND_LOOSE);
 
 /** Every part of a `width`x`height` draft frame the recogniser ever reads, in frame px: the three card icons (with
  *  the position/scale search slack and the tier numeral), the hero bar with the ROUND label, the CHOICE label, the

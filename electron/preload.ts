@@ -1,3 +1,4 @@
+import type { OrderStats } from './orderFetch';
 import { contextBridge, ipcRenderer } from 'electron';
 import type { Rect } from './gameWindow';
 import type { OverlayState } from '../src/brawl/draw';
@@ -84,6 +85,13 @@ const api = {
       ipcRenderer.removeListener(CHANNELS.loadingName, listener);
     };
   },
+  onRoundStart: (cb: (round: number) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, round: number) => cb(round);
+    ipcRenderer.on(CHANNELS.roundStart, listener);
+    return () => {
+      ipcRenderer.removeListener(CHANNELS.roundStart, listener);
+    };
+  },
   detectNow: (): Promise<boolean> => ipcRenderer.invoke(CHANNELS.detectNow),
   onDetectRun: (cb: () => void) => {
     const listener = () => cb();
@@ -114,6 +122,8 @@ const api = {
   setDebugState: (on: boolean) => ipcRenderer.send(CHANNELS.debugState, on),
   sessionFrame: (frame: FrameShot) => ipcRenderer.send(CHANNELS.sessionFrame, frame),
   sessionDraft: (rec: DraftRecord) => ipcRenderer.send(CHANNELS.sessionDraft, rec),
+  orderStats: (heroId: number, order: number[]): Promise<OrderStats | null> =>
+    ipcRenderer.invoke(CHANNELS.orderStats, heroId, order),
   sessionList: (): Promise<SessionSummary[]> => ipcRenderer.invoke(CHANNELS.sessionList),
   sessionMark: (matchId: string, n: number, wrong: boolean): Promise<void> =>
     ipcRenderer.invoke(CHANNELS.sessionMark, matchId, n, wrong),

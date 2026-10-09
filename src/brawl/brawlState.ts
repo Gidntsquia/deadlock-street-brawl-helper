@@ -37,10 +37,12 @@ export type BrawlEvent =
   | { type: 'roundStart'; round: number }
   | { type: 'label'; round: number; choice: number }
   | { type: 'cardLine'; slot: 0 | 1 | 2; fp: string }
-  | { type: 'cardRead'; slot: 0 | 1 | 2; fp: string; itemId: number }
+  /** `fromLock`: the worker already held this name (no OCR ran), so the slot locks without counting a read. */
+  | { type: 'cardRead'; slot: 0 | 1 | 2; fp: string; itemId: number; fromLock?: boolean }
   | { type: 'linesBlank' }
   | { type: 'caption'; rerollsLeft: number }
-  | { type: 'pick'; itemId: number | null; advised: number | null }
+  /** `itemId`: the card seen taken; null when it was not seen, then `advised` is assumed. `source` names how a seen pick was found (default `read`). */
+  | { type: 'pick'; itemId: number | null; advised: number | null; source?: PickSource }
   | { type: 'ownedGrid'; ids: number[] }
   | { type: 'forceResync' };
 
@@ -146,12 +148,13 @@ export function step(s: BrawlState, e: BrawlEvent): { state: BrawlState; effects
     }
     case 'cardRead': {
       const cur = s.slots[e.slot];
-      // a read of a line that has changed since it was requested is stale
-      if (cur.kind !== 'landing' || cur.fp !== e.fp || cur.frames < LAND_FRAMES) return done(s);
+      // a read of a line that has changed since it was requested is stale. The worker starts its read on the first
+      // frame a line shows (the 2-frame hold is for the pick and re-roll rules, not for waiting to read), so one frame is enough.
+      if (cur.kind !== 'landing' || cur.fp !== e.fp) return done(s);
       const slots = [...s.slots] as BrawlState['slots'];
       slots[e.slot] = { kind: 'locked', fp: e.fp, itemId: e.itemId };
       const reads = [...s.reads] as BrawlState['reads'];
-      reads[e.slot]++;
+      if (!e.fromLock) reads[e.slot]++;
       const n = { ...s, slots, reads };
       fx.push({ type: 'log', name: 'card.name', data: { slot: e.slot, itemId: e.itemId } });
       if (setLocked(n))
@@ -178,7 +181,7 @@ export function step(s: BrawlState, e: BrawlEvent): { state: BrawlState; effects
       if (s.phase !== 'drafting') return done(s);
       const itemId = e.itemId ?? e.advised;
       if (itemId === null) return done({ ...clearSet(s), phase: s.choice === 3 ? 'between-rounds' : 'picked' });
-      const source: PickSource = e.itemId !== null ? 'read' : 'assumed';
+      const source: PickSource = e.itemId !== null ? (e.source ?? 'read') : 'assumed';
       const n: BrawlState = {
         ...clearSet(s),
         owned: [...s.owned, itemId],

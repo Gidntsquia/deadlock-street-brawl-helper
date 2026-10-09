@@ -54,6 +54,11 @@ export function SessionReport({ items }: { items: Item[] }) {
                   {d.shown.reroll ? ', re-roll' : ''}
                 </span>
                 <span>Advice: {d.adviceMs === null ? 'none' : `${Math.round(d.adviceMs)} ms`}</span>
+                {d.reads && (
+                  <span>
+                    Reads per slot: {d.reads.join('/')}, resyncs {d.resyncs ?? 0}, pick {d.pickSource ?? 'none'}
+                  </span>
+                )}
                 {flags.length > 0 && <span className="session-flags">{flags.join(', ')}</span>}
                 <button className="btn" aria-pressed={d.wrong} onClick={() => mark(s.id, d.n, !d.wrong)}>
                   {d.wrong ? 'Marked wrong' : 'Mark wrong'}

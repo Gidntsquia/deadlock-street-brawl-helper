@@ -111,6 +111,13 @@ export function matchStoredOrder(analytics: BrawlInput['analytics'], active: num
   return bestLen >= MIN_ORDER_PREFIX ? best : null;
 }
 
+/** Whether a stored order is the active one or one it extends (so no fetch is needed). */
+export const orderCovered = (analytics: BrawlInput['analytics'], active: number[]) =>
+  (analytics.item_stats_by_order ?? []).some((o) => {
+    const n = Math.min(o.order.length, active.length);
+    return n > 0 && o.order.slice(0, n).every((x, i) => x === active[i]);
+  });
+
 export function baseScores(input: BrawlInput, enemies: number[] = [], order?: number[]): Map<number, Base> {
   const { hero, abilities, items, analytics } = input;
   const orderRows =

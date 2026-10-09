@@ -39,6 +39,23 @@ function browserOcrOpts() {
   return { workerPath: `${base}/worker.min.js`, corePath: base, langPath: base, gzip: true };
 }
 
+/** The first recognise on a fresh engine costs ~0.5 s (wasm memory, the first PNG encode); the real first read of a draft
+ *  must not pay it. One pass over a blank line with a few strokes in it, so the pass reaches the recogniser. */
+async function warmRead(worker: TesseractWorker): Promise<void> {
+  try {
+    const w = 160,
+      h = 40;
+    const data = new Uint8Array(w * h * 4).fill(255);
+    for (let x = 14; x < 140; x += 9)
+      for (let y = 12; y < 28; y++)
+        for (let dx = 0; dx < 3; dx++) data.fill(0, (y * w + x + dx) * 4, (y * w + x + dx) * 4 + 3);
+    const png = await upscaledPng(data, w, h, NAME_PX / 16);
+    await worker.recognize(png as unknown as Buffer);
+  } catch {
+    // a failed warm-up is only a slower first read
+  }
+}
+
 async function getNameWorker(slot = 0): Promise<TesseractWorker> {
   const k = slot % NAME_ENGINES;
   if (!nameWorkerPromises[k]) {
@@ -50,6 +67,7 @@ async function getNameWorker(slot = 0): Promise<TesseractWorker> {
         tessedit_pageseg_mode: PSM.SINGLE_LINE,
         user_defined_dpi: '300', // the PNG carries none; without it Tesseract guesses and warns on every read
       });
+      await warmRead(worker);
       return worker;
     })();
   }

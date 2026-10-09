@@ -45,6 +45,18 @@ describe('brawl state machine', () => {
     s = run(s, { type: 'cardLine', slot: 0, fp: 'b' }).s;
     expect(run(s, { type: 'cardRead', slot: 0, fp: 'a', itemId: 1 }).s.slots[0].kind).toBe('landing');
   });
+  it('a read that lands on the first frame of its line locks the slot', () => {
+    const s = run(
+      drafting(),
+      { type: 'cardLine', slot: 1, fp: 'z' },
+      { type: 'cardRead', slot: 1, fp: 'z', itemId: 4 },
+    ).s;
+    expect(s.slots[1]).toMatchObject({ kind: 'locked', itemId: 4 });
+  });
+  it('a pick seen from the closing set keeps its source', () => {
+    const s = run(locked(), { type: 'pick', itemId: 2, advised: 1, source: 'grid' }).s;
+    expect(s.lastPick).toMatchObject({ itemId: 2, source: 'grid' });
+  });
   it('the set locks when the third card is read; locked slots are never re-read', () => {
     const s = run(drafting(), ...land(0, 'a', 1), ...land(1, 'b', 2));
     expect(setLocked(s.s)).toBe(false);

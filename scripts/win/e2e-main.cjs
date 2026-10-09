@@ -6,6 +6,8 @@
 process.env.BRAWL_E2E = '1';
 const TIP_MS = 1200;
 process.env.BRAWL_TIP_MS = String(TIP_MS);
+// Advice on choice 1 must land within this (the wait itself runs longer so a miss reports its real time).
+const ADVICE_LIMIT_MS = 1_000;
 const HARD_TIMEOUT_MS = 40_000;
 
 const path = require('node:path');
@@ -480,11 +482,11 @@ async function main() {
     const first = await waitAdvice(c1, c1.round, c1.choice, 2_500);
     check('reading-before-plates', first.sawReading, `sawReading=${first.sawReading}`);
     console.log(`advice.time ${first.ms}ms`);
-    console.log(`advice ${first.ms} ms (limit 2500 ms, cpu x${SLOW})`);
+    console.log(`advice ${first.ms} ms (limit ${ADVICE_LIMIT_MS} ms, cpu x${SLOW})`);
     check(
       'advice-choice1',
-      first.ok && (first.last?.scores?.length ?? 0) === 3,
-      `${first.ms}ms (limit 2500ms, cpu x${SLOW}) scores=${first.last?.scores} head="${first.last?.head}" cards="${first.last?.cards}"`,
+      first.ok && first.ms <= ADVICE_LIMIT_MS && (first.last?.scores?.length ?? 0) === 3,
+      `${first.ms}ms (limit ${ADVICE_LIMIT_MS}ms, cpu x${SLOW}) scores=${first.last?.scores} head="${first.last?.head}" cards="${first.last?.cards}"`,
     );
 
     // Overlay geometry + click-through while the draft is up.

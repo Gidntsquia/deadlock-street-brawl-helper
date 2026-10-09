@@ -6,6 +6,7 @@ import sharp from 'sharp';
 import { analyseDraft, type DraftStats, type StatFrame } from '../src/brawl/sessionStats';
 import type { WorkerIn, WorkerOut } from '../src/brawl/worker';
 import type { DraftRecord } from '../electron/sessionStore';
+import type { TrackSummary } from '../src/brawl/tracker';
 import type { Item } from '../src/types';
 
 type Result = Extract<WorkerOut, { type: 'result' }>;
@@ -28,7 +29,11 @@ export interface ReplayDraft {
   lastFull: number;
   /** Per slot, whether the accepted set read the card as enhanced. */
   enhanced: boolean[];
+  /** What the state machine saw: name reads per slot, re-rolls and resyncs during this draft, where the pick came from. */
+  track: { reads: [number, number, number]; rerolls: number; resyncs: number; pickSource: string | null };
 }
+
+let lastTrack: TrackSummary | null = null;
 
 let clock = 0;
 let handler: (ev: { data: WorkerIn }) => void = () => {};
@@ -94,6 +99,9 @@ export async function replayDraft(dir: string, opts: ReplayOpts = {}): Promise<R
   let hero = 0;
   let rerolls: number | null = null;
   let inventory: number[] | null = null;
+  const resyncs0 = lastTrack?.resyncs ?? 0;
+  const closed0 = lastTrack?.closed.length ?? 0;
+  let lastMsg: WorkerIn | null = null;
   for (const [fi, f] of frames.entries()) {
     virtual += Math.min(f.t - prevT, GAP_MS);
     prevT = f.t;
@@ -107,7 +115,8 @@ export async function replayDraft(dir: string, opts: ReplayOpts = {}): Promise<R
       }),
     );
     posted.length = 0;
-    handler({ data: { type: 'frame', width: live.frameW, height: live.frameH, regions, prefer: [] } });
+    lastMsg = { type: 'frame', width: live.frameW, height: live.frameH, regions, prefer: [] };
+    handler({ data: lastMsg });
     // the name reads finish a moment after the frame; give them the time the page would
     await new Promise((r) => setTimeout(r, 40));
     // the first frame's three name reads include the OCR engine's slow start: wait for them (up to 8 s) instead of a fixed
@@ -119,7 +128,11 @@ export async function replayDraft(dir: string, opts: ReplayOpts = {}): Promise<R
     )
       await new Promise((r) => setTimeout(r, 20));
     first = false;
-    for (const m of posted) if (m.type === 'rerolls') rerolls = m.rerollsRemaining;
+    for (const m of posted) {
+      if (m.type === 'rerolls') rerolls = m.rerollsRemaining;
+      const t = m.type === 'track' ? m : m.type === 'result' ? m.track : undefined;
+      if (t) lastTrack = t.summary;
+    }
     const res = posted.find((m): m is Result => m.type === 'result');
     if (!res) continue;
     if (res.accepted && acceptFrame < 0) acceptFrame = fi;
@@ -143,7 +156,30 @@ export async function replayDraft(dir: string, opts: ReplayOpts = {}): Promise<R
       tiers: res.reads.map((x) => x.tier),
     });
   }
+  // A last identical frame, not counted in the stats, collects the name reads that landed after the final recorded one.
+  if (lastMsg?.type === 'frame') {
+    await new Promise((r) => setTimeout(r, 150));
+    posted.length = 0;
+    handler({
+      data: { ...lastMsg, regions: lastMsg.regions.map((r) => ({ ...r, buffer: r.buffer.slice(0) })) },
+    });
+    for (const m of posted) {
+      const t = m.type === 'track' ? m : m.type === 'result' ? m.track : undefined;
+      if (t) lastTrack = t.summary;
+    }
+  }
   const stats = analyseDraft(stat);
+  const sum = lastTrack as TrackSummary | null;
+  const mine = (sum?.closed ?? [])
+    .slice(Math.min(closed0, sum?.closed.length ?? 0))
+    .filter((c) => c.round === live.round && c.choice === live.choice);
+  const set = [...mine].reverse().find((c) => !c.rerolled) ?? mine.at(-1);
+  const track: ReplayDraft['track'] = {
+    reads: sum?.locked ? sum.reads : (set?.reads ?? sum?.reads ?? [0, 0, 0]),
+    rerolls: mine.filter((c) => c.rerolled).length,
+    resyncs: (sum?.resyncs ?? 0) - resyncs0,
+    pickSource: set?.pickSource ?? null,
+  };
   const diff: string[] = [];
   if (stats.items.join(',') !== live.items.join(','))
     diff.push(`items ${live.items.join(',')} became ${stats.items.join(',')}`);
@@ -164,6 +200,7 @@ export async function replayDraft(dir: string, opts: ReplayOpts = {}): Promise<R
     inventory,
     lastFull,
     enhanced,
+    track,
   };
 }
 
@@ -187,6 +224,10 @@ export function describeDraft(d: ReplayDraft, itemName: (id: number) => string):
     `changes ${s.changes}`,
     `dropouts ${s.dropouts}`,
     `advice ${s.adviceMs === null ? 'none' : `${Math.round(s.adviceMs)} ms`}`,
+    `reads ${d.track.reads.join('/')}`,
+    `re-rolls ${d.track.rerolls}`,
+    `resyncs ${d.track.resyncs}`,
+    `pick ${d.track.pickSource ?? 'none'}`,
     d.diff.length ? `differs from live: ${d.diff.join('; ')}` : 'same as live',
   ].join(' | ');
 }
@@ -199,7 +240,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'replay.ts') {
   }
   const items: Item[] = JSON.parse(readFileSync('public/data/items.json', 'utf8'));
   const name = (id: number) => items.find((i) => i.id === id)?.name ?? `#${id}`;
-  const drafts = await replaySession(folder);
+  const drafts = await replaySession(folder, { waitNames: true });
   for (const d of drafts) console.log(`${d.name}  ${describeDraft(d, name)}`);
   if (!drafts.length) console.log('No drafts found in that folder.');
   process.exit(0);

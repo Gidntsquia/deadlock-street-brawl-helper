@@ -24,7 +24,7 @@ import {
   sendWindowToBottom,
   type Rect,
 } from './gameWindow';
-import { probeIsBlack, probeLoadingName, probeShopScreen } from './shopProbe';
+import { probeIsBlack, probeLoadingName, probeRound, probeShopScreen } from './shopProbe';
 import { PROBLEM_TEXT, problemFor, type Env, type Problem } from '../src/brawl/problems';
 import { CHANNELS } from './channels';
 import { SessionStore, type DraftRecord, type FrameShot, type RegionShot } from './sessionStore';
@@ -46,6 +46,7 @@ const BLANK_OVERLAY = {
   panel: null,
 };
 import { log } from '../src/log';
+import { fetchOrderStats } from './orderFetch';
 import { createPerf } from '../src/perf';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -114,6 +115,8 @@ const LOADING_SEND_MS = 2_500;
 const LOADING_SEND_MAX = 3;
 let loadingSentAt = 0;
 let loadingSent = 0;
+/** The ROUND number the banner probe last read (0: none yet this game window). A new, different number is a round start. */
+let probedRound = 0;
 // Lobby status dot (see src/brawl/lobbyDot.ts) and the F8 hotkey, which exists only while a game window does.
 let lobby = initialLobby();
 let lastDot: DotState | null = null;
@@ -537,10 +540,21 @@ function startRectPolling() {
     if (!found) {
       captureWanted = false;
       captureHeld = false;
+      probedRound = 0;
     } else if (!probeMode()) captureWanted = !captureHeld;
     else if (!captureWanted && isGameForeground()) {
       const hit = perf.time('probe', () => probeShopScreen(found, grabScreenRegion));
       if (!hit) {
+        // The round banner shows before the first cards: the first sight of a new round number turns capture on and
+        // warms the OCR engines, so the first card read does not pay for them.
+        const round = perf.time('probe.round', () => probeRound(found, grabScreenRegion));
+        if (round > 0 && round !== probedRound) {
+          probedRound = round;
+          captureWanted = true;
+          idleAt = 0;
+          sendControl(CHANNELS.roundStart, round);
+          log('electron-main', 'info', 'round.probe', { round });
+        }
         const crop = probeLoadingName(found, grabScreenRegion);
         if (!crop) loadingSent = 0;
         else if (loadingSent < LOADING_SEND_MAX && Date.now() - loadingSentAt >= LOADING_SEND_MS) {
@@ -883,6 +897,9 @@ function setupIpc() {
       .finishDraft(rec)
       .catch((e) => log('electron-main', 'warn', 'session.write.failed', { message: String(e) }));
   });
+  ipcMain.handle(CHANNELS.orderStats, (_e, heroId: number, order: number[]) =>
+    fetchOrderStats(path.join(app.getPath('userData'), 'order-stats'), heroId, order),
+  );
   ipcMain.handle(CHANNELS.sessionList, () => sessions().list());
   ipcMain.handle(CHANNELS.sessionMark, (_e, matchId: string, n: number, wrong: boolean) =>
     sessions().mark(matchId, n, wrong),

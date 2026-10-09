@@ -44,6 +44,10 @@ export const CHANNELS = {
   sessionMark: 'session-mark',
   // Loading screen ("Joining the fight as..."): main grabs the hero name box and pushes its pixels to the control window.
   loadingName: 'loading-name',
+  // Round banner: the probe read a new ROUND number, main pushes it to the control window (OCR warm-up, state machine).
+  roundStart: 'round-start',
+  // Item stats for a custom ability order the stored data lacks: page asks, main fetches once and caches under userData.
+  orderStats: 'order-stats',
   // Custom title strip buttons: renderer -> main.
   windowMinimize: 'window-minimize',
   windowClose: 'window-close',

@@ -32,6 +32,10 @@ const row = (wrong: boolean) => ({
   dropouts: 0,
   fallback: true,
   crops: ['data:image/png;base64,AA=='],
+  reads: [1, 1, 2] as [number, number, number],
+  rerolls: 1,
+  resyncs: 1,
+  pickSource: 'assumed' as const,
 });
 
 describe('SessionReport', () => {
@@ -51,6 +55,7 @@ describe('SessionReport', () => {
     expect(screen.getByText(/Quick Silver \(take\), \?/)).toBeTruthy();
     expect(screen.getByText(/812 ms/)).toBeTruthy();
     expect(screen.getByText(/changed 1x within set, fallback/)).toBeTruthy();
+    expect(screen.getByText(/Reads per slot: 1\/1\/2, resyncs 1, pick assumed/)).toBeTruthy();
     expect(screen.getAllByRole('img').length).toBe(1);
     screen.getByRole('button', { name: 'Mark wrong' }).click();
     expect(sessionMark).toHaveBeenCalledWith('m1', 1, true);

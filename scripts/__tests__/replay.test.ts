@@ -66,7 +66,7 @@ describe('brawl:replay', () => {
     expect(d.stats.adviceMs!).toBeLessThan(2500);
     const line = describeDraft(d, name);
     expect(line).toMatch(
-      /^R1 C1 \| items: .+ \| \? 0 \| changes 0 \| dropouts 0 \| advice \d+ ms \| differs from live: /,
+      /^R1 C1 \| items: .+ \| \? 0 \| changes 0 \| dropouts 0 \| advice \d+ ms \| reads \d+\/\d+\/\d+ \| re-rolls \d+ \| resyncs \d+ \| pick \w+ \| differs from live: /,
     );
   });
 

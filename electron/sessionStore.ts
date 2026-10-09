@@ -38,6 +38,11 @@ export interface DraftRecord {
   changes: number;
   dropouts: number;
   fallback: boolean;
+  /** From the state machine (absent in sessions recorded before it): name reads per slot, re-rolls seen at this choice, resyncs so far in the match, and where the pick came from. */
+  reads?: [number, number, number];
+  rerolls?: number;
+  resyncs?: number;
+  pickSource?: 'read' | 'assumed' | 'grid' | null;
 }
 export interface DraftRow extends DraftRecord {
   n: number;

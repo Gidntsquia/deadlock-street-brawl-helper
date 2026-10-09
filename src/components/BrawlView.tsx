@@ -5,6 +5,7 @@ import type { Ability, Hero, Item } from '../types';
 import { j, img } from '../data/load';
 import {
   adviseDraft,
+  orderCovered,
   enemiesFrom,
   roundTiers,
   topItemsByTier,
@@ -36,6 +37,7 @@ import {
 } from '../brawl';
 import { createPerf } from '../perf';
 import type { FrameRegion, WorkerIn, WorkerOut } from '../brawl/worker';
+import type { TrackOut, TrackSummary } from '../brawl/tracker';
 import {
   BLANK_OVERLAY,
   bonusesFromAdvice,
@@ -92,12 +94,32 @@ interface Props {
 }
 
 /** Street Brawl draft advisor: the three cards on screen (read from a screen capture or typed in), ranked for this hero. */
+/** Per-slot reads, re-rolls, resyncs and pick source for a draft, from the state machine's closed sets. */
+function trackFieldsFor(t: TrackSummary | null, round: number, choice: number) {
+  if (!t) return {};
+  const sets = t.closed.filter((c) => c.round === round && c.choice === choice);
+  const last = [...sets].reverse().find((c) => !c.rerolled) ?? sets[sets.length - 1];
+  return {
+    reads: last?.reads,
+    rerolls: sets.filter((c) => c.rerolled).length,
+    resyncs: t.resyncs,
+    pickSource: last?.pickSource ?? null,
+  };
+}
+
+/** How long `Resynced to round N choice M` stays in the status line. */
+const RESYNC_NOTE_MS = 5000;
+
 export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = false, debug = false }: Props) {
   const [loaded, setLoaded] = useState<{ heroId: number; analytics: BrawlAnalytics } | null>(null);
   const [config, setConfig] = useState<BrawlConfig | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [round, setRound] = usePersisted('round', isNumber, 1);
   const [choice, setChoice] = useState(1);
+  const [rerollUsed, setRerollUsed] = useState(false); // the state machine saw a re-roll this round: none is advised again until the next round
+  const trackRef = useRef<TrackSummary | null>(null);
+  const seenStatusSeqRef = useRef(0);
+  const resyncNoteRef = useRef<{ text: string; until: number } | null>(null);
   const [rerollsLeft, setRerollsLeft] = useState<number | null>(null); // null: however many the round starts with; set from the on-screen "N Re-Roll Remaining" caption once a frame is read
   const isEnemies = (v: unknown): v is number[] => isNumberArray(v) && v.length === ENEMY_SLOTS;
   const isCustomOrders = (v: unknown): v is Record<string, CustomOrder> =>
@@ -256,8 +278,29 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
       .catch((e) => setError(String(e)));
   }, [hero.id]);
   // tagged with the hero it was fetched for, so switching hero shows the loader again instead of the old hero's numbers
-  const analytics = loaded?.heroId === hero.id ? loaded.analytics : null;
-  const rerolls = rerollsLeft ?? config?.item_draft_rerolls_per_round[round - 1] ?? 1;
+  const baseAnalytics = loaded?.heroId === hero.id ? loaded.analytics : null;
+  // Stats fetched for a saved custom order the stored data lacks (once per order, cached by main under userData).
+  const [fetchedOrders, setFetchedOrders] = useState<
+    Record<
+      string,
+      {
+        heroId: number;
+        order: number[];
+        matches: number;
+        item_stats: { item_id: number; wins: number; matches: number }[];
+      }
+    >
+  >({});
+  const analytics = useMemo(() => {
+    if (!baseAnalytics) return null;
+    const extra = Object.values(fetchedOrders)
+      .filter((o) => o.heroId === hero.id)
+      .map(({ order, matches, item_stats }) => ({ order, matches, item_stats }));
+    return extra.length
+      ? { ...baseAnalytics, item_stats_by_order: [...(baseAnalytics.item_stats_by_order ?? []), ...extra] }
+      : baseAnalytics;
+  }, [baseAnalytics, fetchedOrders, hero.id]);
+  const rerolls = rerollUsed ? 0 : (rerollsLeft ?? config?.item_draft_rerolls_per_round[round - 1] ?? 1);
 
   const input: BrawlInput | null = useMemo(
     () => (analytics && config ? { hero, abilities, items, analytics, config } : null),
@@ -279,6 +322,17 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
     () => (input && abilityOrder ? orderAbilityIds(abilityOrder, hero, input.abilities, customOrder) : undefined),
     [input, abilityOrder, hero, customOrder],
   );
+  const orderAsked = useRef(new Set<string>());
+  useEffect(() => {
+    const api = window.brawlAPI;
+    if (!customOrder || !activeOrder || !analytics || !api?.orderStats || orderCovered(analytics, activeOrder)) return;
+    const key = `${hero.id}:${activeOrder.join(',')}`;
+    if (orderAsked.current.has(key)) return; // one fetch per saved order; offline it stays `Order: no data`
+    orderAsked.current.add(key);
+    void api.orderStats(hero.id, activeOrder).then((o) => {
+      if (o) setFetchedOrders((m) => ({ ...m, [key]: { heroId: hero.id, ...o } }));
+    });
+  }, [customOrder, activeOrder, analytics, hero.id]);
   const advice = useMemo(() => {
     // advise only once all 3 cards are read, or (fallback) the sure ones with the others shown as `?`
     if (!input || cards.length === 0 || cards.length + unsure < 3) return null;
@@ -307,6 +361,11 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
   useEffect(() => {
     rerollRef.current = reroll;
   }, [reroll]);
+  // The state machine needs the card the overlay tells the player to take: if the pick cannot be read, it is assumed.
+  const advisedId = reroll || !takeOk ? null : (ranked[0]?.item.id ?? null);
+  useEffect(() => {
+    workerRef.current?.postMessage({ type: 'advised', itemId: advisedId } satisfies WorkerIn);
+  }, [advisedId]);
   const tiers = input ? roundTiers(input, round) : [];
   const topItems = useMemo(() => (input ? topItemsByTier(input) : []), [input]);
   const abilityStepNow = abilityStepIndex(round, choice);
@@ -442,6 +501,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
       }, DETECT_TIMEOUT_MS),
     };
     setStatus('Detecting…');
+    workerRef.current?.postMessage({ type: 'forceResync' } satisfies WorkerIn); // F8 starts from the next frame's labels again
     setTimeout(() => {
       const fc = fullCanvasRef.current;
       if (fc && fc.width) window.brawlAPI?.saveDebugFrame?.(fc.toDataURL('image/png'));
@@ -553,7 +613,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
       setCapture('on');
       window.brawlAPI?.captureResult?.(true);
       if (!detectRef.current) setStatus('watching for the draft screen');
-      log('brawl-view', 'info', 'capture.start');
+      log('brawl-view', 'info', 'capture.start', { at: Math.round(performance.now()) });
       // Electron already draws its own always-on-top overlay window (electron/main.ts); the in-page
       // Document-PiP overlay is only for the browser path.
       if (!isElectron && !pip && hasDpip()) {
@@ -747,12 +807,16 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
     const offFirst = api.onFirstRunOpen?.(() => setFirstRunOpen(true));
     const offProblem = api.onProblem?.(setProblem);
     const offRun = api.onDetectRun?.(() => runDetectRef.current());
+    const offRound = api.onRoundStart?.((round) =>
+      workerRef.current?.postMessage({ type: 'roundStart', round } satisfies WorkerIn),
+    );
     return () => {
       offKey?.();
       offProblem?.();
       offEnv?.();
       offFirst?.();
       offRun?.();
+      offRound?.();
     };
   }, []);
   useEffect(() => {
@@ -981,6 +1045,19 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
         }
       }
     };
+    const applyTrack = (t: TrackOut) => {
+      for (const l of t.logs) log('brawl-view', 'info', l.name, l.data);
+      const s = t.summary;
+      trackRef.current = s;
+      setRerollUsed(s.rerollUsedThisRound);
+      if (s.statusSeq !== seenStatusSeqRef.current) {
+        seenStatusSeqRef.current = s.statusSeq;
+        if (s.status) {
+          resyncNoteRef.current = { text: s.status, until: performance.now() + RESYNC_NOTE_MS };
+          setStatus(s.status);
+        }
+      }
+    };
     const onMessage = (ev: MessageEvent<WorkerOut>) => {
       // read through a ref: a hero switch must not tear this loop down (it cleared the tip timer and frame wait)
       const { byId, heroId, heroes, onHero, hero, pinned } = loopCtxRef.current;
@@ -1005,6 +1082,10 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
         }
         return;
       }
+      if (ev.data.type === 'track') {
+        applyTrack(ev.data);
+        return;
+      }
       if (ev.data.type === 'seen') {
         stepTracker(true); // the draft screen is up: the overlay shows its `Reading` sign now
         return;
@@ -1014,7 +1095,11 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
         // still the one on screen -- otherwise a slow OCR result from a since-superseded set would
         // overwrite a newer, already-correct count (or the next set's still-pending "-1 unread").
         const applied = ev.data.forKey === acceptedKeyRef.current;
-        log('brawl-view', 'info', 'rerolls.read', { value: ev.data.rerollsRemaining, applied });
+        log('brawl-view', 'info', 'rerolls.read', {
+          value: ev.data.rerollsRemaining,
+          applied,
+          at: Math.round(performance.now()),
+        });
         if (applied && ev.data.rerollsRemaining >= 0) setRerollsLeft(ev.data.rerollsRemaining);
         return;
       }
@@ -1027,10 +1112,12 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
           itemId,
           fixed: itemId !== 0 && itemId !== icon,
           ms,
+          at: Math.round(performance.now()),
         });
         return;
       }
       const r = ev.data;
+      if (r.track) applyTrack(r.track);
       if (perf.enabled) {
         perf.record(r.shop ? 'worker.draft' : 'worker.probe', r.ms);
         for (const [k, v] of Object.entries(r.stages ?? {})) perf.record(`worker.${k}`, v);
@@ -1148,6 +1235,8 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
           choice: r.choice,
           accepted: r.accepted,
           items: r.reads.map((x) => x.itemId),
+          at: Math.round(performance.now()),
+          workerMs: Math.round(r.ms),
         });
       }
       if (debugRef.current && window.brawlAPI?.sessionDraft) {
@@ -1184,6 +1273,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
             changes: end.stats.changes,
             dropouts: end.stats.dropouts,
             fallback: end.stats.fallback,
+            ...trackFieldsFor(trackRef.current, end.round, end.choice),
           });
       }
       setFps(r.shop);
@@ -1229,7 +1319,8 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
               : heroDetected
                 ? `hero: ${hero.name}, ${seen}/3 cards found${hidden}`
                 : `${seen}/3 cards found${hidden}`;
-      setStatus(names);
+      const note = resyncNoteRef.current;
+      setStatus(note && performance.now() < note.until ? note.text : names);
     };
     w.addEventListener('message', onMessage);
     sendFrame(false); // the worker's first tick may have arrived before this listener existed
