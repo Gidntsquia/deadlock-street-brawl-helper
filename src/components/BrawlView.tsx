@@ -120,6 +120,8 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
   const trackRef = useRef<TrackSummary | null>(null);
   const seenStatusSeqRef = useRef(0);
   const resyncNoteRef = useRef<{ text: string; until: number } | null>(null);
+  const [resyncText, setResyncText] = useState<string | null>(null);
+  const resyncTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [rerollsLeft, setRerollsLeft] = useState<number | null>(null); // null: however many the round starts with; set from the on-screen "N Re-Roll Remaining" caption once a frame is read
   const isEnemies = (v: unknown): v is number[] => isNumberArray(v) && v.length === ENEMY_SLOTS;
   const isCustomOrders = (v: unknown): v is Record<string, CustomOrder> =>
@@ -807,9 +809,12 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
     const offFirst = api.onFirstRunOpen?.(() => setFirstRunOpen(true));
     const offProblem = api.onProblem?.(setProblem);
     const offRun = api.onDetectRun?.(() => runDetectRef.current());
-    const offRound = api.onRoundStart?.((round) =>
-      workerRef.current?.postMessage({ type: 'roundStart', round } satisfies WorkerIn),
-    );
+    // The banner probe hit: log it here (the capture loop's message listener may not be attached yet, so the worker's
+    // own copy of the log can be lost), and let the worker's state machine know so it warms the OCR engines.
+    const offRound = api.onRoundStart?.((round) => {
+      log('brawl-view', 'info', 'round.start', { round, worker: !!workerRef.current });
+      workerRef.current?.postMessage({ type: 'roundStart', round } satisfies WorkerIn);
+    });
     return () => {
       offKey?.();
       offProblem?.();
@@ -1046,7 +1051,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
       }
     };
     const applyTrack = (t: TrackOut) => {
-      for (const l of t.logs) log('brawl-view', 'info', l.name, l.data);
+      for (const l of t.logs) if (l.name !== 'round.start') log('brawl-view', 'info', l.name, l.data);
       const s = t.summary;
       trackRef.current = s;
       setRerollUsed(s.rerollUsedThisRound);
@@ -1055,6 +1060,9 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
         if (s.status) {
           resyncNoteRef.current = { text: s.status, until: performance.now() + RESYNC_NOTE_MS };
           setStatus(s.status);
+          setResyncText(s.status);
+          clearTimeout(resyncTimer.current);
+          resyncTimer.current = setTimeout(() => setResyncText(null), RESYNC_NOTE_MS);
         }
       }
     };
@@ -1371,7 +1379,9 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
   };
   const statusLine = platformWarning
     ? platformWarning
-    : statusFor({ found: gameFound || testMode.on, draft: draftOpen, advising: draftOpen && ranked.length > 0 });
+    : resyncText
+      ? resyncText
+      : statusFor({ found: gameFound || testMode.on, draft: draftOpen, advising: draftOpen && ranked.length > 0 });
   const advicePanel = (
     <AdvicePanel
       input={input}

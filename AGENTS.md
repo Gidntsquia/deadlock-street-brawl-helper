@@ -292,11 +292,21 @@ in `win:e2e`/`win:demo` drives the actual game:
 - Main lowers its own and child priority below normal (skipped under `BRAWL_E2E`).
 - Not verified on real Windows: GDI probe with a real Deadlock (borderless and fullscreen). Check by hand.
 
-## State machine and Order term (new, not yet wired into the worker)
+## State machine and Order term
 
 `src/brawl/brawlState.ts` is a pure Street Brawl state machine (round 1-5, choice 1-3, one re-roll, three card slots, owned
 list, pick source `read|assumed|grid`); each transition is a named event with a test in `__tests__/brawlState.test.ts`.
-`worker.ts` still runs `draftGate.ts`; replacing it with the machine is open work. The Order term (`Order` row,
-`BRAWL_WEIGHTS.order`, `item_stats_by_order` in each hero's brawl json from `npm run fetch-data -- --brawl-orders`) is
-**off by default**: set `BRAWL_ORDER_TERM=on` to use it (`npx tsx scripts/order-check.ts <hero>` measures ranking changes).
+`src/brawl/tracker.ts` runs it inside `worker.ts` as an **observer**: `draftGate.ts` still decides what is accepted and advised;
+the machine counts reads per slot, re-rolls, resyncs and the pick source, which ride on `result` messages as `track` (`TrackOut`).
+A standalone `track` message carries only `roundStart`. The page's worker listener exists only while capture is on, so the page
+logs `round.start` itself in its `onRoundStart` handler (round banner probe in `electron/shopProbe.ts`, channel `roundStart`) and
+`applyTrack` skips the worker's duplicate. The handler also posts `roundStart` to the worker, which warms OCR (`warmRead`).
+`Resynced to round N choice M` is shown by `BrawlView`'s `resyncText` (5 s) ahead of `statusFor`; F8 forces it (`forceResync`).
+e2e hooks: `__brawlE2E.roundStart(n)`; checks `round-start-warms-first`, `slots-read-once`, `f8-resync`, `frame-switch-resync`;
+the advice limit is `ADVICE_LIMIT_MS` (1000) in `e2e-main.cjs`. `--slow 4` (processor affinity) does not yet meet it (about 2.7 s).
+The Order term (`Order` row, `BRAWL_WEIGHTS.order`, `item_stats_by_order` in each hero's brawl json from
+`npm run fetch-data -- --brawl-orders`) is **off by default**: set `BRAWL_ORDER_TERM=on` to use it (`npx tsx scripts/order-check.ts <hero id>`
+measures ranking changes; Infernus is id 1: 0 of 9 drafts change). An order outside the stored set is fetched once in the app
+(`electron/orderFetch.ts`, channel `orderStats`, cache `userData/order-stats/`, log `order.fetch`); offline gives no data.
 The editor's default row shows the best blended order's matches and win rate; `Reset to default order` returns to it.
+If `npm run check` fails with ENOTDIR on prettier, delete the stray file `node_modules/.cache/prettier`.

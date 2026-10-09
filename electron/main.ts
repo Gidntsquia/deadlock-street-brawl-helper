@@ -1026,6 +1026,8 @@ app.whenReady().then(() => {
       getTestWindow: () => testWindow,
       // Same code path as F8 / the button. forceCaptureOff() gives the "capture forced off" start state.
       detectNow: () => detectNow('e2e'),
+      // The round banner probe is off under the harness: this sends what its hit would (OCR warm-up, round.start log).
+      roundStart: (round: number) => sendControl(CHANNELS.roundStart, round),
       forceCaptureOff: () => {
         captureWanted = false;
         captureHeld = true;

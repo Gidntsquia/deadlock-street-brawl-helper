@@ -191,10 +191,13 @@ async function main() {
 
   let captureAttempts = 0;
   let detectMisses = 0;
+  const trackEvents = [];
   control.webContents.on('console-message', (_e, _level, message) => {
     dbg('control console: ' + message);
     if (/"msg":"capture\.attempt"/.test(message)) captureAttempts++;
     if (/"msg":"detect\.manual","outcome":"miss"/.test(message)) detectMisses++;
+    if (/"msg":"round\.start"/.test(message)) trackEvents.push('round.start');
+    if (/"msg":"card\.name","slot":\d,"itemId":\d+\}/.test(message)) trackEvents.push('card.name');
   });
   overlay?.webContents.on('console-message', (_e, _level, message) => dbg('overlay console: ' + message));
   let preloadError = false;
@@ -332,6 +335,7 @@ async function main() {
 
     // --- blank before any draft: test mode on with the in-round frame -> nothing drawn (before advice) ---
     const clicked = await js(control, CLICK_TEST_MODE_JS);
+    e2e.roundStart(1); // what the round banner probe's hit sends; the banner shows seconds before the first card
     const win = await waitFor(() => e2e.getTestWindow(), 8_000);
     check(
       'testmode-on',
@@ -488,6 +492,21 @@ async function main() {
       first.ok && first.ms <= ADVICE_LIMIT_MS && (first.last?.scores?.length ?? 0) === 3,
       `${first.ms}ms (limit ${ADVICE_LIMIT_MS}ms, cpu x${SLOW}) scores=${first.last?.scores} head="${first.last?.head}" cards="${first.last?.cards}"`,
     );
+
+    // The state machine: round.start came before the first card read, each of the three slots was read once, and a
+    // locked set is not read again over the next 2 s.
+    {
+      const firstName = trackEvents.indexOf('card.name');
+      const reads0 = trackEvents.filter((e) => e === 'card.name').length;
+      await sleep(2_000);
+      const reads1 = trackEvents.filter((e) => e === 'card.name').length;
+      check(
+        'round-start-warms-first',
+        trackEvents.includes('round.start') && trackEvents.indexOf('round.start') < firstName,
+        `events=${trackEvents.slice(0, 6).join(',')}`,
+      );
+      check('slots-read-once', reads0 === 3 && reads1 === 3, `name reads at advice=${reads0} 2s later=${reads1}`);
+    }
 
     // Overlay geometry + click-through while the draft is up.
     const bounds = win.getBounds();
@@ -649,12 +668,30 @@ async function main() {
       e2e.detectNow();
       const r = await waitAdvice(l, l.round, l.choice, 4_000);
       const dotNow = await js(overlay, 'window.__overlayDot ?? null');
+      const f8 = await waitFor(
+        async () =>
+          /Resynced to round 1 choice 1/.test(
+            await js(control, `document.querySelector('.brawl-controls [role=status]')?.textContent ?? ''`),
+          ),
+        4_000,
+        50,
+      );
+      check('f8-resync', !!f8, `status after Detect now = Resynced to round 1 choice 1: ${!!f8}`);
       check('detect-hit', r.ok && !dotNow, `${Date.now() - t0}ms (target ~2000ms) dot=${JSON.stringify(dotNow)}`);
       check(
         'f8-registered',
         e2e.getF8().registered === true || e2e.getF8().inUse === true,
         JSON.stringify(e2e.getF8()),
       );
+    }
+    // --- resync: F8 re-reads the tracked place, and a frame at another round resyncs to it ---
+    {
+      const status = () => js(control, `document.querySelector('.brawl-controls [role=status]')?.textContent ?? ''`);
+      await setFrame('draft-r2c1');
+      const jumped = await waitFor(async () => /Resynced to round 2 choice 1/.test(await status()), 6_000, 50);
+      check('frame-switch-resync', !!jumped, `status=${JSON.stringify(await status())}`);
+      await setFrame('choice1');
+      await waitAdvice(c1, c1.round, c1.choice, 4_000);
     }
     // --- the control window stays where it is put (capture on, test mode on, draft showing) ---
     {
