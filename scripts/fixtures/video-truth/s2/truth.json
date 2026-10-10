@@ -1,0 +1,83 @@
+{
+ "video": [
+  391,
+  439
+ ],
+ "fps": 4,
+ "sets": [
+  {
+   "draft": "d006",
+   "round": 5,
+   "choice": 1,
+   "items": [
+    "Ricochet",
+    "Healing Tempo",
+    "Transcendent Cooldown"
+   ],
+   "from": 392,
+   "to": 399.5,
+   "readable": [
+    393,
+    400
+   ],
+   "hidden": [
+    2
+   ]
+  },
+  {
+   "draft": "d007",
+   "round": 5,
+   "choice": 2,
+   "items": [
+    "Lightning Scroll",
+    "Ricochet",
+    "Runed Gauntlets"
+   ],
+   "from": 400,
+   "to": 428.75,
+   "readable": [
+    403.25,
+    426.25
+   ],
+   "hidden": [
+    1
+   ]
+  },
+  {
+   "draft": "d007",
+   "round": 5,
+   "choice": 2,
+   "items": [
+    "Boundless Spirit",
+    "Crippling Headshot",
+    "Eternal Gift"
+   ],
+   "from": 426.25,
+   "to": 430,
+   "readable": [
+    428.75,
+    430.5
+   ],
+   "hidden": [
+    1
+   ]
+  },
+  {
+   "draft": "d008",
+   "round": 5,
+   "choice": 3,
+   "items": [
+    "Colossus",
+    "Indomitable",
+    "Mystic Reverb"
+   ],
+   "from": 430.5,
+   "to": 438,
+   "readable": [
+    433.25,
+    437.75
+   ],
+   "hidden": []
+  }
+ ]
+}

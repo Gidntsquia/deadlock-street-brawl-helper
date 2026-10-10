@@ -1,0 +1,658 @@
+{
+ "video": "2026-10-09 00-46-30.mkv",
+ "fps": 4,
+ "stretches": [
+  {
+   "id": "s0",
+   "video": [
+    1,
+    15
+   ],
+   "sets": [
+    {
+     "draft": "d001",
+     "round": 3,
+     "choice": 2,
+     "items": [
+      "Mercurial Magnum",
+      "Toxic Bullets",
+      "Spirit Rend"
+     ],
+     "from": 2,
+     "to": 5,
+     "readable": [
+      4,
+      5
+     ],
+     "hidden": []
+    },
+    {
+     "draft": "d002",
+     "round": 3,
+     "choice": 3,
+     "items": [
+      "Infuser",
+      "Cheat Death",
+      "Mystic Reverb"
+     ],
+     "from": 5.5,
+     "to": 14,
+     "readable": [
+      10.75,
+      13.25
+     ],
+     "hidden": []
+    }
+   ]
+  },
+  {
+   "id": "s1",
+   "video": [
+    191.5,
+    216
+   ],
+   "sets": [
+    {
+     "draft": "d003",
+     "round": 4,
+     "choice": 1,
+     "items": [
+      "Superior Cooldown",
+      "Warp Stone",
+      "Surge of Power"
+     ],
+     "from": 192.5,
+     "to": 195.5,
+     "readable": [
+      193.5,
+      195.75
+     ],
+     "hidden": []
+    },
+    {
+     "draft": "d004",
+     "round": 4,
+     "choice": 2,
+     "items": [
+      "Counterspell",
+      "Tesla Bullets",
+      "Express Shot"
+     ],
+     "from": 196,
+     "to": 203,
+     "readable": [
+      198.5,
+      203.25
+     ],
+     "hidden": []
+    },
+    {
+     "draft": "d005",
+     "round": 4,
+     "choice": 3,
+     "items": [
+      "Siphon Bullets",
+      "Juggernaut",
+      "Focus Lens"
+     ],
+     "from": 203.5,
+     "to": 212.5,
+     "readable": [
+      205.5,
+      210.25
+     ],
+     "hidden": [
+      2
+     ]
+    },
+    {
+     "draft": "d005",
+     "round": 4,
+     "choice": 3,
+     "items": [
+      "Boundless Spirit",
+      "Crushing Fists",
+      "Silencer"
+     ],
+     "from": 210.25,
+     "to": 215,
+     "readable": [
+      212.5,
+      212.75
+     ],
+     "hidden": [
+      2
+     ]
+    }
+   ]
+  },
+  {
+   "id": "s2",
+   "video": [
+    391,
+    439
+   ],
+   "sets": [
+    {
+     "draft": "d006",
+     "round": 5,
+     "choice": 1,
+     "items": [
+      "Ricochet",
+      "Healing Tempo",
+      "Transcendent Cooldown"
+     ],
+     "from": 392,
+     "to": 399.5,
+     "readable": [
+      393,
+      400
+     ],
+     "hidden": [
+      2
+     ]
+    },
+    {
+     "draft": "d007",
+     "round": 5,
+     "choice": 2,
+     "items": [
+      "Lightning Scroll",
+      "Ricochet",
+      "Runed Gauntlets"
+     ],
+     "from": 400,
+     "to": 428.75,
+     "readable": [
+      403.25,
+      426.25
+     ],
+     "hidden": [
+      1
+     ]
+    },
+    {
+     "draft": "d007",
+     "round": 5,
+     "choice": 2,
+     "items": [
+      "Boundless Spirit",
+      "Crippling Headshot",
+      "Eternal Gift"
+     ],
+     "from": 426.25,
+     "to": 430,
+     "readable": [
+      428.75,
+      430.5
+     ],
+     "hidden": [
+      1
+     ]
+    },
+    {
+     "draft": "d008",
+     "round": 5,
+     "choice": 3,
+     "items": [
+      "Colossus",
+      "Indomitable",
+      "Mystic Reverb"
+     ],
+     "from": 430.5,
+     "to": 438,
+     "readable": [
+      433.25,
+      437.75
+     ],
+     "hidden": []
+    }
+   ]
+  },
+  {
+   "id": "s3",
+   "video": [
+    1143.5,
+    1164.5
+   ],
+   "sets": [
+    {
+     "draft": "d009",
+     "round": 1,
+     "choice": 1,
+     "items": [
+      "Extra Spirit",
+      "Mystic Burst",
+      "Mystic Regeneration"
+     ],
+     "from": 1144.5,
+     "to": 1148,
+     "readable": [
+      1146.5,
+      1148.25
+     ],
+     "hidden": []
+    },
+    {
+     "draft": "d010",
+     "round": 1,
+     "choice": 2,
+     "items": [
+      "Arcane Surge",
+      "Slowing Bullets",
+      "Express Shot"
+     ],
+     "from": 1148.5,
+     "to": 1156.5,
+     "readable": [
+      1151.25,
+      1154
+     ],
+     "hidden": [
+      1
+     ]
+    },
+    {
+     "draft": "d010",
+     "round": 1,
+     "choice": 2,
+     "items": [
+      "Active Reload",
+      "Bullet Lifesteal",
+      "Decay"
+     ],
+     "from": 1154,
+     "to": 1158,
+     "readable": [
+      1157,
+      1157.75
+     ],
+     "hidden": []
+    },
+    {
+     "draft": "d011",
+     "round": 1,
+     "choice": 3,
+     "items": [
+      "Spirit Snatch",
+      "Spirit Rend",
+      "Heroic Aura"
+     ],
+     "from": 1158.5,
+     "to": 1163.5,
+     "readable": [
+      1161,
+      1162.75
+     ],
+     "hidden": []
+    }
+   ]
+  },
+  {
+   "id": "s4",
+   "video": [
+    1336.5,
+    1359
+   ],
+   "sets": [
+    {
+     "draft": "d012",
+     "round": 2,
+     "choice": 1,
+     "items": [
+      "Suppressor",
+      "Titanic Magazine",
+      "Opening Rounds"
+     ],
+     "from": 1337.5,
+     "to": 1346,
+     "readable": [
+      1338.5,
+      1346.25
+     ],
+     "hidden": []
+    },
+    {
+     "draft": "d013",
+     "round": 2,
+     "choice": 2,
+     "items": [
+      "Lifestrike",
+      "Spirit Resilience",
+      "Metal Skin"
+     ],
+     "from": 1346.5,
+     "to": 1349.5,
+     "readable": [
+      1349,
+      1349.5
+     ],
+     "hidden": []
+    },
+    {
+     "draft": "d014",
+     "round": 2,
+     "choice": 3,
+     "items": [
+      "Toxic Bullets",
+      "Counterspell",
+      "Healing Nova"
+     ],
+     "from": 1350,
+     "to": 1358,
+     "readable": [
+      1352.5,
+      1357.5
+     ],
+     "hidden": []
+    }
+   ]
+  },
+  {
+   "id": "s5",
+   "video": [
+    1549.5,
+    1571.5
+   ],
+   "sets": [
+    {
+     "draft": "d015",
+     "round": 3,
+     "choice": 1,
+     "items": [
+      "Quicksilver Reload",
+      "Enchanter's Emblem",
+      "Return Fire"
+     ],
+     "from": 1550.5,
+     "to": 1553.5,
+     "readable": [
+      1551.25,
+      1553.75
+     ],
+     "hidden": []
+    },
+    {
+     "draft": "d016",
+     "round": 3,
+     "choice": 2,
+     "items": [
+      "Escalating Resilience",
+      "Dispel Magic",
+      "Tesla Bullets"
+     ],
+     "from": 1554,
+     "to": 1561.5,
+     "readable": [
+      1558.75,
+      1561.25
+     ],
+     "hidden": []
+    },
+    {
+     "draft": "d017",
+     "round": 3,
+     "choice": 3,
+     "items": [
+      "Indomitable",
+      "Scourge",
+      "Juggernaut"
+     ],
+     "from": 1562,
+     "to": 1570.5,
+     "readable": [
+      1564.25,
+      1568.75
+     ],
+     "hidden": []
+    }
+   ]
+  },
+  {
+   "id": "s6",
+   "video": [
+    2241.5,
+    2267
+   ],
+   "sets": [
+    {
+     "draft": "d018",
+     "round": 1,
+     "choice": 1,
+     "items": [
+      "Rebuttal",
+      "Healing Rite",
+      "Extra Charge"
+     ],
+     "from": 2242.5,
+     "to": 2245,
+     "readable": [
+      2244.75,
+      2245
+     ],
+     "hidden": [
+      1
+     ]
+    },
+    {
+     "draft": "d019",
+     "round": 1,
+     "choice": 2,
+     "items": [
+      "Escalating Resilience",
+      "Weapon Shielding",
+      "Healbane"
+     ],
+     "from": 2245.5,
+     "to": 2249.5,
+     "readable": [
+      2248,
+      2249.5
+     ],
+     "hidden": []
+    },
+    {
+     "draft": "d020",
+     "round": 1,
+     "choice": 3,
+     "items": [
+      "Inhibitor",
+      "Hollow Point",
+      "Healing Nova"
+     ],
+     "from": 2250,
+     "to": 2266,
+     "readable": [
+      2252.25,
+      2265.75
+     ],
+     "hidden": [
+      2
+     ]
+    }
+   ]
+  },
+  {
+   "id": "s7",
+   "video": [
+    2490.5,
+    2511
+   ],
+   "sets": [
+    {
+     "draft": "d021",
+     "round": 2,
+     "choice": 1,
+     "items": [
+      "Healing Booster",
+      "Trophy Collector",
+      "Bullet Resist Shredder"
+     ],
+     "from": 2491.5,
+     "to": 2495.5,
+     "readable": [
+      2491,
+      2494.75
+     ],
+     "hidden": []
+    },
+    {
+     "draft": "d022",
+     "round": 2,
+     "choice": 2,
+     "items": [
+      "Shadow Weave",
+      "Torment Pulse",
+      "Toxic Bullets"
+     ],
+     "from": 2496,
+     "to": 2500.5,
+     "readable": [
+      2498.5,
+      2500.5
+     ],
+     "hidden": []
+    },
+    {
+     "draft": "d023",
+     "round": 2,
+     "choice": 3,
+     "items": [
+      "Burst Fire",
+      "Alchemical Fire",
+      "Rapid Recharge"
+     ],
+     "from": 2501,
+     "to": 2510,
+     "readable": [
+      2503.25,
+      2509.25
+     ],
+     "hidden": []
+    }
+   ]
+  },
+  {
+   "id": "s8",
+   "video": [
+    2637.5,
+    2663
+   ],
+   "sets": [
+    {
+     "draft": "d024",
+     "round": 3,
+     "choice": 1,
+     "items": [
+      "Spirit Shredder",
+      "Spirit Sap",
+      "Melee Charge"
+     ],
+     "from": 2638.5,
+     "to": 2642.5,
+     "readable": [
+      2640.5,
+      2643
+     ],
+     "hidden": [
+      1
+     ]
+    },
+    {
+     "draft": "d025",
+     "round": 3,
+     "choice": 2,
+     "items": [
+      "Heroic Aura",
+      "Spirit Resilience",
+      "Superior Duration"
+     ],
+     "from": 2643,
+     "to": 2651,
+     "readable": [
+      2645.5,
+      2649.75
+     ],
+     "hidden": []
+    },
+    {
+     "draft": "d026",
+     "round": 3,
+     "choice": 3,
+     "items": [
+      "Colossus",
+      "Armor Piercer",
+      "Lightning Scroll"
+     ],
+     "from": 2651.5,
+     "to": 2659.25,
+     "readable": [
+      2653.75,
+      2656.75
+     ],
+     "hidden": []
+    },
+    {
+     "draft": "d026",
+     "round": 3,
+     "choice": 3,
+     "items": [
+      "Spiritual Overflow",
+      "Witchmail",
+      "Crippling Headshot"
+     ],
+     "from": 2656.75,
+     "to": 2662,
+     "readable": [
+      2659.5,
+      2661.5
+     ],
+     "hidden": []
+    }
+   ]
+  },
+  {
+   "id": "s9",
+   "video": [
+    2809.5,
+    2820.5
+   ],
+   "sets": [
+    {
+     "draft": "d027",
+     "round": 4,
+     "choice": 2,
+     "items": [
+      "Heroic Aura",
+      "Spirit Rend",
+      "Superior Cooldown"
+     ],
+     "from": 2810.5,
+     "to": 2814.5,
+     "readable": [
+      2813,
+      2814.75
+     ],
+     "hidden": []
+    },
+    {
+     "draft": "d028",
+     "round": 4,
+     "choice": 3,
+     "items": [
+      "Escalating Exposure",
+      "Juggernaut",
+      "Frenzy"
+     ],
+     "from": 2815,
+     "to": 2819.5,
+     "readable": [
+      2817.5,
+      2818.75
+     ],
+     "hidden": []
+    }
+   ]
+  }
+ ]
+}

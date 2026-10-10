@@ -1,0 +1,43 @@
+{
+ "video": [
+  1,
+  15
+ ],
+ "fps": 4,
+ "sets": [
+  {
+   "draft": "d001",
+   "round": 3,
+   "choice": 2,
+   "items": [
+    "Mercurial Magnum",
+    "Toxic Bullets",
+    "Spirit Rend"
+   ],
+   "from": 2,
+   "to": 5,
+   "readable": [
+    4,
+    5
+   ],
+   "hidden": []
+  },
+  {
+   "draft": "d002",
+   "round": 3,
+   "choice": 3,
+   "items": [
+    "Infuser",
+    "Cheat Death",
+    "Mystic Reverb"
+   ],
+   "from": 5.5,
+   "to": 14,
+   "readable": [
+    10.75,
+    13.25
+   ],
+   "hidden": []
+  }
+ ]
+}

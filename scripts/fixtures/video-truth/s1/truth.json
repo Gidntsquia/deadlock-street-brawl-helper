@@ -1,0 +1,81 @@
+{
+ "video": [
+  191.5,
+  216
+ ],
+ "fps": 4,
+ "sets": [
+  {
+   "draft": "d003",
+   "round": 4,
+   "choice": 1,
+   "items": [
+    "Superior Cooldown",
+    "Warp Stone",
+    "Surge of Power"
+   ],
+   "from": 192.5,
+   "to": 195.5,
+   "readable": [
+    193.5,
+    195.75
+   ],
+   "hidden": []
+  },
+  {
+   "draft": "d004",
+   "round": 4,
+   "choice": 2,
+   "items": [
+    "Counterspell",
+    "Tesla Bullets",
+    "Express Shot"
+   ],
+   "from": 196,
+   "to": 203,
+   "readable": [
+    198.5,
+    203.25
+   ],
+   "hidden": []
+  },
+  {
+   "draft": "d005",
+   "round": 4,
+   "choice": 3,
+   "items": [
+    "Siphon Bullets",
+    "Juggernaut",
+    "Focus Lens"
+   ],
+   "from": 203.5,
+   "to": 212.5,
+   "readable": [
+    205.5,
+    210.25
+   ],
+   "hidden": [
+    2
+   ]
+  },
+  {
+   "draft": "d005",
+   "round": 4,
+   "choice": 3,
+   "items": [
+    "Boundless Spirit",
+    "Crushing Fists",
+    "Silencer"
+   ],
+   "from": 210.25,
+   "to": 215,
+   "readable": [
+    212.5,
+    212.75
+   ],
+   "hidden": [
+    2
+   ]
+  }
+ ]
+}

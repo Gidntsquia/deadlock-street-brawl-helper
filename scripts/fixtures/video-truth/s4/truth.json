@@ -1,0 +1,60 @@
+{
+ "video": [
+  1336.5,
+  1359
+ ],
+ "fps": 4,
+ "sets": [
+  {
+   "draft": "d012",
+   "round": 2,
+   "choice": 1,
+   "items": [
+    "Suppressor",
+    "Titanic Magazine",
+    "Opening Rounds"
+   ],
+   "from": 1337.5,
+   "to": 1346,
+   "readable": [
+    1338.5,
+    1346.25
+   ],
+   "hidden": []
+  },
+  {
+   "draft": "d013",
+   "round": 2,
+   "choice": 2,
+   "items": [
+    "Lifestrike",
+    "Spirit Resilience",
+    "Metal Skin"
+   ],
+   "from": 1346.5,
+   "to": 1349.5,
+   "readable": [
+    1349,
+    1349.5
+   ],
+   "hidden": []
+  },
+  {
+   "draft": "d014",
+   "round": 2,
+   "choice": 3,
+   "items": [
+    "Toxic Bullets",
+    "Counterspell",
+    "Healing Nova"
+   ],
+   "from": 1350,
+   "to": 1358,
+   "readable": [
+    1352.5,
+    1357.5
+   ],
+   "hidden": []
+  }
+ ]
+}

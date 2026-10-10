@@ -1,0 +1,60 @@
+{
+ "video": [
+  1549.5,
+  1571.5
+ ],
+ "fps": 4,
+ "sets": [
+  {
+   "draft": "d015",
+   "round": 3,
+   "choice": 1,
+   "items": [
+    "Quicksilver Reload",
+    "Enchanter's Emblem",
+    "Return Fire"
+   ],
+   "from": 1550.5,
+   "to": 1553.5,
+   "readable": [
+    1551.25,
+    1553.75
+   ],
+   "hidden": []
+  },
+  {
+   "draft": "d016",
+   "round": 3,
+   "choice": 2,
+   "items": [
+    "Escalating Resilience",
+    "Dispel Magic",
+    "Tesla Bullets"
+   ],
+   "from": 1554,
+   "to": 1561.5,
+   "readable": [
+    1558.75,
+    1561.25
+   ],
+   "hidden": []
+  },
+  {
+   "draft": "d017",
+   "round": 3,
+   "choice": 3,
+   "items": [
+    "Indomitable",
+    "Scourge",
+    "Juggernaut"
+   ],
+   "from": 1562,
+   "to": 1570.5,
+   "readable": [
+    1564.25,
+    1568.75
+   ],
+   "hidden": []
+  }
+ ]
+}

@@ -1,0 +1,60 @@
+{
+ "video": [
+  2490.5,
+  2511
+ ],
+ "fps": 4,
+ "sets": [
+  {
+   "draft": "d021",
+   "round": 2,
+   "choice": 1,
+   "items": [
+    "Healing Booster",
+    "Trophy Collector",
+    "Bullet Resist Shredder"
+   ],
+   "from": 2491.5,
+   "to": 2495.5,
+   "readable": [
+    2491,
+    2494.75
+   ],
+   "hidden": []
+  },
+  {
+   "draft": "d022",
+   "round": 2,
+   "choice": 2,
+   "items": [
+    "Shadow Weave",
+    "Torment Pulse",
+    "Toxic Bullets"
+   ],
+   "from": 2496,
+   "to": 2500.5,
+   "readable": [
+    2498.5,
+    2500.5
+   ],
+   "hidden": []
+  },
+  {
+   "draft": "d023",
+   "round": 2,
+   "choice": 3,
+   "items": [
+    "Burst Fire",
+    "Alchemical Fire",
+    "Rapid Recharge"
+   ],
+   "from": 2501,
+   "to": 2510,
+   "readable": [
+    2503.25,
+    2509.25
+   ],
+   "hidden": []
+  }
+ ]
+}
