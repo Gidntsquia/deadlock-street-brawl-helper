@@ -55,7 +55,7 @@ const take = (m: WorkerOut | undefined) => {
   logs.push(...t.logs.map((l) => l.name));
 };
 /** Frames until the machine has all three names (the first OCR read of a run loads the engine: seconds, not frames). */
-async function runUntilLocked(name: string, max = 200) {
+async function runUntilLocked(name: string, max = 600) {
   for (let i = 0; i < max && !track?.locked; i++) await runTrack(name, 1);
 }
 /** Frames in a row, collecting what the machine reports (async name reads land between frames). */

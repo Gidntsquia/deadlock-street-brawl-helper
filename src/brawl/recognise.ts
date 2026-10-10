@@ -372,6 +372,20 @@ export function matchIcon(
   best.margin = best.score - second;
   return best;
 }
+/** A first guess at each card from its icon at the fixed square alone (no position or scale search, a few ms): the item
+ *  id when the match is clear and the icon has no twin, else 0. The name read confirms it and overrules it. */
+export function quickGuess(img: RGBImage, index: DecodedIndex, squares: { x: number; y: number; edge: number }[]) {
+  return squares.map((sq) => {
+    const m = matchIcon(img, index, sq.x + sq.edge / 2, sq.y + sq.edge / 2, sq.edge, undefined, {
+      search: 0,
+      scales: [1],
+    });
+    const sure = m.score >= QUICK_SCORE && m.margin >= QUICK_MARGIN && !index.twins?.get(m.itemId)?.length;
+    return sure ? m.itemId : 0;
+  });
+}
+const QUICK_SCORE = 0.75,
+  QUICK_MARGIN = 0.1;
 const SHORTLIST = 12;
 const NARROW = { search: 12, scales: [0.92, 0.97] as const };
 const NARROW_SURE_SCORE = 0.85;

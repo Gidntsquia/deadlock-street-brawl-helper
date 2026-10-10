@@ -187,10 +187,13 @@ const demoImagePath = (name: string) => path.join(demoDir(), `${name}.png`);
 /** Every draft screenshot test mode can show, by name (file name without .png), sorted. */
 function testFrames(): string[] {
   try {
-    return readdirSync(demoDir())
-      .filter((f) => f.endsWith('.png'))
-      .map((f) => f.slice(0, -4))
-      .sort();
+    return (
+      readdirSync(demoDir())
+        // names starting with `_` are the harness's in-between frames (a set with a card still landing): hidden from people
+        .filter((f) => f.endsWith('.png') && (process.env.BRAWL_E2E || !f.startsWith('_')))
+        .map((f) => f.slice(0, -4))
+        .sort()
+    );
   } catch {
     return [];
   }

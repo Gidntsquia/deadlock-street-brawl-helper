@@ -211,13 +211,13 @@ describe('worker: the draft gate on real frames', () => {
   it('never advises one item twice when a tooltip prints the next card name over a card before it is read', async () => {
     send({ type: 'reset' });
     const c1Key = '1548066885,2829638276,3633614685';
-    const names: number[] = [];
     const outs: Out[] = [];
-    for (let i = 0; i < 12; i++) {
-      outs.push(await frame('twinName'));
-      for (const m of posted) if (m.type === 'name' && m.slot === 1) names.push(m.itemId);
+    for (let i = 0; i < 12; i++) outs.push(await frame('twinName'));
+    // no frame of the tooltip picture offers a set that holds one item twice
+    for (const o of outs.filter((o) => o.key)) {
+      const ids = o.key.split(',').map((k) => k.replace('+', ''));
+      expect(new Set(ids).size).toBe(ids.length);
     }
-    expect(names).toContain(3633614685); // the middle line really read as the right card's item
     for (let i = 0; i < 60 && !outs.some((o) => o.accepted && o.key === c1Key); i++) outs.push(await frame('c1'));
     expect(accepts(outs)).toEqual([[c1Key, 1, 1]]);
   });

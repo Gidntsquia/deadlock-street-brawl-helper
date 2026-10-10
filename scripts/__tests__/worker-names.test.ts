@@ -60,8 +60,9 @@ describe('worker: the name under a card overrides a wrong icon guess', () => {
     for (let i = 0; i < 400 && !results.some((r) => r.accepted); i++) {
       posted.length = 0;
       send({ type: 'frame', width: W, height: H, regions: msgRegions, prefer: [] });
-      // the virtual clock holds until the three name reads have landed (OCR is real time, the fallback timer is not)
-      if (new Set(names.map((n) => n.slot)).size >= 3) clock += 70;
+      // the virtual clock holds until the unguessable card's name read has landed (OCR is real time, the fallback timer is
+      // not); the other two cards are named by their icons at once and confirmed by their names after the advice
+      if (names.some((n) => n.slot === 1)) clock += 70;
       results.push(...posted.filter((m): m is Out => m.type === 'result'));
       await new Promise((r) => setTimeout(r, 30)); // real time for the OCR reads to land
       names.push(...posted.filter((m): m is Extract<WorkerOut, { type: 'name' }> => m.type === 'name'));

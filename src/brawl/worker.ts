@@ -13,6 +13,7 @@ import {
   readInventory,
   cardNameCrop,
   readMarkers,
+  quickGuess,
   cardSquares,
   type CardRead,
   type DecodedIndex,
@@ -126,6 +127,8 @@ interface SlotLock {
   sig: Uint8Array;
   enhanced: boolean;
   rare: boolean;
+  /** Set from the icon alone, before the name was read: the name read confirms it, or moves it whatever the state. */
+  provisional?: boolean;
 }
 let locks: (SlotLock | null)[] = [null, null, null];
 let nameFail: ({ sig: Uint8Array; at: number; since: number } | null)[] = [null, null, null];
@@ -235,11 +238,19 @@ const applyNames = (
   const sigs = crops.map((c) => (c ? nameSig(c) : null));
   // The cards fading out for a re-roll: two locked name lines blank at once (a hover blanks at most the one it grows).
   if (locks.filter((l, i) => l && !(sigs[i] && hasInk(sigs[i]!))).length >= 2) rerollAt = now;
+  // A clear icon at the fixed square names the card at once, so the set can settle while the name is read: on a slow PC the
+  // name reads (three wasm engines on one core) were the whole wait. The name read below confirms or overrules the guess.
+  let quick: number[] | null = null;
   const out = pinned.map((r, slot) => {
     const crop = crops[slot] ?? null;
     const sig = sigs[slot] ?? null;
     if (!sig || !hasInk(sig)) inked = false;
-    const lock = locks[slot];
+    let lock = locks[slot];
+    if (!lock && sig && hasInk(sig) && index && !(nameFail[slot] && hasInk(nameFail[slot]!.sig))) {
+      quick ??= quickGuess(img, index, squares);
+      const id = quick[slot]!;
+      if (id) lock = locks[slot] = { id, sig, enhanced: r.enhanced, rare: r.rare, provisional: true };
+    }
     const sure = r.present && r.match.score >= SURE_SCORE && r.match.margin >= SURE_MARGIN;
     const asLock = (l: SlotLock): CardRead => ({
       ...r,
@@ -255,7 +266,7 @@ const applyNames = (
       lock.enhanced ||= r.enhanced;
       lock.rare ||= r.rare;
     }
-    if (lock && sig && sameName(lock.sig, sig)) {
+    if (lock && !lock.provisional && sig && sameName(lock.sig, sig)) {
       slotSure[slot] = true;
       return asLock(lock);
     }
@@ -266,7 +277,8 @@ const applyNames = (
     if (!crop || !sig || !hasInk(sig)) {
       // nothing printed there to read: counts as a failed read, so a slot that never shows a name falls back in time
       if (!lock) nameFail[slot] = { sig: sig ?? new Uint8Array(0), at: now, since: fail?.since ?? now };
-    } else if (!nameBusy[slot] && !failedThis) {
+    } else if (!nameBusy[slot] && !failedThis && (!lock?.provisional || gate.live)) {
+      // (a guess from the icon is confirmed after the set is advised: the OCR threads would take the frames' CPU while it settles)
       nameBusy[slot] = true;
       const fp0 = sigFp(slot, sig);
       const gen = nameGen,
@@ -291,14 +303,16 @@ const applyNames = (
             locks[twin] = locks[slot] = null;
           } else if (
             m &&
-            ((prev && prev.id !== m.itemId && advising() && !rerolling(performance.now())) || twin >= 0)
+            ((prev && !prev.provisional && prev.id !== m.itemId && advising() && !rerolling(performance.now())) ||
+              twin >= 0)
           ) {
             // another item's name over the advised card without a re-roll: the hover tooltip's title. Keep the lock, and
             // do not read this same picture again for a moment. Before the accept the lock moves: the game swaps the
             // CHOICE label a beat before the cards, so the first lock can be the previous choice's card.
             nameFail[slot] = { sig, at: performance.now(), since: nameFail[slot]?.since ?? t };
           } else if (m) {
-            locks[slot] = prev?.id === m.itemId ? { ...prev, sig } : { id: m.itemId, sig, enhanced, rare };
+            locks[slot] =
+              prev?.id === m.itemId ? { ...prev, sig, provisional: false } : { id: m.itemId, sig, enhanced, rare };
             nameFail[slot] = null;
             if (fp0) {
               if (!prev || prev.id !== m.itemId || !lockFp[slot]) lockFp[slot] = fp0;
@@ -657,7 +671,7 @@ function trackFrame(
     const lock = locks[slot],
       sig = sigs[slot];
     // the worker already holds this name (a resync, or a re-dealt card): the slot locks without a read
-    if (cur.kind === 'landing' && cur.fp === fp && lock && sig && sameName(lock.sig, sig)) {
+    if (cur.kind === 'landing' && cur.fp === fp && lock && !lock.provisional && sig && sameName(lock.sig, sig)) {
       lockFp[slot] = fp;
       tracker.feed({ type: 'cardRead', slot, fp, itemId: lock.id, fromLock: true });
     }
@@ -858,8 +872,13 @@ function draftFrame(msg: Extract<WorkerIn, { type: 'frame' }>, t0: number, idx: 
   // The grid is read while the names are still coming in too: the inventory at accept time is what a pick is spotted
   // against, and an accept on the first frame that names every card would otherwise have none.
   const setKey = key || provisionalKey;
+  // Cards land one at a time: with two of them up the grid and the hero bar are read already (neither depends on the
+  // third), so the last card only has its own name to wait for.
+  const partialKey =
+    names && !gate.live && !setKey && seen >= 2 ? reads.map((r) => (r.present ? String(r.itemId) : '?')).join(',') : '';
+  const warmKey = setKey || partialKey;
   const fresh = (labels.round === 1 || labels.round === 0) && labels.choice === 1 && gate.last === null;
-  if (sameCards(setKey, lastSetKey)) {
+  if (sameCards(warmKey, lastSetKey)) {
     // the inventory grid is only on the draft screen; a read counts once two frames agree
     const inv: InventoryRead[] = stage('inventory', () => readInventory(img, idx, msg.prefer));
     const ids = inv
@@ -869,10 +888,10 @@ function draftFrame(msg: Extract<WorkerIn, { type: 'frame' }>, t0: number, idx: 
     const ik = ids.join(',');
     if (ik === lastInv) stableInv = ids;
     lastInv = ik;
-  } else if (!setKey) lastInv = '';
+  } else if (!warmKey) lastInv = '';
   // Read the hero bar while the set is still settling (a first draft of a match has no cached bar), so the accept does
   // not wait for it. Only once the same three cards are up on two frames, so a transition frame never pays for it.
-  if (setKey && !gate.live && !earlyMeta && !(knownHero ?? (matchBar && sameBar(matchBar.sig, barSig(img))))) {
+  if (warmKey && !gate.live && !earlyMeta && !(knownHero ?? (matchBar && sameBar(matchBar.sig, barSig(img))))) {
     const sig = barSig(img);
     earlyMeta = { sig, meta: stage('meta', () => readDraftMeta(img, idx, undefined, true)) };
   }
@@ -889,8 +908,8 @@ function draftFrame(msg: Extract<WorkerIn, { type: 'frame' }>, t0: number, idx: 
   const inFallback = !!gate.last && gate.live && gate.last.key.includes('?');
   const g = stepGate(gate, {
     changed: named.changed,
-    ready: !named.pending && (!set || fresh || (rr.set === set && rr.value !== null)),
-    key: fbDue ? fbKey : key || provisionalKey,
+    ready: !(partialKey && !fbDue) && !named.pending && (!set || fresh || (rr.set === set && rr.value !== null)),
+    key: fbDue ? fbKey : key || provisionalKey || partialKey,
     force: fbDue,
     present: reads.filter((r, i) => r.present && (!inFallback || named.slotSure[i])).map((r) => r.itemId),
     round: labels.round,
@@ -937,11 +956,11 @@ function draftFrame(msg: Extract<WorkerIn, { type: 'frame' }>, t0: number, idx: 
   const sent = g.live && frozenReads ? frozenReads : reads;
   if (g.live && fbDue) acceptedKey = fbKey;
   lastKey = key;
-  lastSetKey = setKey;
+  lastSetKey = warmKey;
   pendingSig = key ? sig : null;
   pendingReads = raw;
   pendingChoice = labels.choice;
-  settledSig = key !== '' && key === acceptedKey ? sig : null;
+  settledSig = key !== '' && key === acceptedKey && !locks.some((l) => l?.provisional) ? sig : null;
   settledReads = sent;
   noteReadMs(performance.now() - t0);
   post({

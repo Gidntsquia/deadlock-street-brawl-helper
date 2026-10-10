@@ -6,7 +6,7 @@ import {
   customRoundPoints,
   standardCustom,
 } from '../abilities';
-import { CLOSE_FRAMES, initialTip, stepTip, TIP_MS } from '../abilityPanelTimer';
+import { CLOSE_FRAMES, CLOSE_MS, CLOSE_MIN_FRAMES, initialTip, stepTip, TIP_MS } from '../abilityPanelTimer';
 import { overlayHasContent } from '../overlayContent';
 import { heroByName, inputFor } from './testData';
 
@@ -16,6 +16,21 @@ describe('ability tip lifecycle', () => {
     for (const [shop, t] of frames) s = stepTip(s, shop, t, cur);
     return s;
   };
+
+  it('closes on a slow PC after a few frames spread over CLOSE_MS, not six frames a second apart', () => {
+    const closed = run([
+      [true, 0],
+      ...Array.from({ length: CLOSE_MIN_FRAMES }, (_, i): [boolean, number] => [false, 1_000 + i * 800]),
+    ]);
+    expect(closed.draft).toBe(false);
+    expect(closed.tip).not.toBeNull();
+    const tooFast = run([
+      [true, 0],
+      ...Array.from({ length: CLOSE_MIN_FRAMES }, (_, i): [boolean, number] => [false, 1_000 + i * 100]),
+    ]);
+    expect(tooFast.draft).toBe(true);
+    expect(CLOSE_MS).toBe(1_500);
+  });
 
   it('is 15 s by default, starts only after a draft closes, and expires on its own', () => {
     expect(TIP_MS).toBe(15_000);

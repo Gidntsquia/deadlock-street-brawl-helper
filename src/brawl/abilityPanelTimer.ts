@@ -5,10 +5,15 @@
 export const TIP_MS = 15_000;
 /** Consecutive non-draft frames before the draft counts as closed (the screen can blink between choices). */
 export const CLOSE_FRAMES = 6;
+/** On a slow PC frames come a second apart, and six of them would take the better part of ten seconds: the draft also
+ *  counts as closed after this many non-draft frames spread over CLOSE_MS. */
+export const CLOSE_MIN_FRAMES = 3;
+export const CLOSE_MS = 1_500;
 
 export interface TipState<T> {
   draft: boolean; // the draft screen is (still) considered open
   missed: number; // consecutive non-draft frames while draft is true
+  missedAt?: number; // when the first of them came
   sawDraft: boolean; // a draft screen was seen since the last tip started (a tip needs a draft to close)
   tip: { value: T; endsAt: number } | null;
 }
@@ -26,21 +31,25 @@ export function stepTip<T>(
   durationMs = TIP_MS,
 ): TipState<T> {
   let { draft, missed, sawDraft, tip } = s;
+  let missedAt = s.missedAt;
   if (shop) {
     draft = true;
     missed = 0;
+    missedAt = undefined;
     sawDraft = true;
     tip = null; // a draft screen reopening ends the tip at once
   } else if (draft) {
     missed += 1;
-    if (missed >= CLOSE_FRAMES) {
+    missedAt ??= now;
+    if (missed >= CLOSE_FRAMES || (missed >= CLOSE_MIN_FRAMES && now - missedAt >= CLOSE_MS)) {
       draft = false;
       missed = 0;
+      missedAt = undefined;
       if (sawDraft && current !== null) tip = { value: current, endsAt: now + durationMs };
       sawDraft = false;
     }
   }
   if (tip && now >= tip.endsAt) tip = null;
   if (draft === s.draft && missed === s.missed && sawDraft === s.sawDraft && tip === s.tip) return s;
-  return { draft, missed, sawDraft, tip };
+  return missedAt === undefined ? { draft, missed, sawDraft, tip } : { draft, missed, missedAt, sawDraft, tip };
 }
