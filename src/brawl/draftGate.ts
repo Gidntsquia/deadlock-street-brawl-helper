@@ -30,6 +30,7 @@ export interface GateFrame {
   inventory: number[] | null; // the inventory grid, once two reads agree; null when not known
   force?: boolean; // accept now whatever the settle time and the pending reads say (the 2.5 s fallback)
   changed?: boolean; // a card's name line shows other lettering than the accepted set's: the old advice is stale now
+  cardsUp?: boolean; // at least two card circles still show something: names hidden by a tooltip are not the cards leaving
   ready?: boolean; // false: a read the advice needs (the re-roll caption) is still in flight; hold the accept
 }
 
@@ -95,6 +96,9 @@ export function stepGate(s: GateState, f: GateFrame): GateOut {
     }
   }
 
+  // Cards leaving (two circles empty after a pick or a re-roll) or lettering that no longer matches: the advice is stale.
+  if (f.changed && live) live = false;
+
   const out = (accept: boolean, isSpent = false): GateOut => ({
     state: { cand, last, live, missing, spent },
     accept,
@@ -113,7 +117,7 @@ export function stepGate(s: GateState, f: GateFrame): GateOut {
       const shown = last ? cardIds(last.key) : [];
       const read = f.present.filter((id) => id);
       if (read.some((id) => !shown.includes(id))) live = false;
-      else if (read.length) missing = 0;
+      else if (read.length || f.cardsUp) missing = 0;
       else if (++missing >= MISSING_FRAMES) live = false;
     }
     return out(false);

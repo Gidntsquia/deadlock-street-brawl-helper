@@ -2,7 +2,8 @@
  * Cuts the hand-labelled stretches of a gameplay video into replayable folders under
  * scripts/fixtures/video-truth/<id>/ (frames.json, draft.json, truth.json and WebP crops, lossy, quality 95 for the three card squares and 90 for the rest).
  *
- *   npx tsx scripts/video-truth.ts "<video.mkv>"
+ *   npx tsx scripts/video-truth.ts "<video.mkv>"        (rebuilds every crop, about 6 minutes)
+ *   npx tsx scripts/video-truth.ts --truth-only          (rewrites only truth.json from the labels)
  *
  * The labels (what the cards truly were, and when they were readable) live in scripts/video-truth/labels.json and were
  * written by looking at the video; they are never derived from the app's own output. Frames are 4 per second at the
@@ -19,8 +20,10 @@ const W = 1280,
   H = 720,
   N = W * H * 3,
   FPS = 4;
-const [video] = process.argv.slice(2);
-if (!video) throw new Error('usage: npx tsx scripts/video-truth.ts "<video.mkv>"');
+const args = process.argv.slice(2);
+const truthOnly = args.includes('--truth-only');
+const video = args.find((a) => !a.startsWith('--'));
+if (!video && !truthOnly) throw new Error('usage: npx tsx scripts/video-truth.ts "<video.mkv>" [--truth-only]');
 const labels = JSON.parse(readFileSync('scripts/video-truth/labels.json', 'utf8')) as {
   stretches: { id: string; video: [number, number]; sets: unknown[] }[];
 };
@@ -34,7 +37,7 @@ const SAME = 3;
 
 async function decode(from: number, to: number): Promise<Buffer> {
   const p = spawn('ffmpeg', [
-    ...['-v', 'error', '-ss', String(from), '-t', String(to - from), '-i', video],
+    ...['-v', 'error', '-ss', String(from), '-t', String(to - from), '-i', video!],
     ...['-vf', `fps=${FPS}`, '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'],
   ]);
   const chunks: Buffer[] = [];
@@ -45,6 +48,10 @@ async function decode(from: number, to: number): Promise<Buffer> {
 
 for (const st of labels.stretches) {
   const dir = path.join('scripts/fixtures/video-truth', st.id);
+  if (truthOnly) {
+    writeFileSync(path.join(dir, 'truth.json'), JSON.stringify({ video: st.video, fps: FPS, sets: st.sets }, null, 1));
+    continue;
+  }
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   const [from, to] = st.video;

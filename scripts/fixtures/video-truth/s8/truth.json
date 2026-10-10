@@ -14,14 +14,11 @@
     "Spirit Sap",
     "Melee Charge"
    ],
-   "from": 2638.5,
-   "to": 2642.5,
+   "from": 2639.25,
+   "to": 2643,
    "readable": [
     2640.5,
     2643
-   ],
-   "hidden": [
-    1
    ]
   },
   {
@@ -33,13 +30,12 @@
     "Spirit Resilience",
     "Superior Duration"
    ],
-   "from": 2643,
-   "to": 2651,
+   "from": 2644.25,
+   "to": 2650.5,
    "readable": [
     2645.5,
     2649.75
-   ],
-   "hidden": []
+   ]
   },
   {
    "draft": "d026",
@@ -50,13 +46,12 @@
     "Armor Piercer",
     "Lightning Scroll"
    ],
-   "from": 2651.5,
-   "to": 2659.25,
+   "from": 2652.5,
+   "to": 2657.5,
    "readable": [
     2653.75,
     2656.75
-   ],
-   "hidden": []
+   ]
   },
   {
    "draft": "d026",
@@ -67,13 +62,12 @@
     "Witchmail",
     "Crippling Headshot"
    ],
-   "from": 2656.75,
-   "to": 2662,
+   "from": 2658.25,
+   "to": 2662.25,
    "readable": [
     2659.5,
     2661.5
-   ],
-   "hidden": []
+   ]
   }
  ]
 }

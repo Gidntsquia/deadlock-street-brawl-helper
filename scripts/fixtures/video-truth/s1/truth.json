@@ -15,12 +15,11 @@
     "Surge of Power"
    ],
    "from": 192.5,
-   "to": 195.5,
+   "to": 196,
    "readable": [
     193.5,
     195.75
-   ],
-   "hidden": []
+   ]
   },
   {
    "draft": "d004",
@@ -31,13 +30,12 @@
     "Tesla Bullets",
     "Express Shot"
    ],
-   "from": 196,
-   "to": 203,
+   "from": 197.25,
+   "to": 203.5,
    "readable": [
     198.5,
     203.25
-   ],
-   "hidden": []
+   ]
   },
   {
    "draft": "d005",
@@ -48,14 +46,11 @@
     "Juggernaut",
     "Focus Lens"
    ],
-   "from": 203.5,
-   "to": 212.5,
+   "from": 204.25,
+   "to": 211,
    "readable": [
     205.5,
     210.25
-   ],
-   "hidden": [
-    2
    ]
   },
   {
@@ -67,14 +62,14 @@
     "Crushing Fists",
     "Silencer"
    ],
-   "from": 210.25,
-   "to": 215,
+   "from": 211.25,
+   "to": 213.5,
    "readable": [
     212.5,
     212.75
    ],
-   "hidden": [
-    2
+   "covered": [
+    1
    ]
   }
  ]

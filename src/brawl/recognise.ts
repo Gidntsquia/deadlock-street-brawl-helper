@@ -463,6 +463,29 @@ const rgb = (img: RGBImage, x: number, y: number): [number, number, number] => {
  *  draftRegions copies only that much, and the crop's wider margin arrives black, which reads as background. */
 export const CARD_NAME = { halfWidth: 1.4, text: 1.3, top: 1.08, bottom: 1.52 } as const;
 
+/** True when the card square shows no card: an empty circle is a dark blur (grey-level spread under 12), a card icon,
+ *  a dimmed one under a hover, or a tooltip over it all spread far more. Used to tell cards leaving (a re-roll, a pick)
+ *  from a name line that is merely hidden. */
+export function cardSpread(img: RGBImage, sq: { x: number; y: number; edge: number }): number {
+  let n = 0,
+    sum = 0,
+    sum2 = 0;
+  for (let y = Math.round(sq.y + sq.edge * 0.15); y < sq.y + sq.edge * 0.85; y += 2)
+    for (let x = Math.round(sq.x + sq.edge * 0.15); x < sq.x + sq.edge * 0.85; x += 2) {
+      const [r, g, b] = rgb(img, x, y);
+      const v = (r + g + b) / 3;
+      n++;
+      sum += v;
+      sum2 += v * v;
+    }
+  if (!n) return 99;
+  const m = sum / n;
+  return Math.sqrt(Math.max(0, sum2 / n - m * m));
+}
+export const cardEmpty = (img: RGBImage, sq: { x: number; y: number; edge: number }): boolean =>
+  cardSpread(img, sq) < EMPTY_SPREAD;
+const EMPTY_SPREAD = 12;
+
 /** The name line under a card as black text on white (RGBA, with a white margin) for the OCR engine, or null when
  *  it falls off the frame. The name is white/off-white; everything with colour (the card ring, the blue ENHANCED
  *  label, the background art) or darkness (the text's own outline) becomes white. `line` is the name line's height
@@ -1086,19 +1109,26 @@ const readDigit = (
 ): number => {
   const sx = (img.origin?.fullWidth ?? img.width) / BRAWL_LAYOUT.ref.width,
     sy = (img.origin?.fullHeight ?? img.height) / BRAWL_LAYOUT.ref.height;
-  const at = (minCol: number) =>
+  const at = (minCol: number, trim = 0) =>
     readGlyph(
       img,
       Math.round(box.x0 * sx),
       Math.round(box.y0 * sy),
-      Math.round(box.x1 * sx),
+      Math.round((box.x1 - trim) * sx),
       Math.round(box.y1 * sy),
       test,
       minCol,
     );
   // Some window sizes (e.g. 1500-1600 px wide) leave a lone stray lit pixel from the neighbouring UI at the edge of
   // the box, which stretches the glyph's bounding box and misses the template: retry ignoring one-pixel columns.
-  return matchDigit(at(1), digits, loose) || matchDigit(at(2), digits, loose);
+  // A blurred recording can also smear the next letter ("1 OF 3") into the right edge of the box: retry with the
+  // right edge pulled in.
+  return (
+    matchDigit(at(1), digits, loose) ||
+    matchDigit(at(2), digits, loose) ||
+    matchDigit(at(1, 5), digits, loose) ||
+    matchDigit(at(1, 9), digits, loose)
+  );
 };
 
 const matchDigit = (

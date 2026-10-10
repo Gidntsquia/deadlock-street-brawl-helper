@@ -15,12 +15,11 @@
     "Return Fire"
    ],
    "from": 1550.5,
-   "to": 1553.5,
+   "to": 1554,
    "readable": [
     1551.25,
     1553.75
-   ],
-   "hidden": []
+   ]
   },
   {
    "draft": "d016",
@@ -31,13 +30,12 @@
     "Dispel Magic",
     "Tesla Bullets"
    ],
-   "from": 1554,
-   "to": 1561.5,
+   "from": 1557.5,
+   "to": 1562,
    "readable": [
     1558.75,
     1561.25
-   ],
-   "hidden": []
+   ]
   },
   {
    "draft": "d017",
@@ -48,13 +46,12 @@
     "Scourge",
     "Juggernaut"
    ],
-   "from": 1562,
-   "to": 1570.5,
+   "from": 1563,
+   "to": 1569.5,
    "readable": [
     1564.25,
     1568.75
-   ],
-   "hidden": []
+   ]
   }
  ]
 }

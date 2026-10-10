@@ -14,13 +14,28 @@
     "Toxic Bullets",
     "Spirit Rend"
    ],
-   "from": 2,
-   "to": 5,
+   "from": 2.75,
+   "to": 5.5,
    "readable": [
     4,
     5
+   ]
+  },
+  {
+   "draft": "d002",
+   "round": 3,
+   "choice": 3,
+   "items": [
+    "Lightning Scroll",
+    "Magic Carpet",
+    "Spellslinger"
    ],
-   "hidden": []
+   "from": 7,
+   "to": 9,
+   "readable": [
+    7.75,
+    8.5
+   ]
   },
   {
    "draft": "d002",
@@ -31,13 +46,12 @@
     "Cheat Death",
     "Mystic Reverb"
    ],
-   "from": 5.5,
+   "from": 9.5,
    "to": 14,
    "readable": [
     10.75,
     13.25
-   ],
-   "hidden": []
+   ]
   }
  ]
 }

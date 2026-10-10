@@ -14,13 +14,12 @@
     "Mystic Burst",
     "Mystic Regeneration"
    ],
-   "from": 1144.5,
-   "to": 1148,
+   "from": 1145.25,
+   "to": 1148.5,
    "readable": [
     1146.5,
     1148.25
-   ],
-   "hidden": []
+   ]
   },
   {
    "draft": "d010",
@@ -31,14 +30,11 @@
     "Slowing Bullets",
     "Express Shot"
    ],
-   "from": 1148.5,
-   "to": 1156.5,
+   "from": 1150,
+   "to": 1154.75,
    "readable": [
     1151.25,
     1154
-   ],
-   "hidden": [
-    1
    ]
   },
   {
@@ -50,13 +46,12 @@
     "Bullet Lifesteal",
     "Decay"
    ],
-   "from": 1154,
-   "to": 1158,
+   "from": 1155.75,
+   "to": 1158.5,
    "readable": [
     1157,
     1157.75
-   ],
-   "hidden": []
+   ]
   },
   {
    "draft": "d011",
@@ -67,13 +62,12 @@
     "Spirit Rend",
     "Heroic Aura"
    ],
-   "from": 1158.5,
+   "from": 1159.75,
    "to": 1163.5,
    "readable": [
     1161,
     1162.75
-   ],
-   "hidden": []
+   ]
   }
  ]
 }

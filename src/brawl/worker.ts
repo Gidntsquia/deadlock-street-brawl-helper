@@ -11,6 +11,7 @@ import {
   readRoundChoice,
   readDraftScreen,
   readInventory,
+  cardEmpty,
   cardNameCrop,
   readMarkers,
   quickGuess,
@@ -132,23 +133,28 @@ interface SlotLock {
 }
 let locks: (SlotLock | null)[] = [null, null, null];
 let nameFail: ({ sig: Uint8Array; at: number; since: number } | null)[] = [null, null, null];
+const quickSeen: ({ id: number; sig: Uint8Array } | null)[] = [null, null, null];
 const nameBusy = [false, false, false];
 let nameChoice = 0,
   nameGen = 0; // bumped when locks are dropped, so a read started before that lands nowhere
 /** For this long after a re-roll is seen, a changed name line is a new card rather than a hover. */
-const REROLL_WINDOW_MS = 3000;
+const REROLL_WINDOW_MS = 600;
 let rerollAt: number | null = null; // when the cards were last seen re-rolling (this choice)
 const rerolling = (now: number) => rerollAt !== null && now - rerollAt < REROLL_WINDOW_MS;
 /** The locked cards are the set being advised for this choice: only then is other lettering under a lock a hover. Right
  *  after the CHOICE label moves on, the gate can still hold the previous choice's set as live. */
 const advising = () => gate.live && acceptedChoice === nameChoice;
-const forgetNames = () => {
+const dropLocks = () => {
   locks = [null, null, null];
   nameFail = [null, null, null];
-  nameChoice = 0;
-  rerollAt = null;
+  quickSeen.fill(null);
   nameGen++;
   lockFp.fill(null);
+};
+const forgetNames = () => {
+  dropLocks();
+  nameChoice = 0;
+  rerollAt = null;
 };
 
 // Fingerprint of a name line (the black-on-white OCR crop): ink share in a coarse grid over the text area.
@@ -200,6 +206,7 @@ const applyNames = (
   slotSure: boolean[];
   changed: boolean;
   inked: boolean;
+  cardsUp: boolean;
   sigs: (Uint8Array | null)[];
 } => {
   const squares = cardSquares(img.width, img.height);
@@ -220,6 +227,7 @@ const applyNames = (
       slotSure: pinned.map((r) => r.present),
       changed: false,
       inked: false,
+      cardsUp: false,
       sigs: [null, null, null],
     };
   if (choice !== nameChoice) {
@@ -237,7 +245,14 @@ const applyNames = (
   const crops = pinned.map((r) => cardNameCrop(img, r.match));
   const sigs = crops.map((c) => (c ? nameSig(c) : null));
   // The cards fading out for a re-roll: two locked name lines blank at once (a hover blanks at most the one it grows).
-  if (locks.filter((l, i) => l && !(sigs[i] && hasInk(sigs[i]!))).length >= 2) rerollAt = now;
+  // Two locked cards' circles are empty (a hover only hides name lines, it leaves the icons): those cards are gone, and with them every lock: whatever comes next is a new set (a card still showing may be a new
+  // one drawn over the old, or hidden by a tooltip, and must not keep the old item).
+  const emptyCount = squares.filter((sq) => cardEmpty(img, sq)).length;
+  if ((gate.live || locks.some(Boolean)) && emptyCount >= 2) {
+    rerollAt = now;
+    dropLocks();
+    changed = true;
+  }
   // A clear icon at the fixed square names the card at once, so the set can settle while the name is read: on a slow PC the
   // name reads (three wasm engines on one core) were the whole wait. The name read below confirms or overrules the guess.
   let quick: number[] | null = null;
@@ -246,11 +261,18 @@ const applyNames = (
     const sig = sigs[slot] ?? null;
     if (!sig || !hasInk(sig)) inked = false;
     let lock = locks[slot];
+    // A guess made from the icon belongs to the picture it was made on: when the name line moves (the cards fading out
+    // or in, a new card where the old one was) the guess is dropped and made again.
+    if (lock?.provisional && sig && !sameName(lock.sig, sig)) lock = locks[slot] = null;
     if (!lock && sig && hasInk(sig) && index && !(nameFail[slot] && hasInk(nameFail[slot]!.sig))) {
       quick ??= quickGuess(img, index, squares);
       const id = quick[slot]!;
-      if (id) lock = locks[slot] = { id, sig, enhanced: r.enhanced, rare: r.rare, provisional: true };
-    }
+      // The guess must hold on two frames in a row with the name line still: a card is not fully drawn while it fades.
+      const before = quickSeen[slot];
+      quickSeen[slot] = id ? { id, sig } : null;
+      if (id && before?.id === id && sameName(before.sig, sig))
+        lock = locks[slot] = { id, sig, enhanced: r.enhanced, rare: r.rare, provisional: true };
+    } else if (!lock) quickSeen[slot] = null;
     const sure = r.present && r.match.score >= SURE_SCORE && r.match.margin >= SURE_MARGIN;
     const asLock = (l: SlotLock): CardRead => ({
       ...r,
@@ -357,7 +379,7 @@ const applyNames = (
     else slotSure[slot] = true;
     return r;
   });
-  return { reads: out, waiting, pending, slotSure, changed, inked, sigs };
+  return { reads: out, waiting, pending, slotSure, changed, inked, sigs, cardsUp: emptyCount <= 1 };
 };
 /** The three cards at their fixed squares with no icon search: the item comes from the name lock alone (the name
  *  under a card is exact; the icon search was the slowest part of the first read). Only the RARE / ENHANCED marks are
@@ -908,6 +930,7 @@ function draftFrame(msg: Extract<WorkerIn, { type: 'frame' }>, t0: number, idx: 
   const inFallback = !!gate.last && gate.live && gate.last.key.includes('?');
   const g = stepGate(gate, {
     changed: named.changed,
+    cardsUp: named.cardsUp,
     ready: !(partialKey && !fbDue) && !named.pending && (!set || fresh || (rr.set === set && rr.value !== null)),
     key: fbDue ? fbKey : key || provisionalKey || partialKey,
     force: fbDue,

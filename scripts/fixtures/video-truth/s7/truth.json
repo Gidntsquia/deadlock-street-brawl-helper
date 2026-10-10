@@ -19,8 +19,7 @@
    "readable": [
     2491,
     2494.75
-   ],
-   "hidden": []
+   ]
   },
   {
    "draft": "d022",
@@ -31,13 +30,12 @@
     "Torment Pulse",
     "Toxic Bullets"
    ],
-   "from": 2496,
-   "to": 2500.5,
+   "from": 2497.25,
+   "to": 2501,
    "readable": [
     2498.5,
     2500.5
-   ],
-   "hidden": []
+   ]
   },
   {
    "draft": "d023",
@@ -48,13 +46,12 @@
     "Alchemical Fire",
     "Rapid Recharge"
    ],
-   "from": 2501,
+   "from": 2502,
    "to": 2510,
    "readable": [
     2503.25,
     2509.25
-   ],
-   "hidden": []
+   ]
   }
  ]
 }

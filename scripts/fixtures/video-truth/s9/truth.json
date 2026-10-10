@@ -14,13 +14,12 @@
     "Spirit Rend",
     "Superior Cooldown"
    ],
-   "from": 2810.5,
-   "to": 2814.5,
+   "from": 2811.75,
+   "to": 2815,
    "readable": [
     2813,
     2814.75
-   ],
-   "hidden": []
+   ]
   },
   {
    "draft": "d028",
@@ -31,13 +30,12 @@
     "Juggernaut",
     "Frenzy"
    ],
-   "from": 2815,
+   "from": 2816.25,
    "to": 2819.5,
    "readable": [
     2817.5,
     2818.75
-   ],
-   "hidden": []
+   ]
   }
  ]
 }

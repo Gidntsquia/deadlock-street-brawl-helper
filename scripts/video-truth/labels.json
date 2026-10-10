@@ -18,13 +18,28 @@
       "Toxic Bullets",
       "Spirit Rend"
      ],
-     "from": 2,
-     "to": 5,
+     "from": 2.75,
+     "to": 5.5,
      "readable": [
       4,
       5
+     ]
+    },
+    {
+     "draft": "d002",
+     "round": 3,
+     "choice": 3,
+     "items": [
+      "Lightning Scroll",
+      "Magic Carpet",
+      "Spellslinger"
      ],
-     "hidden": []
+     "from": 7.0,
+     "to": 9.0,
+     "readable": [
+      7.75,
+      8.5
+     ]
     },
     {
      "draft": "d002",
@@ -35,13 +50,12 @@
       "Cheat Death",
       "Mystic Reverb"
      ],
-     "from": 5.5,
-     "to": 14,
+     "from": 9.5,
+     "to": 14.0,
      "readable": [
       10.75,
       13.25
-     ],
-     "hidden": []
+     ]
     }
    ]
   },
@@ -62,12 +76,11 @@
       "Surge of Power"
      ],
      "from": 192.5,
-     "to": 195.5,
+     "to": 196,
      "readable": [
       193.5,
       195.75
-     ],
-     "hidden": []
+     ]
     },
     {
      "draft": "d004",
@@ -78,13 +91,12 @@
       "Tesla Bullets",
       "Express Shot"
      ],
-     "from": 196,
-     "to": 203,
+     "from": 197.25,
+     "to": 203.5,
      "readable": [
       198.5,
       203.25
-     ],
-     "hidden": []
+     ]
     },
     {
      "draft": "d005",
@@ -95,14 +107,11 @@
       "Juggernaut",
       "Focus Lens"
      ],
-     "from": 203.5,
-     "to": 212.5,
+     "from": 204.25,
+     "to": 211.0,
      "readable": [
       205.5,
       210.25
-     ],
-     "hidden": [
-      2
      ]
     },
     {
@@ -114,14 +123,14 @@
       "Crushing Fists",
       "Silencer"
      ],
-     "from": 210.25,
-     "to": 215,
+     "from": 211.25,
+     "to": 213.5,
      "readable": [
       212.5,
       212.75
      ],
-     "hidden": [
-      2
+     "covered": [
+      1
      ]
     }
    ]
@@ -143,13 +152,10 @@
       "Transcendent Cooldown"
      ],
      "from": 392,
-     "to": 399.5,
+     "to": 400,
      "readable": [
       393,
       400
-     ],
-     "hidden": [
-      2
      ]
     },
     {
@@ -161,14 +167,11 @@
       "Ricochet",
       "Runed Gauntlets"
      ],
-     "from": 400,
-     "to": 428.75,
+     "from": 402,
+     "to": 427.0,
      "readable": [
       403.25,
       426.25
-     ],
-     "hidden": [
-      1
      ]
     },
     {
@@ -180,14 +183,11 @@
       "Crippling Headshot",
       "Eternal Gift"
      ],
-     "from": 426.25,
-     "to": 430,
+     "from": 427.5,
+     "to": 430.5,
      "readable": [
       428.75,
       430.5
-     ],
-     "hidden": [
-      1
      ]
     },
     {
@@ -199,13 +199,12 @@
       "Indomitable",
       "Mystic Reverb"
      ],
-     "from": 430.5,
-     "to": 438,
+     "from": 432,
+     "to": 438.5,
      "readable": [
       433.25,
       437.75
-     ],
-     "hidden": []
+     ]
     }
    ]
   },
@@ -225,13 +224,12 @@
       "Mystic Burst",
       "Mystic Regeneration"
      ],
-     "from": 1144.5,
-     "to": 1148,
+     "from": 1145.25,
+     "to": 1148.5,
      "readable": [
       1146.5,
       1148.25
-     ],
-     "hidden": []
+     ]
     },
     {
      "draft": "d010",
@@ -242,14 +240,11 @@
       "Slowing Bullets",
       "Express Shot"
      ],
-     "from": 1148.5,
-     "to": 1156.5,
+     "from": 1150,
+     "to": 1154.75,
      "readable": [
       1151.25,
       1154
-     ],
-     "hidden": [
-      1
      ]
     },
     {
@@ -261,13 +256,12 @@
       "Bullet Lifesteal",
       "Decay"
      ],
-     "from": 1154,
-     "to": 1158,
+     "from": 1155.75,
+     "to": 1158.5,
      "readable": [
       1157,
       1157.75
-     ],
-     "hidden": []
+     ]
     },
     {
      "draft": "d011",
@@ -278,13 +272,12 @@
       "Spirit Rend",
       "Heroic Aura"
      ],
-     "from": 1158.5,
+     "from": 1159.75,
      "to": 1163.5,
      "readable": [
       1161,
       1162.75
-     ],
-     "hidden": []
+     ]
     }
    ]
   },
@@ -305,12 +298,11 @@
       "Opening Rounds"
      ],
      "from": 1337.5,
-     "to": 1346,
+     "to": 1346.5,
      "readable": [
       1338.5,
       1346.25
-     ],
-     "hidden": []
+     ]
     },
     {
      "draft": "d013",
@@ -321,13 +313,12 @@
       "Spirit Resilience",
       "Metal Skin"
      ],
-     "from": 1346.5,
-     "to": 1349.5,
+     "from": 1347.75,
+     "to": 1350,
      "readable": [
       1349,
       1349.5
-     ],
-     "hidden": []
+     ]
     },
     {
      "draft": "d014",
@@ -338,13 +329,12 @@
       "Counterspell",
       "Healing Nova"
      ],
-     "from": 1350,
-     "to": 1358,
+     "from": 1351.25,
+     "to": 1358.25,
      "readable": [
       1352.5,
       1357.5
-     ],
-     "hidden": []
+     ]
     }
    ]
   },
@@ -365,12 +355,11 @@
       "Return Fire"
      ],
      "from": 1550.5,
-     "to": 1553.5,
+     "to": 1554,
      "readable": [
       1551.25,
       1553.75
-     ],
-     "hidden": []
+     ]
     },
     {
      "draft": "d016",
@@ -381,13 +370,12 @@
       "Dispel Magic",
       "Tesla Bullets"
      ],
-     "from": 1554,
-     "to": 1561.5,
+     "from": 1557.5,
+     "to": 1562,
      "readable": [
       1558.75,
       1561.25
-     ],
-     "hidden": []
+     ]
     },
     {
      "draft": "d017",
@@ -398,13 +386,12 @@
       "Scourge",
       "Juggernaut"
      ],
-     "from": 1562,
-     "to": 1570.5,
+     "from": 1563,
+     "to": 1569.5,
      "readable": [
       1564.25,
       1568.75
-     ],
-     "hidden": []
+     ]
     }
    ]
   },
@@ -424,14 +411,11 @@
       "Healing Rite",
       "Extra Charge"
      ],
-     "from": 2242.5,
-     "to": 2245,
+     "from": 2243.5,
+     "to": 2245.5,
      "readable": [
       2244.75,
       2245
-     ],
-     "hidden": [
-      1
      ]
     },
     {
@@ -443,13 +427,12 @@
       "Weapon Shielding",
       "Healbane"
      ],
-     "from": 2245.5,
-     "to": 2249.5,
+     "from": 2246.75,
+     "to": 2250,
      "readable": [
       2248,
       2249.5
-     ],
-     "hidden": []
+     ]
     },
     {
      "draft": "d020",
@@ -460,14 +443,11 @@
       "Hollow Point",
       "Healing Nova"
      ],
-     "from": 2250,
-     "to": 2266,
+     "from": 2251,
+     "to": 2266.5,
      "readable": [
       2252.25,
       2265.75
-     ],
-     "hidden": [
-      2
      ]
     }
    ]
@@ -493,8 +473,7 @@
      "readable": [
       2491,
       2494.75
-     ],
-     "hidden": []
+     ]
     },
     {
      "draft": "d022",
@@ -505,13 +484,12 @@
       "Torment Pulse",
       "Toxic Bullets"
      ],
-     "from": 2496,
-     "to": 2500.5,
+     "from": 2497.25,
+     "to": 2501,
      "readable": [
       2498.5,
       2500.5
-     ],
-     "hidden": []
+     ]
     },
     {
      "draft": "d023",
@@ -522,13 +500,12 @@
       "Alchemical Fire",
       "Rapid Recharge"
      ],
-     "from": 2501,
-     "to": 2510,
+     "from": 2502,
+     "to": 2510.0,
      "readable": [
       2503.25,
       2509.25
-     ],
-     "hidden": []
+     ]
     }
    ]
   },
@@ -548,14 +525,11 @@
       "Spirit Sap",
       "Melee Charge"
      ],
-     "from": 2638.5,
-     "to": 2642.5,
+     "from": 2639.25,
+     "to": 2643,
      "readable": [
       2640.5,
       2643
-     ],
-     "hidden": [
-      1
      ]
     },
     {
@@ -567,13 +541,12 @@
       "Spirit Resilience",
       "Superior Duration"
      ],
-     "from": 2643,
-     "to": 2651,
+     "from": 2644.25,
+     "to": 2650.5,
      "readable": [
       2645.5,
       2649.75
-     ],
-     "hidden": []
+     ]
     },
     {
      "draft": "d026",
@@ -584,13 +557,12 @@
       "Armor Piercer",
       "Lightning Scroll"
      ],
-     "from": 2651.5,
-     "to": 2659.25,
+     "from": 2652.5,
+     "to": 2657.5,
      "readable": [
       2653.75,
       2656.75
-     ],
-     "hidden": []
+     ]
     },
     {
      "draft": "d026",
@@ -601,13 +573,12 @@
       "Witchmail",
       "Crippling Headshot"
      ],
-     "from": 2656.75,
-     "to": 2662,
+     "from": 2658.25,
+     "to": 2662.25,
      "readable": [
       2659.5,
       2661.5
-     ],
-     "hidden": []
+     ]
     }
    ]
   },
@@ -627,13 +598,12 @@
       "Spirit Rend",
       "Superior Cooldown"
      ],
-     "from": 2810.5,
-     "to": 2814.5,
+     "from": 2811.75,
+     "to": 2815,
      "readable": [
       2813,
       2814.75
-     ],
-     "hidden": []
+     ]
     },
     {
      "draft": "d028",
@@ -644,13 +614,12 @@
       "Juggernaut",
       "Frenzy"
      ],
-     "from": 2815,
+     "from": 2816.25,
      "to": 2819.5,
      "readable": [
       2817.5,
       2818.75
-     ],
-     "hidden": []
+     ]
     }
    ]
   }

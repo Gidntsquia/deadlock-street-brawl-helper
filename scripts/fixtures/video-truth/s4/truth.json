@@ -15,12 +15,11 @@
     "Opening Rounds"
    ],
    "from": 1337.5,
-   "to": 1346,
+   "to": 1346.5,
    "readable": [
     1338.5,
     1346.25
-   ],
-   "hidden": []
+   ]
   },
   {
    "draft": "d013",
@@ -31,13 +30,12 @@
     "Spirit Resilience",
     "Metal Skin"
    ],
-   "from": 1346.5,
-   "to": 1349.5,
+   "from": 1347.75,
+   "to": 1350,
    "readable": [
     1349,
     1349.5
-   ],
-   "hidden": []
+   ]
   },
   {
    "draft": "d014",
@@ -48,13 +46,12 @@
     "Counterspell",
     "Healing Nova"
    ],
-   "from": 1350,
-   "to": 1358,
+   "from": 1351.25,
+   "to": 1358.25,
    "readable": [
     1352.5,
     1357.5
-   ],
-   "hidden": []
+   ]
   }
  ]
 }

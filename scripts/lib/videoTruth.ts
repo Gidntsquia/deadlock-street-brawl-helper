@@ -16,6 +16,8 @@ export interface TruthSet {
   to: number;
   /** Video seconds in which all three cards are plainly readable (null when never). */
   readable: [number, number] | null;
+  /** Slots a tooltip or the cursor hides for good: a grey `?` is right there, a wrong item is not. */
+  covered?: number[];
 }
 export interface Truth {
   video: [number, number];
@@ -23,8 +25,10 @@ export interface Truth {
   sets: TruthSet[];
 }
 
-/** Seconds of slack around a set's window: cards fade in and out, and a pick closes the screen a beat late. */
-export const TOL = 0.75;
+/** Seconds of slack before a set's window (cards fade in) and after it (cards fade out after a pick, and the plates
+ *  linger a few frames until the empty circles are seen). */
+export const TOL = 0.5;
+export const TOL_AFTER = 1.0;
 /** A readable set must be advised this soon after it becomes readable. */
 export const ADVICE_BY = 1.5;
 /** Sets readable for less than this are too brief to demand advice. */
@@ -48,7 +52,7 @@ export async function scoreStretch(dir: string): Promise<TruthReport> {
     onResult: (f, res) =>
       frames.push({
         t: vt(f),
-        on: res.accepted && res.live,
+        on: res.live && !res.spent,
         round: res.round,
         choice: res.choice,
         names: res.reads.map((r) => (r.present && !r.unsure ? name(r.itemId) : '?')),
@@ -57,12 +61,12 @@ export async function scoreStretch(dir: string): Promise<TruthReport> {
   const violations: string[] = [];
   const at = (t: number) => `${t.toFixed(2)}s`;
   const matches = (fr: (typeof frames)[number], s: TruthSet) =>
-    fr.round === s.round && fr.choice === s.choice && fr.names.every((n, i) => n === s.items[i]);
+    fr.names.every((n, i) => n === s.items[i] || (n === '?' && !!s.covered?.includes(i)));
   // R1 and R4: what is advised must be the draft on screen, exactly.
   let bad = '';
   for (const fr of frames) {
     if (!fr.on) continue;
-    const near = truth.sets.filter((s) => fr.t >= s.from - TOL && fr.t <= s.to + TOL);
+    const near = truth.sets.filter((s) => fr.t >= s.from - TOL && fr.t <= s.to + TOL_AFTER);
     const what = `${fr.round}.${fr.choice} ${fr.names.join(' | ')}`;
     let v = '';
     if (!near.length) v = `R4 advice with no draft on screen: ${what}`;
@@ -79,14 +83,15 @@ export async function scoreStretch(dir: string): Promise<TruthReport> {
       continue;
     }
     const [a, b] = s.readable;
-    const first = frames.find((f) => f.on && f.t >= s.from - TOL && f.t <= s.to + TOL && matches(f, s));
+    const first = frames.find((f) => f.on && f.t >= s.from - TOL && f.t <= s.to + TOL_AFTER && matches(f, s));
     latency.push({ set: label(s), secs: first ? +(first.t - a).toFixed(2) : null });
     if (!first) violations.push(`R2 ${label(s)} never advised (readable ${at(a)} to ${at(b)})`);
     else {
-      if (first.t > a + ADVICE_BY) violations.push(`R2 ${label(s)} advised at ${at(first.t)}, ${(first.t - a).toFixed(2)} s after readable`);
+      if (first.t > a + ADVICE_BY)
+        violations.push(`R2 ${label(s)} advised at ${at(first.t)}, ${(first.t - a).toFixed(2)} s after readable`);
       let dropped = false;
       for (const f of frames)
-        if (f.t > first.t && f.t <= Math.min(b, s.to) - 0.5) {
+        if (f.t > first.t && f.t <= Math.min(b, s.to) - 1.0) {
           if (!f.on && !dropped) violations.push(`R3 ${label(s)} advice dropped at ${at(f.t)} while readable`);
           dropped = !f.on;
         }

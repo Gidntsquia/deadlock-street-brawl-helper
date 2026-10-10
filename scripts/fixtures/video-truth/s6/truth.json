@@ -14,14 +14,11 @@
     "Healing Rite",
     "Extra Charge"
    ],
-   "from": 2242.5,
-   "to": 2245,
+   "from": 2243.5,
+   "to": 2245.5,
    "readable": [
     2244.75,
     2245
-   ],
-   "hidden": [
-    1
    ]
   },
   {
@@ -33,13 +30,12 @@
     "Weapon Shielding",
     "Healbane"
    ],
-   "from": 2245.5,
-   "to": 2249.5,
+   "from": 2246.75,
+   "to": 2250,
    "readable": [
     2248,
     2249.5
-   ],
-   "hidden": []
+   ]
   },
   {
    "draft": "d020",
@@ -50,14 +46,11 @@
     "Hollow Point",
     "Healing Nova"
    ],
-   "from": 2250,
-   "to": 2266,
+   "from": 2251,
+   "to": 2266.5,
    "readable": [
     2252.25,
     2265.75
-   ],
-   "hidden": [
-    2
    ]
   }
  ]
