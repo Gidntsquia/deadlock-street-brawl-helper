@@ -272,7 +272,10 @@ const applyNames = (
       // The guess must hold on two frames in a row with the name line still: a card is not fully drawn while it fades.
       const before = quickSeen[slot];
       quickSeen[slot] = id ? { id, sig } : null;
-      if (id && before?.id === id && sameName(before.sig, sig))
+      // With the other two cards already read by name, the last card's clear icon stands at once: waiting a second frame
+      // for it cost a frame interval (and its name read) on every set; the name read confirms it once the set is live.
+      const lastCard = locks.filter((l, i) => i !== slot && l && !l.provisional).length >= 2;
+      if (id && ((before?.id === id && sameName(before.sig, sig)) || lastCard))
         lock = locks[slot] = { id, sig, enhanced: r.enhanced, rare: r.rare, provisional: true };
     } else if (!lock) quickSeen[slot] = null;
     const sure = r.present && r.match.score >= SURE_SCORE && r.match.margin >= SURE_MARGIN;
