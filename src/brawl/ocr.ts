@@ -20,6 +20,10 @@ let workerPromise: Promise<TesseractWorker> | null = null;
 const cores = (globalThis as { navigator?: { hardwareConcurrency?: number } }).navigator?.hardwareConcurrency ?? 8;
 const NAME_ENGINES = cores <= 4 ? 1 : cores <= 6 ? 2 : 3;
 const nameWorkerPromises: (Promise<TesseractWorker> | null)[] = Array(NAME_ENGINES).fill(null);
+// The loaded engines, so a read can hand its picture to one in the same turn it was asked for. The page's worker runs
+// a whole frame as one synchronous task; an `await` before the hand-over held every name read back until that frame was
+// done (about 120 ms), although the engines run on threads of their own.
+const nameWorkersReady: (TesseractWorker | null)[] = Array(NAME_ENGINES).fill(null);
 /** The name crop is scaled so its text line is about this tall before OCR (it is ~25 px tall in a 1280 px frame). */
 const NAME_PX = 64;
 
@@ -68,6 +72,7 @@ async function getNameWorker(slot = 0): Promise<TesseractWorker> {
         user_defined_dpi: '300', // the PNG carries none; without it Tesseract guesses and warns on every read
       });
       await warmRead(worker);
+      nameWorkersReady[k] = worker;
       return worker;
     })();
   }
@@ -88,10 +93,70 @@ async function getWorker(): Promise<TesseractWorker> {
   return workerPromise;
 }
 
+/** A bilinear upscale of a black-on-white RGBA crop, written as an uncompressed 8-bit grey BMP. Tesseract reads BMP, and
+ *  this takes a few milliseconds in plain JS where the canvas resample plus PNG encode took 130 to 230 ms per name line.
+ *  The name crops are already thresholded to black on white, so grey from the red channel loses nothing. */
+function upscaledBmp(data: Uint8Array, width: number, height: number, scale: number): Uint8Array {
+  const outW = Math.round(width * scale),
+    outH = Math.round(height * scale);
+  const stride = (outW + 3) & ~3;
+  const head = 54 + 1024;
+  const out = new Uint8Array(head + stride * outH);
+  const v = new DataView(out.buffer);
+  out[0] = 0x42;
+  out[1] = 0x4d;
+  v.setUint32(2, out.length, true);
+  v.setUint32(10, head, true);
+  v.setUint32(14, 40, true);
+  v.setInt32(18, outW, true);
+  v.setInt32(22, outH, true); // positive: rows run bottom to top
+  v.setUint16(26, 1, true);
+  v.setUint16(28, 8, true);
+  v.setUint32(34, stride * outH, true);
+  v.setInt32(38, 11811, true); // 300 dpi
+  v.setInt32(42, 11811, true);
+  v.setUint32(46, 256, true);
+  for (let i = 0; i < 256; i++) {
+    const o = 54 + i * 4;
+    out[o] = out[o + 1] = out[o + 2] = i;
+  }
+  const xs = new Int32Array(outW),
+    xf = new Float32Array(outW);
+  for (let x = 0; x < outW; x++) {
+    const sx = Math.min(width - 1, Math.max(0, (x + 0.5) / scale - 0.5));
+    xs[x] = Math.min(width - 2, Math.floor(sx));
+    xf[x] = sx - xs[x]!;
+  }
+  for (let y = 0; y < outH; y++) {
+    const sy = Math.min(height - 1, Math.max(0, (y + 0.5) / scale - 0.5));
+    const y0 = Math.min(height - 2, Math.floor(sy)),
+      fy = sy - y0;
+    const r0 = y0 * width * 4,
+      r1 = r0 + width * 4;
+    let o = head + (outH - 1 - y) * stride;
+    for (let x = 0; x < outW; x++) {
+      const i = xs[x]! * 4,
+        fx = xf[x]!;
+      const top = data[r0 + i]! * (1 - fx) + data[r0 + i + 4]! * fx;
+      const bot = data[r1 + i]! * (1 - fx) + data[r1 + i + 4]! * fx;
+      out[o++] = top * (1 - fy) + bot * fy + 0.5;
+    }
+  }
+  return out;
+}
+
+/** The name lines go in through the fast BMP path; other callers (the re-roll digit at 8x) keep the canvas resample. */
 /** Upscales the raw RGBA crop with smooth (Lanczos-equivalent) resampling and encodes it as PNG for
  *  Tesseract -- plain nearest-neighbor/binarized upscaling reads as empty text; smooth resampling is what
  *  actually let Tesseract read the real "1" in screenshots/brawl/reroll-choice*.png. */
-async function upscaledPng(data: Uint8Array, width: number, height: number, scale = UPSCALE): Promise<Uint8Array> {
+async function upscaledPng(
+  data: Uint8Array,
+  width: number,
+  height: number,
+  scale = UPSCALE,
+  fast = false,
+): Promise<Uint8Array> {
+  if (fast && scale >= 1 && width > 1 && height > 1) return upscaledBmp(data, width, height, scale);
   const outW = Math.round(width * scale),
     outH = Math.round(height * scale);
   if (typeof OffscreenCanvas !== 'undefined') {
@@ -135,9 +200,19 @@ export function warmOCR(): void {
 export type NameCrop = NonNullable<ReturnType<typeof cardNameCrop>>;
 
 /** OCR of a card's item name line; the raw text, '' when nothing reads. */
-export async function readCardName(crop: NameCrop, slot = 0): Promise<string> {
+export function readCardName(crop: NameCrop, slot = 0): Promise<string> {
   const scale = Math.max(1, NAME_PX / crop.line);
-  const png = await upscaledPng(crop.data, crop.width, crop.height, scale);
+  const ready = nameWorkersReady[slot % NAME_ENGINES];
+  if (ready && crop.width > 1 && crop.height > 1) {
+    // Everything up to the engine's own thread is synchronous here.
+    const bmp = upscaledBmp(crop.data, crop.width, crop.height, scale);
+    return ready.recognize(bmp as unknown as Buffer).then(({ data: { text } }) => text.trim());
+  }
+  return readCardNameSlow(crop, slot, scale);
+}
+
+async function readCardNameSlow(crop: NameCrop, slot: number, scale: number): Promise<string> {
+  const png = await upscaledPng(crop.data, crop.width, crop.height, scale, true);
   const worker = await getNameWorker(slot);
   const {
     data: { text },
@@ -186,6 +261,7 @@ export async function terminateOCR(): Promise<void> {
   const pending = [workerPromise, ...nameWorkerPromises];
   workerPromise = null;
   nameWorkerPromises.fill(null);
+  nameWorkersReady.fill(null);
   for (const p of pending) {
     if (!p) continue;
     try {
