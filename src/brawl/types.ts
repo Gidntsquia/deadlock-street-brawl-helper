@@ -85,6 +85,8 @@ export interface RankedOffer {
   usage: number;
   winRate: number | null; // usage relative to the most-picked item of the same tier
   known: boolean; // false when the item has no brawl data
+  /** The active ability order matches no stored order: the tooltip says `Order: no data`. */
+  orderNoData?: boolean;
 }
 
 /** holdValue: what keeping the re-roll for a later set of this round is worth (0 for the last set). */

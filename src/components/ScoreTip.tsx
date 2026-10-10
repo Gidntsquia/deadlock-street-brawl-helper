@@ -1,5 +1,5 @@
 import type { OverlayAdviceCard } from '../brawl/draw';
-import { formatSigned, NO_DATA_LABEL } from '../brawl/breakdown';
+import { formatSigned, NO_DATA_LABEL, ORDER_NO_DATA_LABEL } from '../brawl/breakdown';
 
 /** Score breakdown shown beside a plate on hover: item name and tier, one row per score part (fixed label, signed
  *  number), then the total. Numbers and fixed labels only. */
@@ -21,7 +21,7 @@ export function ScoreTip({
       {card.rows.map((r) => (
         <div key={r.label} className="tip-row">
           <span>{r.label}</span>
-          {!noData && <b>{formatSigned(r.cents)}</b>}
+          {!noData && r.label !== ORDER_NO_DATA_LABEL && <b>{formatSigned(r.cents)}</b>}
         </div>
       ))}
       {!noData && (

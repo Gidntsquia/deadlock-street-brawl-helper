@@ -457,7 +457,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
             winRate: r.winRate,
             grade: gradeById.get(r.item.id) ?? '-',
             enhancedBonus: r.enhancedBonus,
-            rows: breakdownRows(r.parts, r.score, r.known, r.enhancedBonus),
+            rows: breakdownRows(r.parts, r.score, r.known, r.enhancedBonus, r.orderNoData),
           })),
         }
       : null;

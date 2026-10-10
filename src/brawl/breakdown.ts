@@ -22,6 +22,7 @@ const LABELS: [keyof ScoreParts, string][] = [
 ];
 
 export const NO_DATA_LABEL = 'No Street Brawl data';
+export const ORDER_NO_DATA_LABEL = 'Order: no data';
 
 /** One row per score part that is not zero at two decimals. The rows sum to `Math.round(score * 100)` exactly: the
  *  rounding remainder goes to the largest row, so the tooltip always adds up to the `Score: <n>` on the plate. */
@@ -30,6 +31,7 @@ export function breakdownRows(
   score: number,
   known: boolean,
   enhancedBonus?: number,
+  orderNoData?: boolean,
 ): BreakdownRow[] {
   // With a bonus, the Enhanced row is the whole bonus and Hero fit the not-enhanced fit, matching the plate's cell.
   const pinned = enhancedBonus !== undefined && enhancedBonus !== 0;
@@ -44,7 +46,9 @@ export function breakdownRows(
     const big = (pool.length ? pool : rows).reduce((a, r) => (Math.abs(r.cents) > Math.abs(a.cents) ? r : a));
     big.cents += diff;
   }
-  return rows.filter((r) => r.cents !== 0);
+  const out = rows.filter((r) => r.cents !== 0);
+  if (orderNoData) out.unshift({ label: ORDER_NO_DATA_LABEL, cents: 0 });
+  return out;
 }
 
 export const formatSigned = (cents: number) =>

@@ -120,11 +120,10 @@ export const orderCovered = (analytics: BrawlInput['analytics'], active: number[
 
 export function baseScores(input: BrawlInput, enemies: number[] = [], order?: number[]): Map<number, Base> {
   const { hero, abilities, items, analytics } = input;
-  const orderRows =
-    order && order.length && orderTermOn()
-      ? new Map(matchStoredOrder(analytics, order)?.item_stats.map((r) => [r.item_id, r]))
-      : null;
-  const orderNoData = !!(order && order.length && orderTermOn() && !orderRows?.size);
+  const stored = order && order.length ? matchStoredOrder(analytics, order) : null;
+  const orderRows = stored && orderTermOn() ? new Map(stored.item_stats.map((r) => [r.item_id, r])) : null;
+  // shown whether or not the term is on: the active order matches no stored order and nothing was fetched for it
+  const orderNoData = !!(order && order.length && !stored?.item_stats.length);
   const catalog = new Map(items.filter(draftable).map((i) => [i.id, i]));
   const kit = kitProfile(hero, abilities);
   const stats = new Map(
@@ -331,6 +330,7 @@ export function scoreOffer(
     usage: b?.pop ?? 0,
     winRate: b?.stat ? b.stat.wins / b.stat.matches : null,
     known: !!b?.stat,
+    orderNoData: !!b?.orderNoData,
   };
 }
 

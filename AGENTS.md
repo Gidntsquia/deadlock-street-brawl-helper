@@ -310,3 +310,12 @@ measures ranking changes; Infernus is id 1: 0 of 9 drafts change). An order outs
 (`electron/orderFetch.ts`, channel `orderStats`, cache `userData/order-stats/`, log `order.fetch`); offline gives no data.
 The editor's default row shows the best blended order's matches and win rate; `Reset to default order` returns to it.
 If `npm run check` fails with ENOTDIR on prettier, delete the stray file `node_modules/.cache/prettier`.
+
+## Fast draft read (0.4.0 tracker)
+
+- Provisional icon locks: `applyNames` gives a slot a lock from `quickGuess` (`recognise.ts`; fixed card square, no search, score >= 0.75, margin >= 0.1, no twin item) the moment its name line has ink. The advice goes out on that guess; OCR then confirms or overrules once `gate.live`. Settled frames skip card reads unless a lock is still provisional.
+- A frame with two cards up gives `partialKey`, which starts the draft gate's 300 ms settle clock and pre-reads the hero bar and grid (`warmKey`), so the third card's frame accepts at once. `ready` stays false until all three locks exist, so no plate shows on a partial set.
+- `stepTip` closes the ability panel's draft after `CLOSE_FRAMES`, or after `CLOSE_MIN_FRAMES` (3) frames spread over `CLOSE_MS` (1500), so a slow PC still closes it.
+- `public/demo/_*.png` frames (e.g. `_choice1-two.png`, made by `scripts/make-landing-frame.ts`) are listed only under `BRAWL_E2E`; the harness uses them for the staged reveal.
+- Harness at `--slow 4`: advice time starts before `setFrame`, the overlay is polled once during the hold, limits and timeouts scale by SLOW, and the panel expiry is measured with `pollAt`/`goneAt`.
+- The ScoreTip shows `Order: no data` (no number) when the active ability order matches no stored order, whatever `BRAWL_ORDER_TERM` is.
