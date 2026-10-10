@@ -73,6 +73,8 @@ export interface ReplayOpts {
   waitNames?: boolean;
   /** Replay the recorded frames up to this one, then post it four more times 400 ms apart: what the app reads of a screen that stays up. */
   hold?: number;
+  /** Called with every worker result and the frame's recorded time (ms), for tools that follow a replay frame by frame. */
+  onResult?: (frame: number, res: Result, t: number) => void;
 }
 
 /** Replays one draft folder (`dNNN` with draft.json, frames.json and the crops). */
@@ -135,6 +137,7 @@ export async function replayDraft(dir: string, opts: ReplayOpts = {}): Promise<R
     }
     const res = posted.find((m): m is Result => m.type === 'result');
     if (!res) continue;
+    opts.onResult?.(fi, res, f.t);
     if (res.accepted && acceptFrame < 0) acceptFrame = fi;
     if (res.accepted) enhanced = res.reads.map((x) => x.present && !x.unsure && x.enhanced);
     if (res.reads.length === 3 && res.reads.every((x) => x.present && !x.unsure)) lastFull = fi;
