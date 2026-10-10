@@ -307,12 +307,14 @@ const applyNames = (
       const fp0 = sigFp(slot, sig);
       // What the icon says right now: a hover tooltip covers the name line with another item's text, never the icon.
       const iconNow = lock && index ? quickGuess(img, index, [squares[slot]!])[0]! : 0;
-      const gen = nameGen,
+      const lockBefore = locks[slot],
+        gen = nameGen,
+        seq = frameSeq,
         icon = r.present ? r.itemId : 0,
         t = now,
         enhanced = r.enhanced,
         rare = r.rare;
-      readCardName(crop, slot)
+      track(readCardName(crop, slot))
         .then((text) => {
           const m = matchItemName(text, list);
           const ms = performance.now() - t;
@@ -351,7 +353,10 @@ const applyNames = (
           }
         })
         .catch(() => {}) // the OCR engine was freed (capture stopped) while this was running
-        .finally(() => (nameBusy[slot] = false));
+        .finally(() => {
+          nameBusy[slot] = false;
+          if (gen === nameGen && locks[slot] !== lockBefore) restepSoon(seq);
+        });
     }
     if (lock) {
       // A changed line under a lock is a hover/tooltip unless the cards were just seen re-rolling. Only then does an
@@ -455,8 +460,10 @@ const readRerolls = (img: Parameters<typeof readRerollsRemaining>[0], set: strin
   if (rr.busy || (rr.value !== null && now - rr.at < REROLL_REREAD_MS)) return;
   rr.busy = true;
   rr.at = now;
-  const gen = rrGen;
-  readRerollsRemaining(img)
+  const gen = rrGen,
+    seq = frameSeq,
+    before = rr.value;
+  track(readRerollsRemaining(img))
     .then((v) => {
       if (gen !== rrGen) return;
       if (rr.value === null) {
@@ -474,7 +481,10 @@ const readRerolls = (img: Parameters<typeof readRerollsRemaining>[0], set: strin
     })
     .catch(() => {}) // the OCR engine was freed (capture stopped) while this was running
     .finally(() => {
-      if (gen === rrGen) rr.busy = false;
+      if (gen === rrGen) {
+        rr.busy = false;
+        if (rr.value !== before) restepSoon(seq);
+      }
     });
 };
 
@@ -573,6 +583,7 @@ const forgetDraft = () => {
   readingSince = readingFirst = readingCardsSig = frozenReads = earlyMeta = null;
   gate = initialGate();
   stableInv = null;
+  lastFull = null;
 };
 // Dev builds only (`import.meta.env.DEV` is false in a production build, so this all folds away): milliseconds per
 // recogniser stage, sent back on each result for the page's perf summary.
@@ -810,7 +821,55 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
   draftFrame(msg, t0, idx);
 });
 
+// The last full draft frame, so a name or caption read that lands before the set is accepted can be acted on at once
+// instead of waiting a whole frame interval (about 300 ms at x4 CPU) for the next picture.
+let lastFull: { msg: Extract<WorkerIn, { type: 'frame' }>; idx: DecodedIndex; seq: number } | null = null;
+let frameSeq = 0;
+let restepping = false;
+const restep = (seq: number) => {
+  if (!lastFull || lastFull.seq !== seq || frameSeq !== seq || gate.live) return;
+  restepping = true;
+  try {
+    draftFrame(lastFull.msg, performance.now(), lastFull.idx);
+  } finally {
+    restepping = false;
+  }
+};
+/** Re-runs the frame the read was started on, once the read has landed (and only if no newer frame came). */
+/** A frame is re-run at most this many times (a lock dropped again by the frame itself must not loop). */
+const MAX_RESTEPS = 3;
+let restepsDone = 0;
+const restepSoon = (seq: number) => {
+  if (restepsDone >= MAX_RESTEPS) return;
+  restepsDone++;
+  restepsDue++;
+  setTimeout(() => {
+    restepsDue--;
+    restep(seq);
+  }, 0);
+};
+// Reads in flight (name lines, the re-roll caption). Tests and the replay tool wait on them to model a machine that
+// finishes each read before the next picture arrives.
+const inflight = new Set<Promise<unknown>>();
+let restepsDue = 0;
+export const readsIdle = async (): Promise<void> => {
+  while (inflight.size || restepsDue) {
+    await Promise.allSettled([...inflight]);
+    await new Promise((r) => setTimeout(r, 0));
+  }
+};
+const track = <T>(p: Promise<T>): Promise<T> => {
+  inflight.add(p);
+  const done = () => inflight.delete(p);
+  p.then(done, done);
+  return p;
+};
+
 function draftFrame(msg: Extract<WorkerIn, { type: 'frame' }>, t0: number, idx: DecodedIndex) {
+  if (!restepping) {
+    lastFull = { msg, idx, seq: ++frameSeq };
+    restepsDone = 0;
+  }
   stages = DEV ? {} : undefined;
   const img = stage('paste', () => pasteRegions(msg.width, msg.height, msg.regions));
   // Skip card/inventory recognition entirely off the shop screen (menus, gameplay, the round-end transition
@@ -862,8 +921,10 @@ function draftFrame(msg: Extract<WorkerIn, { type: 'frame' }>, t0: number, idx: 
   // A new picture is about to be read: ask for the next frame now, so the page copies it while this one is being read
   // (the two-frame check below then finds it waiting instead of paying copy + hop after the read). One tick per frame:
   // the end of this handler does not tick again.
-  clearTimeout(timer);
-  post({ type: 'tick', full: true });
+  if (!restepping) {
+    clearTimeout(timer);
+    post({ type: 'tick', full: true });
+  }
   // A frame that looks the same as the one that just produced a full set of cards (and carries the same choice
   // label) confirms that read without repeating the expensive icon search: a new screen is accepted a frame sooner.
   const confirmed = lastKey !== '' && pendingChoice === labels.choice && sameSig(pendingSig, sig);
@@ -1040,6 +1101,7 @@ const nonShopResult = (t0: number): FrameResult => {
   readingSince = readingFirst = readingCardsSig = frozenReads = null;
   gate = offScreenGate(gate);
   stableInv = null;
+  lastFull = null;
   return {
     type: 'result',
     shop: false,

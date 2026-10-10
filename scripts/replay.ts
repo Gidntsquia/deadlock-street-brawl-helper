@@ -121,6 +121,7 @@ export async function replayDraft(dir: string, opts: ReplayOpts = {}): Promise<R
     handler({ data: lastMsg });
     // the name reads finish a moment after the frame; give them the time the page would
     await new Promise((r) => setTimeout(r, 40));
+    await (await import('../src/brawl/worker')).readsIdle();
     // the first frame's three name reads include the OCR engine's slow start: wait for them (up to 8 s) instead of a fixed
     // beat, so a loaded machine replays the same draft as an idle one
     for (
@@ -135,8 +136,12 @@ export async function replayDraft(dir: string, opts: ReplayOpts = {}): Promise<R
       const t = m.type === 'track' ? m : m.type === 'result' ? m.track : undefined;
       if (t) lastTrack = t.summary;
     }
-    const res = posted.find((m): m is Result => m.type === 'result');
+    const results = posted.filter((m): m is Result => m.type === 'result');
+    // a read that landed after the frame was answered re-runs it: the last result is what the screen showed, and the
+    // accept may have come with that re-run
+    const res = results.at(-1);
     if (!res) continue;
+    if (results.some((r) => r.accepted) && !res.accepted) res.accepted = true;
     opts.onResult?.(fi, res, f.t);
     if (res.accepted && acceptFrame < 0) acceptFrame = fi;
     if (res.accepted) enhanced = res.reads.map((x) => x.present && !x.unsure && x.enhanced);
