@@ -131,6 +131,20 @@ export function stepGate(s: GateState, f: GateFrame): GateOut {
   }
 
   const now: Labelled = { key: f.key, round: f.round, choice: f.choice };
+  // The accepted set had a `?` (a card the fallback could not read) and now every card reads: advise on the full set at
+  // once, it is the same screen with the missing card now known.
+  if (
+    live &&
+    last &&
+    last.key.includes('?') &&
+    !f.key.includes('?') &&
+    sameSet(last.key, f.key) &&
+    sameLabels(last, now)
+  ) {
+    last = { key: f.key, round: last.round || f.round, choice: f.choice, inv: last.inv };
+    cand = null;
+    return out(true);
+  }
   // Still the accepted screen: nothing to decide (a round read that was 0 is filled in).
   if (live && last && sameSet(last.key, f.key) && sameLabels(last, now)) {
     if (!last.round && f.round) last = { ...last, round: f.round };

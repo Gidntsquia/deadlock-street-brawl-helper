@@ -6,6 +6,18 @@
  "fps": 4,
  "sets": [
   {
+   "draft": "d026x",
+   "round": 4,
+   "choice": 1,
+   "items": [
+    "Hollow Point",
+    "Spirit Resilience",
+    "Rescue Beam"
+   ],
+   "from": 2809.5,
+   "to": 2810.5
+  },
+  {
    "draft": "d027",
    "round": 4,
    "choice": 2,

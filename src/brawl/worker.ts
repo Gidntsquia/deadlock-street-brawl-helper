@@ -207,6 +207,7 @@ const applyNames = (
   changed: boolean;
   inked: boolean;
   cardsUp: boolean;
+  empty: number; // card circles showing no card
   sigs: (Uint8Array | null)[];
 } => {
   const squares = cardSquares(img.width, img.height);
@@ -228,6 +229,7 @@ const applyNames = (
       changed: false,
       inked: false,
       cardsUp: false,
+      empty: 0,
       sigs: [null, null, null],
     };
   if (choice !== nameChoice) {
@@ -303,6 +305,8 @@ const applyNames = (
       // (a guess from the icon is confirmed after the set is advised: the OCR threads would take the frames' CPU while it settles)
       nameBusy[slot] = true;
       const fp0 = sigFp(slot, sig);
+      // What the icon says right now: a hover tooltip covers the name line with another item's text, never the icon.
+      const iconNow = lock && index ? quickGuess(img, index, [squares[slot]!])[0]! : 0;
       const gen = nameGen,
         icon = r.present ? r.itemId : 0,
         t = now,
@@ -326,6 +330,7 @@ const applyNames = (
           } else if (
             m &&
             ((prev && !prev.provisional && prev.id !== m.itemId && advising() && !rerolling(performance.now())) ||
+              (prev && iconNow === prev.id && prev.id !== m.itemId) ||
               twin >= 0)
           ) {
             // another item's name over the advised card without a re-roll: the hover tooltip's title. Keep the lock, and
@@ -351,9 +356,16 @@ const applyNames = (
     if (lock) {
       // A changed line under a lock is a hover/tooltip unless the cards were just seen re-rolling. Only then does an
       // icon that surely shows another item, or other lettering, make the slot unsettled until its name is read.
+      // (other lettering alone is not enough: the cursor's tooltip covers a line too. The icon must show another item.)
       if (
         rerolling(now) &&
-        ((sure && r.itemId !== lock.id) || (iconless && sig && hasInk(sig) && otherName(lock.sig, sig)))
+        ((sure && r.itemId !== lock.id) ||
+          (iconless &&
+            sig &&
+            hasInk(sig) &&
+            otherName(lock.sig, sig) &&
+            !!index &&
+            ((g) => g !== 0 && g !== lock.id)(quickGuess(img, index, [squares[slot]!])[0]!)))
       ) {
         waiting = true;
         changed = true;
@@ -361,7 +373,8 @@ const applyNames = (
       }
       // Before the accept, other lettering under a lock may be the real card replacing the previous choice's: hold the
       // accept until that picture has been read (a hover tooltip's title is caught by the twin check).
-      if (!advising() && sig && hasInk(sig) && otherName(lock.sig, sig) && !failedThis) pending = true;
+      if (!advising() && !lock.provisional && sig && hasInk(sig) && otherName(lock.sig, sig) && !failedThis)
+        pending = true;
       slotSure[slot] = true;
       return asLock(lock);
     }
@@ -379,7 +392,7 @@ const applyNames = (
     else slotSure[slot] = true;
     return r;
   });
-  return { reads: out, waiting, pending, slotSure, changed, inked, sigs, cardsUp: emptyCount <= 1 };
+  return { reads: out, waiting, pending, slotSure, changed, inked, sigs, cardsUp: emptyCount <= 1, empty: emptyCount };
 };
 /** The three cards at their fixed squares with no icon search: the item comes from the name lock alone (the name
  *  under a card is exact; the icon search was the slowest part of the first read). Only the RARE / ENHANCED marks are
@@ -536,7 +549,10 @@ let acceptedRound = 0,
 /** Without a sure read of all three cards this long after the draft screen (or a new set) appeared, the sure cards are
  *  advised and each other card shows a grey `?`. */
 export const FALLBACK_MS = 2500;
+/** Two cards read and the third circle is full but unreadable (the hover tooltip covers it): a shorter wait. */
+const FALLBACK_COVERED_MS = 1200;
 let readingSince: number | null = null; // when the cards on the not-yet-accepted screen last changed (or were first seen)
+let lastSpent = false; // the previous frame showed a set a pick was already made from: its cards leaving is not a new set to wait on
 let readingFirst: number | null = null; // when the not-yet-accepted screen was first seen
 let readingCardsSig: Uint8Array | null = null; // the card pictures at readingSince
 /** The fallback clock restarts while the three card pictures are still changing (the swap animation after a pick or
@@ -871,9 +887,12 @@ function draftFrame(msg: Extract<WorkerIn, { type: 'frame' }>, t0: number, idx: 
   if (gate.live) readingFirst = readingCardsSig = null;
   else {
     const cardsSig = frameSig(msg.regions.slice(0, 3));
+    const slidingIn = named.empty >= 2 || (named.empty > 0 && seen < 2) || lastSpent;
     if (readingSince === null) readingFirst = readingSince = nowMs;
     // two or three empty card slots mean the cards are still sliding in: no grey `?` on a card that is not there (at most FALLBACK_MAX_MS)
-    else if (!sameSig(readingCardsSig, cardsSig) || seen < 2) readingSince = nowMs;
+    else if ((!sameSig(readingCardsSig, cardsSig) && locks.filter(Boolean).length < 2) || slidingIn)
+      readingSince = nowMs;
+    if (slidingIn) readingFirst = nowMs;
     readingCardsSig = cardsSig;
   }
   // Fallback: no sure set within FALLBACK_MS. The sure cards are advised, the others become `?`. Never for a set the
@@ -883,7 +902,9 @@ function draftFrame(msg: Extract<WorkerIn, { type: 'frame' }>, t0: number, idx: 
     !gate.live &&
     seen > 0 && // all three cards still empty (sliding in, or the game is slow): nothing to put a `?` on, keep waiting
     readingSince !== null &&
-    (nowMs - readingSince >= FALLBACK_MS || nowMs - (readingFirst ?? nowMs) >= FALLBACK_MAX_MS) &&
+    (nowMs - readingSince >=
+      (named.empty === 0 && locks.filter((l) => l && !l.provisional).length >= 2 ? FALLBACK_COVERED_MS : FALLBACK_MS) ||
+      nowMs - (readingFirst ?? nowMs) >= FALLBACK_MAX_MS) &&
     !gate.spent.some((k) => fullKey && k.replace(/\+/g, '') === fullKey.replace(/\+/g, ''));
   const fbReads = reads.map((r, i) =>
     named.slotSure[i] && r.present ? r : { ...r, present: true, unsure: true, itemId: 0, tier: 0, enhanced: false },
@@ -941,6 +962,7 @@ function draftFrame(msg: Extract<WorkerIn, { type: 'frame' }>, t0: number, idx: 
     inventory: stableInv,
   });
   gate = g.state;
+  lastSpent = g.spent;
   trackFrame(labels, named, g, performance.now(), stableInv);
   if (g.live && gate.last) acceptedRound = gate.last.round;
   const accepted = g.accept;
