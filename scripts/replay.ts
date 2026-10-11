@@ -3,6 +3,7 @@
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import sharp from 'sharp';
+import { enemiesFrom } from '../src/brawl/recognise';
 import { analyseDraft, type DraftStats, type StatFrame } from '../src/brawl/sessionStats';
 import type { WorkerIn, WorkerOut } from '../src/brawl/worker';
 import type { DraftRecord } from '../electron/sessionStore';
@@ -24,6 +25,8 @@ export interface ReplayDraft {
   acceptFrame: number;
   /** What the worker read on the way: the player's hero id (0 unread), re-rolls remaining, owned items. */
   hero: number;
+  /** The other team's heroes on the bar of the frame that gave `hero`. */
+  enemies: number[];
   rerolls: number | null;
   inventory: number[] | null;
   /** Last frame on which all three cards had a read, -1 when none. */
@@ -83,6 +86,8 @@ export interface ReplayOpts {
   onResult?: (frame: number, res: Result, t: number) => void;
   /** Replay as if main said the name reader is not running (`readerState` down) for the whole draft. */
   readerDown?: boolean;
+  /** Called with every message the worker posted while a frame was read (name reads, unsure notes, results). */
+  onMessage?: (frame: number, m: WorkerOut, t: number) => void;
 }
 
 /** Replays one draft folder (`dNNN` with draft.json, frames.json and the crops). */
@@ -108,6 +113,7 @@ export async function replayDraft(dir: string, opts: ReplayOpts = {}): Promise<R
   let lastFull = -1;
   let enhanced: boolean[] = [false, false, false];
   let hero = 0;
+  let enemies: number[] = [];
   let rerolls: number | null = null;
   let inventory: number[] | null = null;
   const resyncs0 = lastTrack?.resyncs ?? 0;
@@ -143,6 +149,7 @@ export async function replayDraft(dir: string, opts: ReplayOpts = {}): Promise<R
       await new Promise((r) => setTimeout(r, 20));
     first = false;
     for (const m of posted) {
+      opts.onMessage?.(fi, m, f.t);
       if (m.type === 'nameUnsure') unsureLog.push(`${fi}:${m.slot}:${m.reason}`);
       if (m.type === 'rerolls') rerolls = m.rerollsRemaining;
       const t = m.type === 'track' ? m : m.type === 'result' ? m.track : undefined;
@@ -162,7 +169,10 @@ export async function replayDraft(dir: string, opts: ReplayOpts = {}): Promise<R
     if (res.accepted && acceptFrame < 0) acceptFrame = fi;
     if (res.accepted) enhanced = res.reads.map((x) => x.present && !x.unsure && x.enhanced);
     if (res.reads.length === 3 && res.reads.every((x) => x.present && !x.unsure)) lastFull = fi;
-    if (res.meta?.self) hero = res.meta.self;
+    if (res.meta?.self) {
+      hero = res.meta.self;
+      enemies = enemiesFrom(res.meta.bar, hero);
+    }
     // the accepted set carries the count it was accepted with; later changes arrive as separate 'rerolls' messages
     if (res.meta && res.meta.rerollsRemaining >= 0) rerolls = res.meta.rerollsRemaining;
     if (res.inventory) inventory = res.inventory;
@@ -220,6 +230,7 @@ export async function replayDraft(dir: string, opts: ReplayOpts = {}): Promise<R
     live,
     acceptFrame,
     hero,
+    enemies,
     rerolls,
     inventory,
     lastFull,

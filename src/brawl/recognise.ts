@@ -916,7 +916,7 @@ function readLeanBar(img: RGBImage, index: DecodedIndex, slot: { left: number; r
 // edges run the full height of the upper half, and the tile fill in the top corners differs from the bar background
 // beside it. While the "round starting" banner is up every slot sits in a tile, so a frame where several slots show
 // tiles is rejected and the next frame is used.
-const SELF_TILE = { edgeRun: 0.9, minScore: 40, maxTiles: 2, cornerSat: 40, cornerGap: 8 } as const;
+const SELF_TILE = { edgeRun: 0.9, minScore: 30, maxTiles: 2, cornerSat: 40, cornerGap: 8 } as const;
 
 function pxAt(img: RGBImage, x: number, y: number): [number, number, number] {
   x = Math.min(img.width - 1, Math.max(0, x));
@@ -965,14 +965,20 @@ function readSelfSlot(img: RGBImage): { left: number; right: number } {
   };
   const tile = (cx: number) => {
     let best = 0;
-    for (let xl = Math.round(cx - 1.3 * R); xl <= cx - 0.7 * R; xl++) {
+    // The tile sits a little right of the slot centre: its edges are at about -0.9 R and +1.25 R (measured on the
+    // 2560 fixtures and the 1280 OBS frames). A portrait whose art breaks the circle (Rat King's ears, a teammate's
+    // highlight) gives edges near +1.0 R on the right, so the window keeps them out.
+    for (let xl = Math.round(cx - 1.1 * R); xl <= cx - 0.78 * R; xl++) {
       if (run(xl) < rows * SELF_TILE.edgeRun) continue;
-      for (let xr = Math.round(xl + 1.9 * R); xr <= xl + 2.3 * R; xr++) {
+      const xr0 = Math.max(Math.round(xl + 1.9 * R), Math.round(cx + 1.12 * R));
+      for (let xr = xr0; xr <= Math.min(xl + 2.3 * R, cx + 1.45 * R); xr++) {
         if (run(xr) < rows * SELF_TILE.edgeRun) continue;
-        const inL = meanRect(img, xl + 4, cb, xl + 12, ce),
-          inR = meanRect(img, xr - 12, cb, xr - 4, ce);
-        const outL = meanRect(img, xl - 10, cb, xl - 4, ce),
-          outR = meanRect(img, xr + 4, cb, xr + 10, ce);
+        // patch offsets scale with the bar (4..12 px at 2560 wide): fixed px reached the "!" marker at 1280
+        const o = (v: number, min: number) => Math.max(min, Math.round((v * R) / 50));
+        const inL = meanRect(img, xl + o(4, 2), cb, xl + o(12, 4), ce),
+          inR = meanRect(img, xr - o(12, 4), cb, xr - o(4, 2), ce);
+        const outL = meanRect(img, xl - o(10, 5), cb, xl - o(4, 2), ce),
+          outR = meanRect(img, xr + o(4, 2), cb, xr + o(10, 5), ce);
         best = Math.max(best, Math.min(colourDiff(inL, outL), colourDiff(inR, outR)) - colourDiff(inL, inR) / 2);
       }
     }
