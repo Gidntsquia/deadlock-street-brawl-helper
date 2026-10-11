@@ -336,12 +336,12 @@ Speed (advice at x4): a name read or caption read that lands before the set is a
   (`reader.exit`, `reader.restart`); a second exit or a failed start logs `reader.failed` and the reader stays down. No tesseract.js
   anywhere (`grep -ri tesseract package.json src electron` must stay empty).
 - Path of a read: `ocr.ts` prepares the crop (pure JS: `prepareName` trims the line to its text run, pads 20 px and scales to
-  >= 90 px tall; `prepareHero` as is; `prepareCaption` 4x) and hands it to the installed `TextReader`. In the app the worker
-  posts `ocr` to the page, the page calls `brawlAPI.readText` (channel `readText`), main asks the helper. Main pushes the reader's
-  state over `readerState` (`readerStateGet` on load); while it is failed (or off Windows) every read rejects with
-  `ReaderDownError`, the status line says `Name reader not running`, unread cards go grey `?`, the hero falls back to the
-  window/pinned hero and the caption digit uses `rerollGlyphIsOne` only. `readCardName`/`readHeroName`/`readRerollsRemaining` keep
-  their signatures; matching stays in `names.ts`/`matchHeroName`.
+  > = 90 px tall; `prepareHero` as is; `prepareCaption` 4x) and hands it to the installed `TextReader`. In the app the worker
+  > posts `ocr` to the page, the page calls `brawlAPI.readText` (channel `readText`), main asks the helper. Main pushes the reader's
+  > state over `readerState` (`readerStateGet` on load); while it is failed (or off Windows) every read rejects with
+  > `ReaderDownError`, the status line says `Name reader not running`, unread cards go grey `?`, the hero falls back to the
+  > window/pinned hero and the caption digit uses `rerollGlyphIsOne` only. `readCardName`/`readHeroName`/`readRerollsRemaining` keep
+  > their signatures; matching stays in `names.ts`/`matchHeroName`.
 - Reader down in the worker: no icon guess and no name read, the reading clock restarts only for cards sliding in, and three
   full circles with no item get the `?` fallback at 2.5 s (`scripts/__tests__/reader-down.test.ts`, `replayDraft`'s
   `readerDown`). `win:e2e`'s `testmode` pass ends with `reader-down`: it kills the helper twice (`__brawlE2E.readerPid`)
@@ -363,4 +363,3 @@ Speed (advice at x4): a name read or caption read that lands before the set is a
   of uncovered labelled crops). `--engine tesseract` needs `npm i --no-save tesseract.js@7` for the run. Numbers and the unsure list
   are on the wiki page "Name reader". `scripts/__tests__/name-reads.test.ts` pins raw text and ids on the demo frames at three sizes,
   the loading frame and the caption fixtures (live too when `BRAWL_OCR=live`).
-
