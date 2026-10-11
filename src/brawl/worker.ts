@@ -1054,7 +1054,8 @@ function draftFrame(msg: Extract<WorkerIn, { type: 'frame' }>, t0: number, idx: 
     const slidingIn = named.empty >= 2 || (named.empty > 0 && seen < 2) || lastSpent;
     if (readingSince === null) readingFirst = readingSince = nowMs;
     // two or three empty card slots mean the cards are still sliding in: no grey `?` on a card that is not there (at most FALLBACK_MAX_MS)
-    else if ((!sameSig(readingCardsSig, cardsSig) && locks.filter(Boolean).length < 2) || slidingIn)
+    // (with the name reader down nothing ever locks: only cards sliding in restart the clock, so the `?` still comes)
+    else if ((!readerDown() && !sameSig(readingCardsSig, cardsSig) && locks.filter(Boolean).length < 2) || slidingIn)
       readingSince = nowMs;
     if (slidingIn) readingFirst = nowMs;
     readingCardsSig = cardsSig;
@@ -1064,7 +1065,9 @@ function draftFrame(msg: Extract<WorkerIn, { type: 'frame' }>, t0: number, idx: 
   const fullKey = seen === 3 ? reads.map((r) => `${r.itemId}${r.enhanced ? '+' : ''}`).join(',') : '';
   const fbTime =
     !gate.live &&
-    seen > 0 && // all three cards still empty (sliding in, or the game is slow): nothing to put a `?` on, keep waiting
+    // all three cards still empty (sliding in, or the game is slow): nothing to put a `?` on, keep waiting. Three full
+    // circles with no item at all (the name reader not running, so nothing locks) do get their `?`.
+    (seen > 0 || named.empty === 0) &&
     readingSince !== null &&
     (nowMs - readingSince >=
       (named.empty === 0 && locks.filter((l) => l && !l.provisional).length >= 2 ? FALLBACK_COVERED_MS : FALLBACK_MS) ||

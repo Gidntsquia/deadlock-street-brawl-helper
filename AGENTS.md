@@ -342,6 +342,10 @@ Speed (advice at x4): a name read or caption read that lands before the set is a
   `ReaderDownError`, the status line says `Name reader not running`, unread cards go grey `?`, the hero falls back to the
   window/pinned hero and the caption digit uses `rerollGlyphIsOne` only. `readCardName`/`readHeroName`/`readRerollsRemaining` keep
   their signatures; matching stays in `names.ts`/`matchHeroName`.
+- Reader down in the worker: no icon guess and no name read, the reading clock restarts only for cards sliding in, and three
+  full circles with no item get the `?` fallback at 2.5 s (`scripts/__tests__/reader-down.test.ts`, `replayDraft`'s
+  `readerDown`). `win:e2e`'s `testmode` pass ends with `reader-down`: it kills the helper twice (`__brawlE2E.readerPid`)
+  and expects state `failed`, the status line, three `unknown` plates on `choice2`, and no uncaught error.
 - Node tools and tests: `scripts/lib/textReader.ts` (installed for vitest by `scripts/__tests__/setup-reader.ts`). `BRAWL_OCR`
   unset = recorded answers only from `scripts/fixtures/ocr-recorded/reads.json` (keyed by sha1 of kind, size and prepared
   pixels; a missing crop fails like a down reader); `record` = recordings first, the live helper through `powershell.exe` for

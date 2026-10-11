@@ -757,6 +757,39 @@ async function main() {
       );
     }
 
+    // --- the name reader killed twice: restarted once, then down; the status says so, a new draft shows grey `?`, no crash ---
+    {
+      const exits0 = uncaughtCount;
+      const pid1 = e2e.readerPid();
+      if (pid1) process.kill(pid1);
+      const pid2 = await waitFor(
+        () => e2e.readerState() === 'ready' && e2e.readerPid() !== pid1 && e2e.readerPid(),
+        8_000,
+        50,
+      );
+      if (pid2) process.kill(pid2);
+      const failed = await waitFor(() => e2e.readerState() === 'failed', 4_000, 50);
+      const said = await waitFor(
+        () => js(control, `document.body.innerText.includes('Name reader not running')`),
+        3_000,
+        50,
+      );
+      await setFrame('choice2');
+      const grey = await waitFor(
+        async () => {
+          const d = (await js(overlay, 'window.__overlayDrawn ?? []')) || [];
+          return d.filter((r) => r.kind === 'unknown').length === 3 && d;
+        },
+        6_000 * SLOW,
+        100,
+      );
+      check(
+        'reader-down',
+        !!pid1 && !!pid2 && !!failed && !!said && !!grey && uncaughtCount === exits0 && !control.isDestroyed(),
+        `pids=${pid1},${pid2} state=${e2e.readerState()} status=${!!said} unknownPlates=${grey ? 3 : 0} uncaught=${uncaughtCount - exits0}`,
+      );
+    }
+
     // --- off ---
     await js(control, CLICK_TEST_MODE_JS);
     const closed = await waitFor(() => !e2e.getTestWindow(), 6_000);

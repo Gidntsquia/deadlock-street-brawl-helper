@@ -81,6 +81,8 @@ export interface ReplayOpts {
   hold?: number;
   /** Called with every worker result and the frame's recorded time (ms), for tools that follow a replay frame by frame. */
   onResult?: (frame: number, res: Result, t: number) => void;
+  /** Replay as if main said the name reader is not running (`readerState` down) for the whole draft. */
+  readerDown?: boolean;
 }
 
 /** Replays one draft folder (`dNNN` with draft.json, frames.json and the crops). */
@@ -94,6 +96,7 @@ export async function replayDraft(dir: string, opts: ReplayOpts = {}): Promise<R
       ...Array.from({ length: 4 }, (_, i) => ({ ...frames[opts.hold!]!, t: frames[opts.hold!]!.t + (i + 1) * 400 })),
     ];
   handler({ data: { type: 'reset' } });
+  handler({ data: { type: 'readerState', down: !!opts.readerDown } });
   // The recorder keeps sparse frames, so a long silence between two of them (capture idle, nothing sent) is shortened:
   // the worker's timers (settle, fallback) must not see minutes pass between two neighbouring pictures.
   const GAP_MS = 1000;
