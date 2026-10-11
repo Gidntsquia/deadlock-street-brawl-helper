@@ -15,6 +15,7 @@ for (const d of readdirSync(root)
   console.log(
     `== ${d}: ${r.violations.length} violations; latency ${r.latency.map((l) => `${l.set} ${l.secs ?? '-'}`).join(', ')}`,
   );
+  if (r.covered.length) console.log(`   covered (frame:slot): ${r.covered.join(' ')}`);
   for (const v of r.violations) console.log('  ' + v);
 }
 console.log(`total violations ${total}`);

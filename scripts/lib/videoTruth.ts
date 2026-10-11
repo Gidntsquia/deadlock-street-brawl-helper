@@ -38,6 +38,8 @@ export interface TruthReport {
   violations: string[];
   /** Per set: seconds from readable to the first correct advice, or null. */
   latency: { set: string; secs: number | null }[];
+  /** Frames whose name lines the covered rule skipped, as `#frame:slot` (the slot's `card.name.unsure` reason covered). */
+  covered: string[];
 }
 
 export async function scoreStretch(dir: string): Promise<TruthReport> {
@@ -47,16 +49,19 @@ export async function scoreStretch(dir: string): Promise<TruthReport> {
   const vt = (f: number) => truth.video[0] + f / truth.fps;
   const label = (s: TruthSet) => `${s.draft} ${s.round}.${s.choice}`;
   const frames: { t: number; on: boolean; round: number; choice: number; names: string[] }[] = [];
+  const covered: string[] = [];
   await replayDraft(dir, {
     waitNames: true,
-    onResult: (f, res) =>
+    onResult: (f, res) => {
+      for (const slot of res.covered ?? []) covered.push(`#${f}:${slot}`);
       frames.push({
         t: vt(f),
         on: res.live && !res.spent,
         round: res.round,
         choice: res.choice,
         names: res.reads.map((r) => (r.present && !r.unsure ? name(r.itemId) : '?')),
-      }),
+      });
+    },
   });
   const violations: string[] = [];
   const at = (t: number) => `${t.toFixed(2)}s`;
@@ -97,5 +102,5 @@ export async function scoreStretch(dir: string): Promise<TruthReport> {
         }
     }
   }
-  return { violations, latency };
+  return { violations, latency, covered };
 }
