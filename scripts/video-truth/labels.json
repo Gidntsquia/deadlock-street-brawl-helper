@@ -13,16 +13,18 @@
           "items": ["Mercurial Magnum", "Toxic Bullets", "Spirit Rend"],
           "from": 2.75,
           "to": 5.5,
-          "readable": [4.5, 5.0]
+          "readable": [4.5, 5],
+          "appear": 3.5
         },
         {
           "draft": "d002",
           "round": 3,
           "choice": 3,
           "items": ["Lightning Scroll", "Magic Carpet", "Spellslinger"],
-          "from": 7.0,
-          "to": 9.0,
-          "readable": [7.75, 8.5]
+          "from": 7,
+          "to": 9,
+          "readable": [7.75, 8.5],
+          "appear": 7
         },
         {
           "draft": "d002",
@@ -30,8 +32,9 @@
           "choice": 3,
           "items": ["Infuser", "Cheat Death", "Mystic Reverb"],
           "from": 9.5,
-          "to": 14.0,
-          "readable": [10.75, 13.25]
+          "to": 14,
+          "readable": [10.75, 13.25],
+          "appear": 10
         }
       ]
     },
@@ -46,7 +49,8 @@
           "items": ["Superior Cooldown", "Warp Stone", "Surge of Power"],
           "from": 192.5,
           "to": 196,
-          "readable": [193.5, 195.75]
+          "readable": [193.5, 195.75],
+          "appear": 192.5
         },
         {
           "draft": "d004",
@@ -55,7 +59,8 @@
           "items": ["Counterspell", "Tesla Bullets", "Express Shot"],
           "from": 197.25,
           "to": 203.5,
-          "readable": [198.5, 203.25]
+          "readable": [198.5, 203.25],
+          "appear": 197.75
         },
         {
           "draft": "d005",
@@ -63,8 +68,9 @@
           "choice": 3,
           "items": ["Siphon Bullets", "Juggernaut", "Focus Lens"],
           "from": 204.25,
-          "to": 211.0,
-          "readable": [205.5, 210.25]
+          "to": 211,
+          "readable": [205.5, 210.25],
+          "appear": 205
         },
         {
           "draft": "d005",
@@ -74,7 +80,8 @@
           "from": 211.25,
           "to": 213.5,
           "readable": [212.5, 212.75],
-          "covered": [1]
+          "covered": [1],
+          "appear": 212
         }
       ]
     },
@@ -89,7 +96,8 @@
           "items": ["Ricochet", "Healing Tempo", "Transcendent Cooldown"],
           "from": 392,
           "to": 400,
-          "readable": [393, 400]
+          "readable": [393, 400],
+          "appear": 392.25
         },
         {
           "draft": "d007",
@@ -97,8 +105,9 @@
           "choice": 2,
           "items": ["Lightning Scroll", "Ricochet", "Runed Gauntlets"],
           "from": 402,
-          "to": 427.0,
-          "readable": [403.25, 426.25]
+          "to": 427,
+          "readable": [403.25, 426.25],
+          "appear": 401.75
         },
         {
           "draft": "d007",
@@ -107,7 +116,8 @@
           "items": ["Boundless Spirit", "Crippling Headshot", "Eternal Gift"],
           "from": 427.5,
           "to": 430.5,
-          "readable": [428.75, 430.5]
+          "readable": [428.75, 430.5],
+          "appear": 428
         },
         {
           "draft": "d008",
@@ -116,7 +126,8 @@
           "items": ["Colossus", "Indomitable", "Mystic Reverb"],
           "from": 432,
           "to": 438.5,
-          "readable": [433.25, 437.75]
+          "readable": [433.25, 437.75],
+          "appear": 432.25
         }
       ]
     },
@@ -131,7 +142,8 @@
           "items": ["Extra Spirit", "Mystic Burst", "Mystic Regeneration"],
           "from": 1145.25,
           "to": 1148.5,
-          "readable": [1146.5, 1148.25]
+          "readable": [1146.5, 1148.25],
+          "appear": 1145.5
         },
         {
           "draft": "d010",
@@ -140,7 +152,8 @@
           "items": ["Arcane Surge", "Slowing Bullets", "Express Shot"],
           "from": 1150,
           "to": 1154.75,
-          "readable": [1151.25, 1154]
+          "readable": [1151.25, 1154],
+          "appear": 1150
         },
         {
           "draft": "d010",
@@ -149,7 +162,8 @@
           "items": ["Active Reload", "Bullet Lifesteal", "Decay"],
           "from": 1155.75,
           "to": 1158.5,
-          "readable": [1157, 1157.75]
+          "readable": [1157, 1157.75],
+          "appear": 1155.75
         },
         {
           "draft": "d011",
@@ -158,7 +172,8 @@
           "items": ["Spirit Snatch", "Spirit Rend", "Heroic Aura"],
           "from": 1159.75,
           "to": 1163.5,
-          "readable": [1161, 1162.75]
+          "readable": [1161, 1162.75],
+          "appear": 1159.75
         }
       ]
     },
@@ -174,7 +189,8 @@
           "from": 1337.5,
           "to": 1346.5,
           "readable": [1338.5, 1346.25],
-          "covered": [2]
+          "covered": [2],
+          "appear": 1337.75
         },
         {
           "draft": "d013",
@@ -183,7 +199,8 @@
           "items": ["Lifestrike", "Spirit Resilience", "Metal Skin"],
           "from": 1347.75,
           "to": 1350,
-          "readable": [1349, 1349.5]
+          "readable": [1349, 1349.5],
+          "appear": 1348
         },
         {
           "draft": "d014",
@@ -192,7 +209,8 @@
           "items": ["Toxic Bullets", "Counterspell", "Healing Nova"],
           "from": 1351.25,
           "to": 1358.25,
-          "readable": [1352.5, 1357.5]
+          "readable": [1352.5, 1357.5],
+          "appear": 1351.5
         }
       ]
     },
@@ -207,7 +225,8 @@
           "items": ["Quicksilver Reload", "Enchanter's Emblem", "Return Fire"],
           "from": 1550.5,
           "to": 1554,
-          "readable": [1551.25, 1553.75]
+          "readable": [1551.25, 1553.75],
+          "appear": 1550.5
         },
         {
           "draft": "d016",
@@ -216,7 +235,8 @@
           "items": ["Escalating Resilience", "Dispel Magic", "Tesla Bullets"],
           "from": 1556.5,
           "to": 1562,
-          "readable": [1558.75, 1561.25]
+          "readable": [1558.75, 1561.25],
+          "appear": 1556.5
         },
         {
           "draft": "d017",
@@ -225,7 +245,8 @@
           "items": ["Indomitable", "Scourge", "Juggernaut"],
           "from": 1563,
           "to": 1569.5,
-          "readable": [1564.25, 1568.75]
+          "readable": [1564.25, 1568.75],
+          "appear": 1563.5
         }
       ]
     },
@@ -240,7 +261,8 @@
           "items": ["Rebuttal", "Healing Rite", "Extra Charge"],
           "from": 2243.5,
           "to": 2245.5,
-          "readable": [2244.75, 2245]
+          "readable": [2244.75, 2245],
+          "appear": 2243.5
         },
         {
           "draft": "d019",
@@ -249,7 +271,8 @@
           "items": ["Escalating Resilience", "Weapon Shielding", "Healbane"],
           "from": 2246.75,
           "to": 2250,
-          "readable": [2248, 2249.5]
+          "readable": [2248, 2249.5],
+          "appear": 2247.25
         },
         {
           "draft": "d020",
@@ -258,7 +281,8 @@
           "items": ["Inhibitor", "Hollow Point", "Healing Nova"],
           "from": 2251,
           "to": 2266.5,
-          "readable": [2252.25, 2265.75]
+          "readable": [2252.25, 2265.75],
+          "appear": 2251.75
         }
       ]
     },
@@ -273,7 +297,8 @@
           "items": ["Healing Booster", "Trophy Collector", "Bullet Resist Shredder"],
           "from": 2491.5,
           "to": 2495.5,
-          "readable": [2491, 2494.75]
+          "readable": [2491, 2494.75],
+          "appear": 2491.5
         },
         {
           "draft": "d022",
@@ -282,7 +307,8 @@
           "items": ["Shadow Weave", "Torment Pulse", "Toxic Bullets"],
           "from": 2497.25,
           "to": 2501,
-          "readable": [2498.5, 2500.5]
+          "readable": [2498.5, 2500.5],
+          "appear": 2497.75
         },
         {
           "draft": "d023",
@@ -290,8 +316,9 @@
           "choice": 3,
           "items": ["Burst Fire", "Alchemical Fire", "Rapid Recharge"],
           "from": 2502,
-          "to": 2510.0,
-          "readable": [2503.25, 2509.25]
+          "to": 2510,
+          "readable": [2503.25, 2509.25],
+          "appear": 2502.25
         }
       ]
     },
@@ -307,7 +334,8 @@
           "from": 2639.25,
           "to": 2643,
           "readable": [2640.5, 2643],
-          "covered": [2]
+          "covered": [2],
+          "appear": 2639.25
         },
         {
           "draft": "d025",
@@ -316,7 +344,8 @@
           "items": ["Heroic Aura", "Spirit Resilience", "Superior Duration"],
           "from": 2644.25,
           "to": 2650.5,
-          "readable": [2645.5, 2649.75]
+          "readable": [2645.5, 2649.75],
+          "appear": 2644.75
         },
         {
           "draft": "d026",
@@ -325,7 +354,8 @@
           "items": ["Colossus", "Armor Piercer", "Lightning Scroll"],
           "from": 2652.5,
           "to": 2657.5,
-          "readable": [2653.75, 2656.75]
+          "readable": [2653.75, 2656.75],
+          "appear": 2653
         },
         {
           "draft": "d026",
@@ -334,7 +364,8 @@
           "items": ["Spiritual Overflow", "Witchmail", "Crippling Headshot"],
           "from": 2658.25,
           "to": 2662.25,
-          "readable": [2659.5, 2661.5]
+          "readable": [2659.5, 2661.5],
+          "appear": 2658.75
         }
       ]
     },
@@ -348,7 +379,8 @@
           "choice": 1,
           "items": ["Hollow Point", "Spirit Resilience", "Rescue Beam"],
           "from": 2809.5,
-          "to": 2810.5
+          "to": 2810.5,
+          "appear": 2809.5
         },
         {
           "draft": "d027",
@@ -357,7 +389,8 @@
           "items": ["Heroic Aura", "Spirit Rend", "Superior Cooldown"],
           "from": 2811.75,
           "to": 2815,
-          "readable": [2813, 2814.75]
+          "readable": [2813, 2814.75],
+          "appear": 2811.5
         },
         {
           "draft": "d028",
@@ -366,7 +399,8 @@
           "items": ["Escalating Exposure", "Juggernaut", "Frenzy"],
           "from": 2816.25,
           "to": 2819.5,
-          "readable": [2817.5, 2818.75]
+          "readable": [2817.5, 2818.75],
+          "appear": 2816.75
         }
       ]
     }

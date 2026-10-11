@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { replayDraft } from '../replay';
 import type { Item } from '../../src/types';
+import { ocrChargedMs } from './textReader';
 
 export interface TruthSet {
   draft: string;
@@ -16,6 +17,8 @@ export interface TruthSet {
   to: number;
   /** Video seconds in which all three cards are plainly readable (null when never). */
   readable: [number, number] | null;
+  /** Video seconds of the first frame any card circle is filled (scripts/footage-latency.ts); the start mark of the latency measures. */
+  appear?: number;
   /** Slots a tooltip or the cursor hides for good: a grey `?` is right there, a wrong item is not. */
   covered?: number[];
 }
@@ -40,6 +43,9 @@ export interface TruthReport {
   latency: { set: string; secs: number | null }[];
   /** Frames whose name lines the covered rule skipped, as `#frame:slot` (the slot's `card.name.unsure` reason covered). */
   covered: string[];
+  /** Per set with an `appear`: video seconds from `appear` to the first frame its correct advice is live (`secs`), the
+   *  name reads' own time charged on top (`ocrMs`, one helper, one read at a time), and their sum `newMs`. */
+  fromAppear: { set: string; draft: string; secs: number | null; ocrMs: number; newMs: number | null }[];
 }
 
 export async function scoreStretch(dir: string): Promise<TruthReport> {
@@ -50,10 +56,12 @@ export async function scoreStretch(dir: string): Promise<TruthReport> {
   const label = (s: TruthSet) => `${s.draft} ${s.round}.${s.choice}`;
   const frames: { t: number; on: boolean; round: number; choice: number; names: string[] }[] = [];
   const covered: string[] = [];
+  const charge: number[] = [];
   await replayDraft(dir, {
     waitNames: true,
     onResult: (f, res) => {
       for (const slot of res.covered ?? []) covered.push(`#${f}:${slot}`);
+      charge[f] = ocrChargedMs();
       frames.push({
         t: vt(f),
         on: res.live && !res.spent,
@@ -102,5 +110,21 @@ export async function scoreStretch(dir: string): Promise<TruthReport> {
         }
     }
   }
-  return { violations, latency, covered };
+  const fromAppear: TruthReport['fromAppear'] = [];
+  for (const s of truth.sets) {
+    if (s.appear == null) continue;
+    const first = frames.find((f) => f.on && f.t >= s.from - TOL && f.t <= s.to + TOL_AFTER && matches(f, s));
+    const af = Math.max(Math.round((s.appear - truth.video[0]) * truth.fps), 0);
+    const fi = first ? Math.round((first.t - truth.video[0]) * truth.fps) : -1;
+    const ocrMs = fi >= 0 ? Math.max(0, (charge[fi] ?? 0) - (charge[af - 1] ?? charge[af] ?? 0)) : 0;
+    const secs = first ? +(first.t - s.appear).toFixed(2) : null;
+    fromAppear.push({
+      set: label(s),
+      draft: s.draft,
+      secs,
+      ocrMs: Math.round(ocrMs),
+      newMs: secs == null ? null : Math.round(secs * 1000 + ocrMs),
+    });
+  }
+  return { violations, latency, covered, fromAppear };
 }

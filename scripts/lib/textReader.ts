@@ -122,7 +122,18 @@ export const readerMode = (): ReaderMode => {
   return m === 'record' || m === 'live' ? m : 'recorded';
 };
 
+/** Running total of the `ms` every read answered with (recorded or live): the helper reads one crop at a time, so the
+ *  guard in footage-latency.test.ts charges the difference between two points of a replay to the clock. */
+let charged = 0;
+export const ocrChargedMs = () => charged;
+
 export async function nodeRead(img: TextImage, kind: TextKind, mode = readerMode()): Promise<TextRead> {
+  const r = await nodeReadRaw(img, kind, mode);
+  charged += r.ms;
+  return r;
+}
+
+async function nodeReadRaw(img: TextImage, kind: TextKind, mode: ReaderMode): Promise<TextRead> {
   const key = cropKey(img, kind);
   if (mode !== 'live') {
     const hit = loadStore()[key];
