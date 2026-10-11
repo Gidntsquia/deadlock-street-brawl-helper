@@ -158,9 +158,9 @@ let overlayEnabled = true;
 // RE-ROLL never occurs in the frames harness case). Unused outside BRAWL_E2E.
 let lastOverlayState: import('../src/brawl/draw').OverlayState | null = null;
 // Test mode: an app-owned dummy game window, titled exactly "Deadlock" so the normal find/capture/recognise/
-// advise/overlay path treats it as the game, showing one of the shipped draft screenshots. It only ever starts
-// when no real "Deadlock" window is open, and the display-media handler serves only this window's own source id
-// while it is on, so test mode can never capture anything else.
+// advise/overlay path treats it as the game, showing one of the shipped draft screenshots. A real "Deadlock" window
+// may be open too: while test mode is on the game is found by the dummy's own handle (findTarget), and the
+// display-media handler serves only this window's own source id, so the real game is never read or captured.
 let testWindow: BrowserWindow | null = null;
 let testFrame = 'choice1';
 let testMessage: string | null = null;
@@ -401,6 +401,23 @@ function ownWindowHandles(includeTest = false): Set<bigint> {
   return handles;
 }
 
+/** The window the app treats as the game. In test mode that is the dummy, matched by its own handle, so a real
+ *  Deadlock that is also open is left alone (never found, captured, probed or covered by the overlay). Under
+ *  BRAWL_E2E with no dummy there is no game at all: a harness run never reads a window it did not create. */
+function findTarget(): Rect | null {
+  if (alive(testWindow)) {
+    let only: bigint;
+    try {
+      only = testWindow.getNativeWindowHandle().readBigUInt64LE();
+    } catch {
+      return null;
+    }
+    return findGameWindow(GAME_WINDOW_TITLE, ownWindowHandles(), only);
+  }
+  if (process.env.BRAWL_E2E) return null;
+  return findGameWindow(GAME_WINDOW_TITLE, ownWindowHandles());
+}
+
 function currentDot(): DotState | null {
   const fg = !probeMode() || isGameForeground();
   if (!lobbyDotVisible(lobby, fg)) return null;
@@ -482,7 +499,7 @@ function syncDetectKey(gameExists: boolean) {
 function detectNow(source: string): boolean {
   if (!lastRect) {
     // the poll may not have found the window yet: look right now instead of refusing
-    const found = findGameWindow(GAME_WINDOW_TITLE, ownWindowHandles());
+    const found = findTarget();
     if (found) {
       lastRect = found;
       sendControl(CHANNELS.gameRect, found);
@@ -537,11 +554,7 @@ function startRectPolling() {
         : POLL_TICKS_GAME;
     if (tickNo % every !== 0) return;
     const t0 = performance.now();
-    if (alive(testWindow) && findGameWindow(GAME_WINDOW_TITLE, ownWindowHandles(true))) {
-      // A real Deadlock window appeared while test mode was on: hand over to the real game.
-      stopTestMode('A real Deadlock window opened, so test mode was turned off.');
-    }
-    const found = findGameWindow(GAME_WINDOW_TITLE, ownWindowHandles());
+    const found = findTarget();
     let reassert = false;
     if (!rectsEqual(found, lastRect)) {
       lastRect = found;
@@ -691,16 +704,11 @@ function arrangeSideBySide(dummy: BrowserWindow) {
 }
 
 /** Turns test mode on: opens a visible dummy game window (titled exactly "Deadlock", borderless, 16:9, showing
- *  a real draft screenshot) that the normal capture path then finds and reads like the real game. Refuses --
- *  without touching anything -- when a real "Deadlock" window is already open. */
+ *  a real draft screenshot) that the normal capture path then finds and reads like the real game. Works with a
+ *  real "Deadlock" window open: while test mode is on only the dummy is the game (see findTarget). */
 async function startTestMode(frame?: string) {
   if (alive(testWindow)) return testState();
-  if (findGameWindow(GAME_WINDOW_TITLE, ownWindowHandles(true))) {
-    testMessage = 'Test mode did not start: a real Deadlock window is open. Close Deadlock first.';
-    log('electron-main', 'info', 'testmode.refused-game-open');
-    broadcastTestState();
-    return testState();
-  }
+  // A real Deadlock may be open: findTarget() then follows the dummy by its handle and leaves the game alone.
   testMessage = null;
   const frames = testFrames();
   if (frame && frames.includes(frame)) testFrame = frame;
@@ -852,7 +860,8 @@ function setupDisplayMediaHandler() {
         callback({ video: { id, name: GAME_WINDOW_TITLE } as Electron.DesktopCapturerSource });
         return;
       }
-      const sources = await desktopCapturer.getSources({ types: ['window'] });
+      // A harness run (BRAWL_E2E) never captures a window it did not create, so with no dummy it denies.
+      const sources = process.env.BRAWL_E2E ? [] : await desktopCapturer.getSources({ types: ['window'] });
       const ownIds = new Set(
         [alive(control) ? control.getMediaSourceId() : null, alive(overlay) ? overlay.getMediaSourceId() : null].filter(
           Boolean,

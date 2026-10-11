@@ -1,7 +1,7 @@
 // Windows-only Electron test harness. Run by real electron.exe (never Linux Electron): sets BRAWL_E2E=1,
 // requires the REAL electron-dist/main.js (not a stub), drives it via executeJavaScript, and writes one
 // JSON report. Filter cases with --only <name1,name2,...>. Everything runs against the app's own Test mode
-// dummy window. Hard timeout 40 s; a full run takes ~25 s. The ability panel lasts TIP_MS here (BRAWL_TIP_MS, 1.2 s) instead of the real 15 s.
+// dummy window; a real Deadlock may stay open and is never found, captured or moved. Hard timeout 40 s; a full run takes ~25 s. The ability panel lasts TIP_MS here (BRAWL_TIP_MS, 1.2 s) instead of the real 15 s.
 'use strict';
 process.env.BRAWL_E2E = '1';
 const TIP_MS = 1200;
@@ -126,8 +126,10 @@ process.on('uncaughtException', (err) => {
   dbg('main-process uncaughtException: ' + (err && err.stack ? err.stack : String(err)));
 });
 
-// Fails hard if any window titled exactly "Deadlock" is already open (a real game). Nothing is stopped.
-function checkNoRealGameOpen() {
+// Pids of windows titled exactly "Deadlock" that this harness did not start (a real game). They are left alone: under
+// BRAWL_E2E the app only ever finds and captures its own test-mode dummy (findTarget in electron/main.ts), so a game
+// may stay open during a run. Reported once, for the record.
+function foreignDeadlockPids() {
   const ps = spawnSync(
     'powershell.exe',
     [
@@ -135,23 +137,16 @@ function checkNoRealGameOpen() {
       '-Command',
       "Get-Process | Where-Object { $_.MainWindowTitle -eq 'Deadlock' } | Select-Object -ExpandProperty Id",
     ],
-    { encoding: 'utf8' },
+    { encoding: 'utf8', windowsHide: true },
   );
-  const titledDeadlock = (ps.stdout || '')
+  return (ps.stdout || '')
     .split(/\r?\n/)
     .map((s) => s.trim())
     .filter(Boolean)
     .map(Number);
-  if (titledDeadlock.length > 0) {
-    check(
-      'real-game-open',
-      false,
-      `pid(s) ${titledDeadlock.join(',')} have a window titled 'Deadlock' that this harness did not start`,
-    );
-    return false;
-  }
-  return true;
 }
+
+let foreignAtStart = [];
 
 async function main() {
   const timeout = setTimeout(() => {
@@ -159,14 +154,9 @@ async function main() {
     finish(1);
   }, HARD_TIMEOUT_MS);
 
-  if (!checkNoRealGameOpen()) {
-    clearTimeout(timeout);
-    const report = { platform: process.platform, electron: process.versions.electron, ...throttle, checks };
-    fs.mkdirSync(path.dirname(REPORT_PATH), { recursive: true });
-    fs.writeFileSync(REPORT_PATH, JSON.stringify(report, null, 2));
-    console.log(JSON.stringify(report));
-    return app.exit(1);
-  }
+  const foreign = foreignDeadlockPids();
+  if (foreign.length > 0) console.log(`[INFO] real Deadlock open (pid ${foreign.join(',')}), left alone`);
+  foreignAtStart = foreign;
 
   await app.whenReady();
   check('platform', process.platform === 'win32', `process.platform=${process.platform}`);
@@ -871,6 +861,17 @@ async function checkPixels(overlay, drawn, bestPos) {
 }
 
 function finish(code) {
+  if (foreignAtStart.length > 0) {
+    // The real game was open: it must still be open, with its title, after the run.
+    const now = foreignDeadlockPids();
+    const kept = foreignAtStart.every((p) => now.includes(p));
+    check(
+      'real-game-left-alone',
+      kept,
+      `pid(s) ${foreignAtStart.join(',')} at start, ${now.join(',') || 'none'} at end`,
+    );
+    if (!kept) code = 1;
+  }
   const report = { platform: process.platform, electron: process.versions.electron, ...throttle, checks };
   fs.mkdirSync(path.dirname(REPORT_PATH), { recursive: true });
   fs.writeFileSync(REPORT_PATH, JSON.stringify(report, null, 2));

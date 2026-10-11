@@ -37,12 +37,12 @@ Repo constitution for planner / worker / evaluator agents. Overrides generic sta
   `logs/win-e2e.json`. Cases are `boot`, `capture-denied`, `testmode`, `overlay-closed`. The
   ability panel runs 1.2 s in the harness (`BRAWL_TIP_MS`), not the real 15 s. Target: a full run under 30 s; the
   harness's own hard timeout is 40 s. It needs a >= 1080p desktop (see Overlay behaviour). Don't touch a window it didn't
-  create. `--only selftest-fail` is a deliberately failing case that proves the harness can fail — it never
+  create. A real Deadlock may stay open: under `BRAWL_E2E` the app finds and captures only its own dummy (no dummy = no
+  game, capture denied), and the run ends with `real-game-left-alone` when one was open. `--only selftest-fail` is a deliberately failing case that proves the harness can fail — it never
   runs as part of the default full run.
-- `npm run win:demo -- choice1|choice2` — no real Deadlock window needed: starts the app's own **test mode**
+- `npm run win:demo -- choice1|choice2` — no real Deadlock window needed (one may be open; it is left alone): starts the app's own **test mode**
   (below) with that screenshot, runs it through the real find/capture/recognise/advise/draw path, and saves
-  the overlay's own composited output to `logs/win-demo.png`. Refuses to run if a real "Deadlock" window is
-  already open (same guard as `win:e2e`). Verify with `npx tsx scripts/win/check-demo-png.ts logs/win-demo.png`
+  the overlay's own composited output to `logs/win-demo.png`. A real "Deadlock" window may be open; it is not touched. Verify with `npx tsx scripts/win/check-demo-png.ts logs/win-demo.png`
   (`frame-visible: true`, `plates-placed: true`, `teal-on-best: true`, `teal-on-non-best: false`; every offered card has a plate with its tier
   letter and `Score: <n>` above it; the item to take has a teal-filled plate and a 3 px teal circle outline, the others a charcoal plate with a thin teal border).
   It also writes `logs/win-demo.json` (what the overlay drew). Any `public/demo` frame name works, e.g. `win:demo -- draft-r2c3-reroll` -> `logs/win-demo-<name>.png` or by opening the PNG. Nothing is
@@ -125,9 +125,10 @@ nothing is moved.
 The control window's **Test mode (dummy Deadlock window)** button (`BrawlView.tsx`, state owned by
 `startTestMode`/`stopTestMode` in `electron/main.ts`) opens a frameless dummy window titled exactly `Deadlock`,
 sized 1920x1080 _physical_ px (the recogniser needs ~1080p to read the round/choice glyphs), showing one of
-`public/demo/*.png`. The normal path runs against it; the **Screenshot** select switches the image live. It
-refuses (message in the control window) when a real Deadlock window exists, auto-stops if one appears, and
-closes only the window it opened. While on, the display-media handler serves only the dummy's own
+`public/demo/*.png`. The normal path runs against it; the **Screenshot** select switches the image live. A real Deadlock may stay
+open: while test mode is on the game is the dummy, found by its own handle (`findTarget` in `main.ts`, the `only`
+argument of `findGameWindow`), so the real game is never found, probed, captured or moved; turning test mode off
+hands back to the real game. It closes only the window it opened. While on, the display-media handler serves only the dummy's own
 `getMediaSourceId()` (desktopCapturer never lists the app's own windows, so it can't be found through the
 source list) — nothing else can be captured. The old keyboard-shortcut demo and its tray entry no longer exist.
 

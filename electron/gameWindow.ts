@@ -29,13 +29,16 @@ const WndEnumProc = koffi.proto('bool __stdcall WndEnumProc(void *hwnd, intptr_t
 let enumState: {
   title: string;
   exclude: Set<bigint> | undefined;
+  only: bigint | undefined;
   user32: ReturnType<typeof loadUser32>;
   buf: Buffer;
   handle: unknown;
 } | null = null;
 const enumCallback = koffi.register((hwnd: unknown) => {
   const s = enumState!;
-  if (s.exclude?.has(BigInt(koffi.address(hwnd)))) return true;
+  const addr = BigInt(koffi.address(hwnd));
+  if (s.exclude?.has(addr)) return true;
+  if (s.only !== undefined && addr !== s.only) return true;
   if (!s.user32.IsWindowVisible(hwnd)) return true;
   const len = s.user32.GetWindowTextW(hwnd, s.buf, 256);
   if (len > 0 && isGameWindowTitle(s.buf.toString('utf16le', 0, len * 2), s.title)) {
@@ -91,8 +94,10 @@ export function isGameWindowTitle(title: string, needle: string): boolean {
 }
 
 /** Finds a top-level window whose title exactly matches `title` (case-insensitive, trimmed), minimised or not.
- *  `exclude` skips handles known to belong to this app's own windows even if they somehow matched. */
-export function findGameWindow(title: string, exclude?: Set<bigint>): Rect | null {
+ *  `exclude` skips handles known to belong to this app's own windows even if they somehow matched. `only`, when given,
+ *  accepts that one handle and nothing else: test mode passes its dummy's handle so a real game that is also open is
+ *  never found, captured, probed or moved. */
+export function findGameWindow(title: string, exclude?: Set<bigint>, only?: bigint): Rect | null {
   if (process.platform !== 'win32') return null; // dev/build only ever runs the real lookup on Windows
   try {
     user32 ??= loadUser32(koffi);
@@ -105,6 +110,7 @@ export function findGameWindow(title: string, exclude?: Set<bigint>): Rect | nul
       cached &&
       cached.title === title &&
       !exclude?.has(BigInt(koffi.address(cached.handle))) &&
+      (only === undefined || BigInt(koffi.address(cached.handle)) === only) &&
       user32.IsWindow(cached.handle) &&
       user32.IsWindowVisible(cached.handle)
     ) {
@@ -112,7 +118,7 @@ export function findGameWindow(title: string, exclude?: Set<bigint>): Rect | nul
       if (len > 0 && isGameWindowTitle(buf.toString('utf16le', 0, len * 2), title)) handle = cached.handle;
     }
     if (!handle) {
-      enumState = { title, exclude, user32, buf, handle: null };
+      enumState = { title, exclude, only, user32, buf, handle: null };
       user32.EnumWindows(enumCallback, 0);
       handle = enumState.handle;
       enumState = null;

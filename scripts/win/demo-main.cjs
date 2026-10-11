@@ -1,8 +1,7 @@
 // Windows-only Electron demo runner for `npm run win:demo` (PLAN.md item 4). Not the e2e harness: no JSON
 // report, no --only filtering. Opens the real app under BRAWL_E2E (to reach the __brawlE2E test hook that
-// getTestWindow() and captureTestComposite() live on), guards against a real game already running
-// (same check as scripts/win/e2e-main.cjs's checkNoRealGameOpen -- this script never writes a pid file of
-// its own, so every window titled "Deadlock" it finds is foreign), turns test mode on (the dummy "Deadlock" window) for the
+// getTestWindow() and captureTestComposite() live on), notes a real game already running (it is left
+// alone: the app follows only its own dummy by handle), turns test mode on (the dummy "Deadlock" window) for the
 // requested frame, waits for the overlay to actually draw over it, and screenshots that region to
 // logs/win-demo.png.
 //
@@ -50,7 +49,8 @@ async function waitFor(fn, timeoutMs, stepMs = 200) {
   return null;
 }
 
-// Same guard as e2e-main.cjs's checkNoRealGameOpen: pids of any open window titled exactly "Deadlock".
+// Pids of any open window titled exactly "Deadlock" (a real game). Left alone: under BRAWL_E2E the app only follows its
+// own test-mode dummy (findTarget in electron/main.ts).
 function foreignDeadlockWindows() {
   const ps = spawnSync(
     'powershell.exe',
@@ -80,10 +80,7 @@ process.on('SIGTERM', () => exit(0));
 async function main() {
   const foreign = foreignDeadlockWindows();
   if (foreign.length > 0) {
-    console.error(
-      `ERROR: real-game-open — pid(s) ${foreign.join(',')} have a window titled 'Deadlock'; refusing to run`,
-    );
-    return exit(1);
+    console.log(`INFO: real Deadlock open (pid ${foreign.join(',')}), left alone`);
   }
 
   await app.whenReady();
