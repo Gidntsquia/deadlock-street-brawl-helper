@@ -9,6 +9,7 @@ import {
   Tray,
   Menu,
   nativeImage,
+  dialog,
 } from 'electron';
 import os from 'node:os';
 import path from 'node:path';
@@ -49,6 +50,13 @@ import { log } from '../src/log';
 import { fetchOrderStats } from './orderFetch';
 import { startNameReader, type NameReader, type ReaderState } from './nameReader';
 import { createPerf } from '../src/perf';
+import {
+  VIDEO_EXTENSIONS,
+  isTestVideoAction,
+  seekTarget,
+  type TestVideo,
+  type TestVideoAction,
+} from '../src/brawl/testVideo';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL;
@@ -164,6 +172,10 @@ let lastOverlayState: import('../src/brawl/draw').OverlayState | null = null;
 let testWindow: BrowserWindow | null = null;
 let testFrame = 'choice1';
 let testMessage: string | null = null;
+// Manual check only (never in tests, check, win:e2e, win:demo or CI): the dummy can play a video file the person picks,
+// such as an OBS recording of a match, at normal speed and muted, so the whole path can be watched live on it.
+let testVideo: TestVideo | null = null;
+let testVideoTimer: ReturnType<typeof setInterval> | null = null;
 // Under BRAWL_E2E the harness must stay invisible to the person: the control window and overlay run at opacity 0,
 // and the test-mode dummy stays fully opaque (a window with opacity < 1 is never offered to window capture) but
 // is sent to the bottom of the z-order and shown without activating it. A person using test mode sees the
@@ -666,7 +678,7 @@ function lowerAllPriorities() {
 }
 
 function testState() {
-  return { on: alive(testWindow), frame: testFrame, frames: testFrames(), message: testMessage };
+  return { on: alive(testWindow), frame: testFrame, frames: testFrames(), message: testMessage, video: testVideo };
 }
 function broadcastTestState() {
   sendControl(CHANNELS.testModeState, testState());
@@ -683,7 +695,9 @@ async function showTestFrame(win: BrowserWindow, frame: string): Promise<boolean
   const url = pathToFileURL(demoImagePath(frame)).href;
   try {
     return await win.webContents.executeJavaScript(
-      `(async () => { const i = document.getElementById('shot'); i.src = ${JSON.stringify(url)};
+      `(async () => { const v = document.getElementById('vid'); v.pause(); v.removeAttribute('src'); v.load();
+        v.style.display = 'none'; const i = document.getElementById('shot'); i.style.display = 'block';
+        i.src = ${JSON.stringify(url)};
         try { await i.decode(); } catch { return false; } return i.naturalWidth > 0; })()`,
     );
   } catch (err) {
@@ -739,7 +753,8 @@ async function startTestMode(frame?: string) {
   });
   // A real file:// page (not a data: URL): the screenshots are >1MB, past what data: URLs load reliably.
   const html = `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0;overflow:hidden;background:#000">
-    <img id="shot" style="width:100vw;height:100vh;object-fit:fill;display:block" /></body></html>`;
+    <img id="shot" style="width:100vw;height:100vh;object-fit:fill;display:block" />
+    <video id="vid" muted playsinline style="width:100vw;height:100vh;object-fit:fill;display:none;background:#000"></video></body></html>`;
   const tmpHtmlPath = path.join(app.getPath('temp'), 'brawl-test-mode.html');
   writeFileSync(tmpHtmlPath, html);
   await win.loadFile(tmpHtmlPath);
@@ -760,6 +775,7 @@ async function startTestMode(frame?: string) {
 
 /** Turns test mode off: closes the dummy window (and only that) and hides the overlay it was driving. */
 function stopTestMode(message: string | null = null) {
+  endTestVideo();
   const win = testWindow;
   testWindow = null;
   testMessage = message;
@@ -779,8 +795,121 @@ async function setTestFrame(frame: string) {
   if (!alive(testWindow) || !testFrames().includes(frame)) return testState();
   testFrame = frame;
   captureHeld = false;
+  endTestVideo();
   await showTestFrame(testWindow, frame);
   log('electron-main', 'info', 'testmode.frame', { frame });
+  broadcastTestState();
+  return testState();
+}
+
+const lastVideoFile = () => path.join(app.getPath('userData'), 'test-video.json');
+
+/** Stops the video poll and forgets the video (the dummy page itself is reset by showTestFrame or closed). */
+function endTestVideo() {
+  if (testVideoTimer) clearInterval(testVideoTimer);
+  testVideoTimer = null;
+  testVideo = null;
+}
+
+/** Reads the dummy's video element: time, length, playing, and an error if the file would not play. */
+async function readTestVideo(
+  win: BrowserWindow,
+): Promise<{ time: number; duration: number; playing: boolean; error: string | null }> {
+  return win.webContents.executeJavaScript(
+    `(() => { const v = document.getElementById('vid');
+      return { time: v.currentTime, duration: Number.isFinite(v.duration) ? v.duration : 0, playing: !v.paused && !v.ended,
+        error: v.error ? 'This video will not play (code ' + v.error.code + ')' : null }; })()`,
+  );
+}
+
+/** Puts a video file in the dummy window and starts it at normal speed, muted. Manual check only: nothing calls this
+ *  but the person's own button, so no test, harness or CI run ever plays a video. */
+async function playTestVideo(win: BrowserWindow, file: string): Promise<string | null> {
+  const url = pathToFileURL(file).href;
+  try {
+    return await win.webContents.executeJavaScript(
+      `(async () => { const i = document.getElementById('shot'); i.style.display = 'none';
+        const v = document.getElementById('vid'); v.style.display = 'block'; v.muted = true; v.playbackRate = 1;
+        v.src = ${JSON.stringify(url)};
+        try { await v.play(); } catch (e) { return v.error ? 'This video will not play (code ' + v.error.code + ')' : String(e); }
+        return null; })()`,
+    );
+  } catch (err) {
+    return String(err);
+  }
+}
+
+/** Plays `file` in the dummy and polls its time for the control window. */
+async function openTestVideo(win: BrowserWindow, file: string) {
+  endTestVideo();
+  captureHeld = false;
+  const error = await playTestVideo(win, file);
+  testVideo = { name: path.basename(file), time: 0, duration: 0, playing: !error, error };
+  log('electron-main', error ? 'warn' : 'info', 'testmode.video', { file: path.basename(file), error });
+  testVideoTimer = setInterval(() => {
+    const w = testWindow;
+    if (!alive(w) || !testVideo) return endTestVideo();
+    void readTestVideo(w)
+      .then((r) => {
+        if (!testVideo) return;
+        testVideo = { ...testVideo, ...r, error: r.error ?? testVideo.error };
+        broadcastTestState();
+      })
+      .catch(() => undefined);
+  }, 500);
+  broadcastTestState();
+}
+
+/** Test mode video controls from the control window: open (file picker), play, pause, seek (seconds), close
+ *  (back to the screenshot). Returns the test-mode state with the video's time. */
+async function testVideoAction(action: TestVideoAction) {
+  const win = testWindow;
+  if (!alive(win)) return testState();
+  if (action.type === 'close') {
+    endTestVideo();
+    await showTestFrame(win, testFrame);
+    log('electron-main', 'info', 'testmode.video.close');
+    broadcastTestState();
+    return testState();
+  }
+  if (action.type === 'open') {
+    let last: string | undefined;
+    try {
+      last = (JSON.parse(readFileSync(lastVideoFile(), 'utf8')) as { file?: string }).file;
+    } catch {
+      last = undefined;
+    }
+    const opts: Electron.OpenDialogOptions = {
+      title: 'Pick a video for test mode',
+      defaultPath: last,
+      properties: ['openFile'],
+      filters: [{ name: 'Video', extensions: [...VIDEO_EXTENSIONS] }],
+    };
+    const picked = alive(control) ? await dialog.showOpenDialog(control, opts) : await dialog.showOpenDialog(opts);
+    const file = picked.canceled ? undefined : picked.filePaths[0];
+    if (!file || !alive(win)) return testState();
+    try {
+      writeFileSync(lastVideoFile(), JSON.stringify({ file }));
+    } catch {
+      /* only a convenience */
+    }
+    await openTestVideo(win, file);
+    broadcastTestState();
+    return testState();
+  }
+  if (!testVideo) return testState();
+  const js =
+    action.type === 'play'
+      ? `document.getElementById('vid').play().catch(() => undefined)`
+      : action.type === 'pause'
+        ? `document.getElementById('vid').pause()`
+        : `(() => { const v = document.getElementById('vid'); v.currentTime = ${seekTarget(action.to, testVideo.duration)}; })()`;
+  try {
+    await win.webContents.executeJavaScript(js);
+    testVideo = { ...testVideo, ...(await readTestVideo(win)) };
+  } catch {
+    /* the dummy closed */
+  }
   broadcastTestState();
   return testState();
 }
@@ -960,6 +1089,9 @@ function setupIpc() {
   ipcMain.handle(CHANNELS.testModeGet, () => testState());
   ipcMain.handle(CHANNELS.testModeSet, (_e, on: boolean) => (on ? startTestMode() : stopTestMode()));
   ipcMain.handle(CHANNELS.testModeFrame, (_e, frame: string) => setTestFrame(String(frame)));
+  ipcMain.handle(CHANNELS.testModeVideo, (_e, action: unknown) =>
+    isTestVideoAction(action) ? testVideoAction(action) : testState(),
+  );
   // Relay: the control window computes advice from its capture and forwards state for the overlay to draw.
   ipcMain.on(CHANNELS.overlayState, (_event, state) => {
     lastOverlayState = state;
@@ -1071,6 +1203,10 @@ app.whenReady().then(() => {
         return true;
       },
       getTestWindow: () => testWindow,
+      // Plays a video file in the dummy without the file picker. Not used by win:e2e or win:demo: the video check is
+      // manual only (see AGENTS.md "Test mode video").
+      playTestVideo: (file: string) => (alive(testWindow) ? openTestVideo(testWindow, file) : Promise.resolve()),
+      testState,
       // Same code path as F8 / the button. forceCaptureOff() gives the "capture forced off" start state.
       detectNow: () => detectNow('e2e'),
       // The round banner probe is off under the harness: this sends what its hit would (OCR warm-up, round.start log).

@@ -63,6 +63,8 @@ import { ItemTile } from './ItemTile';
 import { log } from '../log';
 import { ReaderDownError, setReaderDown, setTextReader, readHeroName } from '../brawl/ocr';
 import { usePersisted, isNumber, isNumberArray } from '../hooks/usePersisted';
+import { TestVideoControls } from './TestVideoControls';
+import type { TestVideo } from '../brawl/testVideo';
 
 const FRAME_WAIT_MS = 150; // longest wait for a new video frame before copying anyway
 const CAPTURE_MS = 0; // pause between draft frames (the page now waits for a new video frame instead); the worker paces the loop (see worker.ts) so it keeps running while the tab is hidden
@@ -871,11 +873,18 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
 
   // Test mode (Electron): main.ts opens a dummy "Deadlock" window showing a draft screenshot and the normal
   // capture path takes it from there; this just mirrors its state and sends the button/select changes.
-  const [testMode, setTestMode] = useState<{ on: boolean; frame: string; frames: string[]; message: string | null }>({
+  const [testMode, setTestMode] = useState<{
+    on: boolean;
+    frame: string;
+    frames: string[];
+    message: string | null;
+    video?: TestVideo | null;
+  }>({
     on: false,
     frame: '',
     frames: [],
     message: null,
+    video: null,
   });
   useEffect(() => {
     if (!isElectron) return;
@@ -1549,6 +1558,12 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
                     ))}
                   </select>
                 </label>
+              )}
+              {testMode.on && (
+                <TestVideoControls
+                  video={testMode.video ?? null}
+                  send={(action) => void window.brawlAPI!.testVideo(action).then(setTestMode)}
+                />
               )}
               {isElectron && <SessionReport items={items} />}
               {testMode.message && (

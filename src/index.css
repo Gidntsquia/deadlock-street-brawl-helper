@@ -1702,3 +1702,24 @@ body:not(.overlay-window) #root {
   padding: 2px 6px;
   text-align: left;
 }
+
+/* Test mode video controls (TestVideoControls.tsx) */
+.brawl-testvideo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.brawl-testvideo-name {
+  max-width: 16rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.brawl-testvideo-time {
+  font-variant-numeric: tabular-nums;
+}
+.brawl-testvideo input[type='range'] {
+  width: 12rem;
+  accent-color: var(--teal, #2ec4b6);
+}

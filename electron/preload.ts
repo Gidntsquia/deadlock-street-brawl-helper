@@ -3,6 +3,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type { Rect } from './gameWindow';
 import type { OverlayState } from '../src/brawl/draw';
 import { CHANNELS } from './channels';
+import type { TestVideo, TestVideoAction } from '../src/brawl/testVideo';
 import type { ReaderState } from './nameReader';
 import type { DraftRecord, FrameShot, SessionSummary } from './sessionStore';
 import type { Env, Problem } from '../src/brawl/problems';
@@ -12,6 +13,7 @@ export interface TestModeState {
   frame: string;
   frames: string[];
   message: string | null;
+  video: TestVideo | null;
 }
 
 export interface CaptureState {
@@ -131,6 +133,7 @@ const api = {
   getTestMode: (): Promise<TestModeState> => ipcRenderer.invoke(CHANNELS.testModeGet),
   setTestMode: (on: boolean): Promise<TestModeState> => ipcRenderer.invoke(CHANNELS.testModeSet, on),
   setTestFrame: (frame: string): Promise<TestModeState> => ipcRenderer.invoke(CHANNELS.testModeFrame, frame),
+  testVideo: (action: TestVideoAction): Promise<TestModeState> => ipcRenderer.invoke(CHANNELS.testModeVideo, action),
   setDebugState: (on: boolean) => ipcRenderer.send(CHANNELS.debugState, on),
   sessionFrame: (frame: FrameShot) => ipcRenderer.send(CHANNELS.sessionFrame, frame),
   sessionDraft: (rec: DraftRecord) => ipcRenderer.send(CHANNELS.sessionDraft, rec),

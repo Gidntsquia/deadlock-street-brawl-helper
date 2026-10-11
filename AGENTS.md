@@ -133,6 +133,17 @@ hands back to the real game. It closes only the window it opened. While on, the 
 `getMediaSourceId()` (desktopCapturer never lists the app's own windows, so it can't be found through the
 source list) — nothing else can be captured. The old keyboard-shortcut demo and its tray entry no longer exist.
 
+## Test mode video (manual check only)
+
+Test mode can play a video file in the dummy `Deadlock` window instead of a screenshot (`Play a video` in the Debug panel's
+test-mode row, `TestVideoControls.tsx`; main's `testVideoAction`/`openTestVideo`, channel `testModeVideo`, helpers in
+`src/brawl/testVideo.ts`). It plays at normal speed, muted, with Play/Pause, -10 s/+10 s, a position slider and
+`Back to screenshot`; the picker remembers the last file in `userData/test-video.json`. The user's OBS recording is
+`D:\OBS Videos\2026-10-09 00-46-30.mkv` (H.264 in MKV, 1280x720, 51 min; Chromium plays it).
+**Agents must not start the video check unless the user asks for it in that session**: it needs the user there. Nothing in
+`npm test`, `npm run check`, `win:e2e`, `win:demo` or CI plays a video; `__brawlE2E.playTestVideo(file)` exists for a
+one-off hidden check (with a synthetic clip, never the user's recording) and no harness calls it. Keep it that way.
+
 ## Overlay behaviour (blank outside the draft)
 
 - The overlay draws nothing, and its window is hidden (`syncOverlay` in `electron/main.ts`), unless the item draft
