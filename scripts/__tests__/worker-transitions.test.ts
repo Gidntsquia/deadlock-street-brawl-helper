@@ -249,4 +249,20 @@ describe('worker: the draft gate on real frames', () => {
     expect(got[0]![0]).toBe('4104549924,1144549437,1770441818');
     expect(got[0]!.slice(1)).toEqual([1, 1]);
   });
+
+  it('with the name reader down, a new set that replaces the old one without a fade shows grey ?, never the old items', async () => {
+    // Test mode's screenshot switch (choice1 -> choice2) has no fade: the old locks used to stand for the new cards, the
+    // gate took them for the picked set, and nothing was ever shown.
+    send({ type: 'reset' });
+    const c1Ids = [1548066885, 2829638276, 3633614685];
+    const first: Out[] = [];
+    for (let i = 0; i < 120 && !first.some((o) => o.accepted); i++) first.push(await frame('c1'));
+    expect(accepts(first)).toEqual([[c1Ids.join(','), 1, 1]]);
+    send({ type: 'readerState', down: true });
+    const after = await run('c2', 50); // 3.5 s on the virtual clock, past the 2.5 s fallback
+    send({ type: 'readerState', down: false });
+    expect(after.every((o) => o.reads.every((r) => !c1Ids.includes(r.itemId) || !r.present))).toBe(true);
+    const last = after.at(-1)!;
+    expect(last.reads.filter((r) => r.unsure)).toHaveLength(3);
+  });
 });

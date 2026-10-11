@@ -412,6 +412,35 @@ const applyNames = (
           if (gen === nameGen && locks[slot] !== lockBefore) restepSoon(seq);
         });
     }
+    // With the reader down a lock can never be checked again: when its line changed and the icon clearly shows another
+    // item (a new set that came in without a fade; a hover never changes the icon), it is dropped and the slot goes grey `?` rather than keep a maybe wrong item.
+    // The slot is unsettled at once, as after a re-roll, so the old set stops being advised. A tooltip-covered line
+    // never gets here (covered slots return above).
+    if (
+      down &&
+      lock &&
+      sig &&
+      hasInk(sig) &&
+      !sameName(lock.sig, sig) &&
+      !!index &&
+      ((g) => g !== 0 && g !== lock!.id)(quickGuess(img, index, [squares[slot]!])[0]!)
+    ) {
+      locks[slot] = null;
+      waiting = true;
+      changed = true;
+      return r;
+    }
+    // Reader down, no lock, a set advised: a clear icon of another item than the advised card's is a new set (test mode's
+    // screenshot switch, or any swap without a fade), so the old advice goes. A hover never changes the icon.
+    if (!lock && down && gate.live && frozenReads && sig && hasInk(sig) && index) {
+      const was = frozenReads[slot]?.itemId ?? 0;
+      const g = quickGuess(img, index, [squares[slot]!])[0]!;
+      if (was && g && g !== was) {
+        waiting = true;
+        changed = true;
+        return r;
+      }
+    }
     if (lock) {
       // A changed line under a lock is a hover/tooltip unless the cards were just seen re-rolling. Only then does an
       // icon that surely shows another item, or other lettering, make the slot unsettled until its name is read.
