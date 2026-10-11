@@ -21,6 +21,7 @@ let onCaptureStateCb: ((st: CaptureState) => void) | undefined;
 let captureState: CaptureState = { wanted: false, probe: false };
 const captureIdle = vi.fn();
 let onProblemCb: ((p: unknown) => void) | undefined;
+let onReaderStateCb: ((s: string) => void) | undefined;
 
 (window as unknown as { brawlAPI: unknown }).brawlAPI = {
   isElectron: true,
@@ -42,6 +43,14 @@ let onProblemCb: ((p: unknown) => void) | undefined;
   getTestMode: () => Promise.resolve({ on: false, frame: '', frames: [], message: null }),
   getPlatformWarning: () => Promise.resolve(null),
   getProblem: () => Promise.resolve(null),
+  readText: () => Promise.resolve({ text: '', ms: 0 }),
+  getReaderState: () => Promise.resolve('ready'),
+  onReaderState: (cb: (s: string) => void) => {
+    onReaderStateCb = cb;
+    return () => {
+      onReaderStateCb = undefined;
+    };
+  },
   onProblem: (cb: (p: unknown) => void) => {
     onProblemCb = cb;
     return () => {
@@ -111,6 +120,15 @@ describe('BrawlView main view (Electron)', () => {
     expect(calls()).toBe(0);
     onCaptureStateCb?.({ wanted: true, probe: true });
     await waitFor(() => expect(calls()).toBe(1));
+  });
+
+  it('says Name reader not running when main reports the reader failed, and keeps running', async () => {
+    render(<BrawlView {...props()} />);
+    await screen.findByText(/^Waiting for Deadlock/);
+    expect(screen.queryByText('Name reader not running')).toBeNull();
+    act(() => onReaderStateCb?.('failed'));
+    expect((await screen.findByText('Name reader not running')).getAttribute('role')).toBe('alert');
+    expect(screen.getByText(/^Waiting for Deadlock/)).toBeTruthy();
   });
 
   it('shows each problem as one sentence with the fix, and clears it', async () => {

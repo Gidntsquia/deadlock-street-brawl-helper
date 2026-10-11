@@ -69,7 +69,8 @@ export function harvestCards(samples: NameSample[], keep: (s: NameSample) => boo
     const chars = alignLabel(s.label, cut.glyphs);
     if (!chars) {
       const key = `${s.frame}|${s.slot}`;
-      if (!seen.has(key)) out.misaligned.push({ frame: `${s.frame} slot ${s.slot}`, label: s.label, groups: cut.glyphs.length });
+      if (!seen.has(key))
+        out.misaligned.push({ frame: `${s.frame} slot ${s.slot}`, label: s.label, groups: cut.glyphs.length });
       seen.add(key);
       continue;
     }

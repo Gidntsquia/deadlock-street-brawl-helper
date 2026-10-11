@@ -29,6 +29,8 @@ export interface NameSample {
   label: string | null;
   /** a hover tooltip or the cursor hides this name for good: unsure is right, a wrong item is not */
   covered?: boolean;
+  /** the card's real item even when `covered` (the hand labels know it), for telling a right read from a tooltip title */
+  truth?: string | null;
 }
 
 const items: Item[] = JSON.parse(readFileSync('public/data/items.json', 'utf8'));
@@ -41,7 +43,12 @@ function keepRegions(data: Buffer, width: number, height: number, channels: 3 | 
   const kept = Buffer.alloc(data.length);
   for (const r of draftRegions(width, height))
     for (let y = r.y; y < r.y + r.height; y++)
-      data.copy(kept, (y * width + r.x) * channels, (y * width + r.x) * channels, (y * width + r.x + r.width) * channels);
+      data.copy(
+        kept,
+        (y * width + r.x) * channels,
+        (y * width + r.x) * channels,
+        (y * width + r.x + r.width) * channels,
+      );
   return { width, height, data: kept, channels };
 }
 
@@ -81,10 +88,7 @@ export async function loadRegionFrame(
 ): Promise<RGBImage> {
   // The recorder stores only the regions that changed: the rest of the frame is what the last frame left there.
   for (const r of f.regions) {
-    const { data: px } = await sharp(path.join(dir, r.file))
-      .removeAlpha()
-      .raw()
-      .toBuffer({ resolveWithObject: true });
+    const { data: px } = await sharp(path.join(dir, r.file)).removeAlpha().raw().toBuffer({ resolveWithObject: true });
     for (let y = 0; y < r.height; y++) px.copy(data, ((r.y + y) * w + r.x) * 3, y * r.width * 3, (y + 1) * r.width * 3);
   }
   return { width: w, height: h, data, channels: 3 };
@@ -180,6 +184,7 @@ export async function loadNameSamples(opts: LoadOpts = {}): Promise<NameSample[]
             crop,
             label: covered ? null : (set.items[slot] ?? null),
             covered,
+            truth: set.items[slot] ?? null,
           });
         });
       }

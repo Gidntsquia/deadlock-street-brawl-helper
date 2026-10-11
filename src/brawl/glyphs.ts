@@ -391,7 +391,11 @@ function centred(g: Uint8Array, gw: number, t: Template, r0: number, r1: number)
   let best = -1;
   for (let dy = -1; dy <= 1; dy++)
     for (let dx = -1; dx <= 1; dx++) {
-      let sa = 0, sb = 0, saa = 0, sbb = 0, sab = 0;
+      let sa = 0,
+        sb = 0,
+        saa = 0,
+        sbb = 0,
+        sab = 0;
       const n = (r1 - r0 + 1) * W;
       for (let y = r0; y <= r1; y++) {
         const ty = y + dy;
@@ -399,10 +403,15 @@ function centred(g: Uint8Array, gw: number, t: Template, r0: number, r1: number)
           const a = x < gw ? g[y * gw + x]! : 0;
           const tx = x - dx;
           const b = ty >= 0 && ty < CELL_H && tx >= 0 && tx < t.w ? t.px[ty * t.w + tx]! : 0;
-          sa += a; sb += b; saa += a * a; sbb += b * b; sab += a * b;
+          sa += a;
+          sb += b;
+          saa += a * a;
+          sbb += b * b;
+          sab += a * b;
         }
       }
-      const va = saa - (sa * sa) / n, vb = sbb - (sb * sb) / n;
+      const va = saa - (sa * sa) / n,
+        vb = sbb - (sb * sb) / n;
       if (va <= 0 || vb <= 0) continue;
       const c = (sab - (sa * sb) / n) / Math.sqrt(va * vb);
       if (c > best) best = c;

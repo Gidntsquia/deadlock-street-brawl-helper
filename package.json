@@ -22,6 +22,7 @@
     "brawl:see": "npx tsx scripts/brawl-recognise.ts",
     "brawl:replay": "npx tsx scripts/replay.ts",
     "brawl:fixture": "npx tsx scripts/session-fixture.ts",
+    "names:compare": "npx tsx scripts/name-compare.ts",
     "preview": "vite preview",
     "win:setup": "bash scripts/win/setup.sh",
     "win:sync": "bash scripts/win/sync.sh",
@@ -32,8 +33,7 @@
   "dependencies": {
     "koffi": "^2.9.0",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8",
-    "tesseract.js": "^7.0.0"
+    "react-dom": "^19.2.8"
   },
   "devDependencies": {
     "@testing-library/react": "^16.3.3",
@@ -63,6 +63,12 @@
     "files": [
       "dist/**",
       "electron-dist/**"
+    ],
+    "extraResources": [
+      {
+        "from": "electron/winocr-helper.ps1",
+        "to": "winocr-helper.ps1"
+      }
     ],
     "asarUnpack": [
       "node_modules/koffi/**"

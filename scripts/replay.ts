@@ -8,6 +8,7 @@ import type { WorkerIn, WorkerOut } from '../src/brawl/worker';
 import type { DraftRecord } from '../electron/sessionStore';
 import type { TrackSummary } from '../src/brawl/tracker';
 import type { Item } from '../src/types';
+import { installTextReader } from './lib/textReader';
 
 type Result = Extract<WorkerOut, { type: 'result' }>;
 export interface ReplayDraft {
@@ -31,6 +32,9 @@ export interface ReplayDraft {
   enhanced: boolean[];
   /** What the state machine saw: name reads per slot, re-rolls and resyncs during this draft, where the pick came from. */
   track: { reads: [number, number, number]; rerolls: number; resyncs: number; pickSource: string | null };
+  /** Frames (index in frames.json) on which a slot's name line was covered (`card.name.unsure` reason covered), and the
+   *  other unsure reasons the worker posted, as `frame:slot:reason`. */
+  unsureLog: string[];
 }
 
 let lastTrack: TrackSummary | null = null;
@@ -42,6 +46,8 @@ let ready: Promise<void> | null = null;
 
 function boot() {
   ready ??= (async () => {
+    // the name reader: recorded Windows OCR answers (BRAWL_OCR=record/live to read the rest with the helper)
+    installTextReader();
     performance.now = () => clock;
     (globalThis as unknown as { self: unknown }).self = {
       addEventListener: (_: string, h: typeof handler) => (handler = h),
@@ -104,6 +110,8 @@ export async function replayDraft(dir: string, opts: ReplayOpts = {}): Promise<R
   const resyncs0 = lastTrack?.resyncs ?? 0;
   const closed0 = lastTrack?.closed.length ?? 0;
   let lastMsg: WorkerIn | null = null;
+  const unsureLog: string[] = [];
+  let coveredBefore: number[] = [];
   for (const [fi, f] of frames.entries()) {
     virtual += Math.min(f.t - prevT, GAP_MS);
     prevT = f.t;
@@ -132,6 +140,7 @@ export async function replayDraft(dir: string, opts: ReplayOpts = {}): Promise<R
       await new Promise((r) => setTimeout(r, 20));
     first = false;
     for (const m of posted) {
+      if (m.type === 'nameUnsure') unsureLog.push(`${fi}:${m.slot}:${m.reason}`);
       if (m.type === 'rerolls') rerolls = m.rerollsRemaining;
       const t = m.type === 'track' ? m : m.type === 'result' ? m.track : undefined;
       if (t) lastTrack = t.summary;
@@ -141,6 +150,10 @@ export async function replayDraft(dir: string, opts: ReplayOpts = {}): Promise<R
     // accept may have come with that re-run
     const res = results.at(-1);
     if (!res) continue;
+    // logged as the page logs it: a slot that turns covered (card.name.unsure, reason covered)
+    const cov = [...new Set(results.flatMap((r) => r.covered ?? []))];
+    for (const slot of cov) if (!coveredBefore.includes(slot)) unsureLog.push(`${fi}:${slot}:covered`);
+    coveredBefore = res.covered ?? [];
     if (results.some((r) => r.accepted) && !res.accepted) res.accepted = true;
     opts.onResult?.(fi, res, f.t);
     if (res.accepted && acceptFrame < 0) acceptFrame = fi;
@@ -209,6 +222,7 @@ export async function replayDraft(dir: string, opts: ReplayOpts = {}): Promise<R
     lastFull,
     enhanced,
     track,
+    unsureLog,
   };
 }
 
@@ -249,7 +263,11 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'replay.ts') {
   const items: Item[] = JSON.parse(readFileSync('public/data/items.json', 'utf8'));
   const name = (id: number) => items.find((i) => i.id === id)?.name ?? `#${id}`;
   const drafts = await replaySession(folder, { waitNames: true });
-  for (const d of drafts) console.log(`${d.name}  ${describeDraft(d, name)}`);
+  for (const d of drafts) {
+    console.log(`${d.name}  ${describeDraft(d, name)}`);
+    if (process.argv.includes('--unsure') && d.unsureLog.length)
+      console.log(`  card.name.unsure (frame:slot:reason) ${d.unsureLog.join(' ')}`);
+  }
   if (!drafts.length) console.log('No drafts found in that folder.');
   process.exit(0);
 }

@@ -2,15 +2,18 @@ import { readFileSync } from 'node:fs';
 import sharp from 'sharp';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { matchItemName, nameList } from '../../src/brawl/names';
-import { readCardName, terminateOCR } from '../../src/brawl/ocr';
+import { readCardName } from '../../src/brawl/ocr';
+import { installTextReader, stopLiveReader } from '../lib/textReader';
 import { cardNameCrop, cardSquares, decodeIconIndex, draftRegions, readDraftScreen } from '../../src/brawl/recognise';
 import type { Item } from '../../src/types';
 
-// Real OCR (the bundled Tesseract) of the item name printed under each card, on every tracked draft frame, with every
-// pixel outside draftRegions blacked out as in the worker: the name must name the same item the icon search finds
-// (those icon reads are pinned in frame-reads.test.ts).
+// The name reader (Windows OCR answers recorded in scripts/fixtures/ocr-recorded/, or live with BRAWL_OCR=live) on the
+// item name printed under each card, on every tracked draft frame, with every pixel outside draftRegions blacked out as
+// in the worker: the name must name the same item the icon search finds (those icon reads are pinned in
+// frame-reads.test.ts).
 vi.setConfig({ testTimeout: 60_000 });
-afterAll(() => terminateOCR());
+installTextReader();
+afterAll(() => stopLiveReader());
 
 const items: Item[] = JSON.parse(readFileSync('public/data/items.json', 'utf8'));
 const index = decodeIconIndex(JSON.parse(readFileSync('public/data/brawl-icons.json', 'utf8')));

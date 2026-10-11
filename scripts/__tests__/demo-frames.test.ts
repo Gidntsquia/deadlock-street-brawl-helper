@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import sharp from 'sharp';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import { readRerollsRemaining } from '../../src/brawl/ocr';
+import { installTextReader, stopLiveReader } from '../lib/textReader';
 import {
   decodeIconIndex,
   extractRerollLabelCrop,
@@ -21,6 +22,10 @@ const load = async (name: string): Promise<RGBImage> => {
     .toBuffer({ resolveWithObject: true });
   return { width: 1920, height: 1080, data, channels: 3 };
 };
+
+// The caption is read by the name reader (recorded Windows OCR answers), with the glyph shape as the fallback.
+installTextReader();
+afterAll(() => stopLiveReader());
 
 describe('Test-mode draft screenshots', () => {
   it('read the frame own round and choice, and the re-roll caption', async () => {

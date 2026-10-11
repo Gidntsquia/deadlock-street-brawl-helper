@@ -1,7 +1,12 @@
 import { readdirSync } from 'node:fs';
 import sharp from 'sharp';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import { loadingNameRect, looksLikeLoadingName } from '../../src/brawl/recognise';
+import { installTextReader, stopLiveReader } from '../lib/textReader';
+
+// The hero name is read by the name reader (Windows OCR answers recorded in scripts/fixtures/ocr-recorded/).
+installTextReader();
+afterAll(() => stopLiveReader());
 
 async function nameBox(file: string) {
   const { data, info } = await sharp(file).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
@@ -23,7 +28,7 @@ describe('loading screen name box', () => {
 
 describe('loading screen hero name', () => {
   it('reads Infernus', async () => {
-    const { readHeroName, terminateOCR } = await import('../../src/brawl/ocr');
+    const { readHeroName } = await import('../../src/brawl/ocr');
     const { matchHeroName, nameList } = await import('../../src/brawl/names');
     const heroes = JSON.parse((await import('node:fs')).readFileSync('public/data/heroes.json', 'utf8')) as {
       id: number;
@@ -31,7 +36,6 @@ describe('loading screen hero name', () => {
     }[];
     const names = Object.fromEntries(heroes.map((h) => [h.id, h.name]));
     const text = await readHeroName(await nameBox('scripts/fixtures/loading/infernus.png'));
-    await terminateOCR();
     expect(
       matchHeroName(
         text,

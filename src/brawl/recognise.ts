@@ -520,6 +520,146 @@ export function cardNameCrop(
   return { data, width: ow, height: oh, line: h };
 }
 
+/** The name's own columns in a name line (cardNameCrop output, or any black-on-white line): the run of inked columns
+ *  with the most ink whose gaps stay within 0.35 of the line's height (a word space is far less). Stray light marks
+ *  beside a name (the RARE sparkle, a ring's glint) fall outside it. `line` is the line's height without margins.
+ *  [first, last] column, or null with no ink. */
+export function textRun(
+  crop: { data: Uint8Array; width: number; height: number },
+  line: number,
+): [number, number] | null {
+  const { data, width, height } = crop;
+  const colInk = new Int32Array(width);
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) if (data[(y * width + x) * 4]! < 128) colInk[x]!++;
+  const gapMax = Math.max(4, Math.round(0.35 * line));
+  let best: [number, number, number] | null = null,
+    cur: [number, number, number] | null = null;
+  for (let x = 0; x < width; x++) {
+    const ink = colInk[x]!;
+    if (!ink) continue;
+    if (cur && x - cur[1] - 1 <= gapMax) {
+      cur[1] = x;
+      cur[2] += ink;
+    } else {
+      if (cur && (!best || cur[2] > best[2])) best = cur;
+      cur = [x, x, ink];
+    }
+  }
+  if (cur && (!best || cur[2] > best[2])) best = cur;
+  return best ? [best[0], best[1]] : null;
+}
+
+/** The shape of a name line's text (cardNameCrop output; only the textRun, so a sparkle beside a short name does not
+ *  count): `ink` its dark pixels, `tilt` the slope of the text's top and bottom edges (right third against left third,
+ *  per px of ink width; a hovered card tilts its name up to the right, -0.04 to -0.1, a resting name sits within
+ *  +-0.03), and `off` the text's centre against the line's centre in card edges (a resting name is centred under its
+ *  card; a tooltip title is left-aligned, -0.3 or further). */
+export function nameLineShape(crop: { data: Uint8Array; width: number; height: number }) {
+  const { data, width, height } = crop;
+  const run = textRun(crop, height - 24);
+  const cols = new Int32Array(width),
+    tops: number[] = [],
+    bots: number[] = [],
+    xs: number[] = [];
+  let ink = 0;
+  if (run)
+    for (let x = run[0]; x <= run[1]; x++) {
+      let t = -1,
+        b = -1;
+      for (let y = 0; y < height; y++)
+        if (data[(y * width + x) * 4] === 0) {
+          if (t < 0) t = y;
+          b = y;
+          cols[x]!++;
+        }
+      ink += cols[x]!;
+      if (t >= 0) {
+        tops.push(t);
+        bots.push(b);
+        xs.push(x);
+      }
+    }
+  if (ink === 0) return { ink, tilt: 0, off: 0, left: 0 };
+  let acc = 0,
+    a = -1,
+    z = -1;
+  for (let x = 0; x < width; x++) {
+    acc += cols[x]!;
+    if (a < 0 && acc >= ink * 0.03) a = x;
+    if (z < 0 && acc >= ink * 0.97) z = x;
+  }
+  const pad = 12,
+    line = width - 2 * pad,
+    edge = line / (2 * CARD_NAME.halfWidth);
+  const med = (v: number[]) => [...v].sort((p, q) => p - q)[Math.floor(v.length / 2)] ?? 0;
+  const n3 = Math.floor(xs.length / 3);
+  const tilt =
+    xs.length > 30
+      ? (med(tops.slice(-n3)) - med(tops.slice(0, n3)) + med(bots.slice(-n3)) - med(bots.slice(0, n3))) /
+        2 /
+        (xs[xs.length - 1]! - xs[0]!)
+      : 0;
+  return { ink, tilt, off: ((a + z) / 2 - width / 2) / edge, left: (a - pad) / line };
+}
+
+/** Where the icon's frame starts on six scan lines (rows at 0.3/0.5/0.7 of the square, from the left and the right),
+ *  in 1/40 edge steps from 0.2 edge outside the square: a resting card's frame lifts at step 7 or 8 on every line. A
+ *  hovered card is scaled up and turned, so its frame starts further out, or at different steps on different lines.
+ *  -1 where no step rises by 40 grey levels (no icon). */
+export function iconFrameSteps(img: RGBImage, sq: { x: number; y: number; edge: number }): number[] {
+  const L = (x: number, y: number) => luma(img, Math.round(x), Math.round(y));
+  const out: number[] = [];
+  for (const fy of [0.3, 0.5, 0.7]) {
+    const y = sq.y + fy * sq.edge;
+    for (const side of [-1, 1]) {
+      let prev = -1,
+        at = -1;
+      for (let i = 0; i <= 16; i++) {
+        const d = -0.2 + i * 0.025;
+        const x = side < 0 ? sq.x + d * sq.edge : sq.x + sq.edge - d * sq.edge;
+        const v = L(x, y);
+        if (prev >= 0 && v - prev > 40) {
+          at = i;
+          break;
+        }
+        prev = v;
+      }
+      out.push(at);
+    }
+  }
+  return out;
+}
+
+/** True when a card's icon is scaled or turned off its resting square (the hovered card): two or more of the six
+ *  frame steps (iconFrameSteps) fall outside 6..8. */
+export function iconHovered(img: RGBImage, sq: { x: number; y: number; edge: number }): boolean {
+  const st = iconFrameSteps(img, sq);
+  if (st.filter((v) => v >= 0).length < 4) return false;
+  return st.filter((v) => v >= 0 && (v < 6 || v > 8)).length >= 2;
+}
+
+/** Fewer dark pixels than this in a name line is too little text to judge its shape (a fade, a cut-off end). */
+const SHAPE_INK = 300;
+/** A name sits centred under its card (its text centre within 0.07 card edges of the line centre on the video truth
+ *  set, short names included once the RARE sparkle is left out by textRun). Text this far off centre is not the
+ *  card's own name. */
+export const COVER_OFF = 0.3;
+
+/** Which card slots a hover tooltip covers, from the three name lines alone (null where a slot has no line). The game
+ *  draws a hovered card's tooltip panel beside it, left or right, over a neighbour's name line; what shows on that
+ *  line is the panel's left-aligned title or body text, or the right end of a title running in from the left. Either
+ *  way the line's text is off centre (|off| >= COVER_OFF in nameLineShape), so that slot is covered. A neighbour whose
+ *  own centred name still shows is read as usual (a tooltip title that happens to land centred is caught by the
+ *  duplicate rule in the worker). Measured on the video truth tooltip frames (s4#10-14, s4#72) and the session
+ *  fixture d004#5. */
+export function coveredSlots(crops: readonly ({ data: Uint8Array; width: number; height: number } | null)[]) {
+  return crops.map((c) => {
+    if (!c) return false;
+    const s = nameLineShape(c);
+    return s.ink >= SHAPE_INK && Math.abs(s.off) >= COVER_OFF;
+  });
+}
+
 /** Tier 1..5 read from the numeral, or 0 when no numeral is found. `m` is the icon square from matchIcon. */
 export function readTier(img: RGBImage, m: IconMatch): number {
   const u = m.edge / 185,

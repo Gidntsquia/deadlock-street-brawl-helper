@@ -16,12 +16,23 @@ import {
   readMarkers,
   quickGuess,
   cardSquares,
+  coveredSlots,
   type CardRead,
   type DecodedIndex,
   type DraftMeta,
   type InventoryRead,
 } from './recognise';
-import { readCardName, readRerollsRemaining, terminateOCR, warmOCR, type NameCrop } from './ocr';
+import {
+  ReaderDownError,
+  hasTextReader,
+  readCardNameTimed,
+  readRerollsRemaining,
+  readerDown,
+  setReaderDown,
+  setTextReader,
+  type NameCrop,
+  type TextKind,
+} from './ocr';
 import { matchItemName, nameList, type NameList } from './names';
 import { initialGate, offScreenGate, stepGate } from './draftGate';
 import { setLocked } from './brawlState';
@@ -60,12 +71,15 @@ export type WorkerIn =
       height: number;
       buffer: ArrayBuffer;
     }
-  | { type: 'roundStart'; round: number } // the round banner probe hit: warm the OCR, log round.start
+  | { type: 'roundStart'; round: number } // the round banner probe hit: log round.start
+  // the name reader's answer to an `ocr` request (relayed by the page from main), and whether it is running at all
+  | { type: 'ocrResult'; id: number; text: string; ms: number; error?: string }
+  | { type: 'readerState'; down: boolean }
   | { type: 'forceResync' } // F8: start from the next frame's labels again
   | { type: 'advised'; itemId: number | null } // the card the overlay told the player to take (null: re-roll or none)
   | { type: 'idle' } // the page had no frame ready for the last tick
   | { type: 'reset' } // capture (re)started: forget the last draft and start ticking again
-  | { type: 'stop' }; // capture stopped: forget the last draft (the OCR engines are freed after OCR_KEEP_MS); the worker then stays silent
+  | { type: 'stop' }; // capture stopped: forget the last draft; the worker then stays silent
 
 /** The worker paces the capture: it asks the page for a frame, reads it, waits, asks again. Page timers are
  *  throttled to once a second (Chrome: once a minute after five minutes) while the game has the foreground and the
@@ -76,9 +90,23 @@ export type WorkerOut =
   | { type: 'seen' } // the probe saw the draft screen: no cards are read yet
   | { type: 'tick'; full: boolean } // full: send a whole frame; otherwise just the probe crop
   | { type: 'rerolls'; forKey: string; rerollsRemaining: number }
+  // a prepared text crop (src/brawl/ocr.ts) for the name reader: the page passes it to main, the answer comes back as `ocrResult`
+  | { type: 'ocr'; id: number; kind: TextKind; width: number; height: number; data: Uint8Array }
   | ({ type: 'track' } & TrackOut) // the state machine moved outside a frame (a round started)
   // a card's name line was read: what the icon said, the OCR text, and the item it names (0: no clear match)
-  | { type: 'name'; slot: number; icon: number; text: string; itemId: number; ms: number };
+  | {
+      type: 'name';
+      slot: number;
+      icon: number;
+      text: string;
+      itemId: number;
+      score: number;
+      ms: number;
+      readerMs: number;
+    }
+  // a slot's name was not taken: nothing in the reply matched an item, the line was blank, the reader is not running.
+  // ('covered' rides on each result as `covered`, since it holds frame by frame.)
+  | { type: 'nameUnsure'; slot: number; reason: 'no-item' | 'empty' | 'reader-down'; text: string };
 
 interface FrameResult {
   type: 'result';
@@ -94,6 +122,7 @@ interface FrameResult {
   meta: DraftMeta | null; // round / choice / hero bar, on the accepted frame only
   inventory: number[] | null; // owned items from the inventory grid, once two consecutive reads agree; null otherwise
   track?: TrackOut; // the state machine's summary and log lines, when something happened since the last result
+  covered?: number[]; // card slots whose name line a hovered card or a tooltip covers on this frame: not read, lock kept
   ms: number;
   stages?: Record<string, number>; // dev builds only: milliseconds per recogniser stage
 }
@@ -209,6 +238,7 @@ const applyNames = (
   cardsUp: boolean;
   empty: number; // card circles showing no card
   sigs: (Uint8Array | null)[];
+  covered: boolean[];
 } => {
   const squares = cardSquares(img.width, img.height);
   // The RARE / ENHANCED marks are read at the fixed card square too: the icon search's wobble (an enhanced icon
@@ -231,6 +261,7 @@ const applyNames = (
       cardsUp: false,
       empty: 0,
       sigs: [null, null, null],
+      covered: [false, false, false],
     };
   if (choice !== nameChoice) {
     forgetNames(); // the next choice's cards
@@ -246,6 +277,10 @@ const applyNames = (
   const slotSure = [false, false, false];
   const crops = pinned.map((r) => cardNameCrop(img, r.match));
   const sigs = crops.map((c) => (c ? nameSig(c) : null));
+  // A hovered card grows and tilts its name line, and its tooltip panel covers a neighbour's: those lines show what the
+  // cursor is on, not the card. A covered slot is not read and keeps whatever lock it has.
+  const covered = coveredSlots(crops);
+  const down = readerDown();
   // The cards fading out for a re-roll: two locked name lines blank at once (a hover blanks at most the one it grows).
   // Two locked cards' circles are empty (a hover only hides name lines, it leaves the icons): those cards are gone, and with them every lock: whatever comes next is a new set (a card still showing may be a new
   // one drawn over the old, or hidden by a tooltip, and must not keep the old item).
@@ -263,10 +298,30 @@ const applyNames = (
     const sig = sigs[slot] ?? null;
     if (!sig || !hasInk(sig)) inked = false;
     let lock = locks[slot];
+    const asLock = (l: SlotLock): CardRead => ({
+      ...r,
+      present: true,
+      itemId: l.id,
+      tier: tiers[l.id] ?? r.tier,
+      enhanced: l.enhanced,
+      rare: l.rare,
+      match: { ...r.match, itemId: l.id },
+    });
     // A guess made from the icon belongs to the picture it was made on: when the name line moves (the cards fading out
     // or in, a new card where the old one was) the guess is dropped and made again.
-    if (lock?.provisional && sig && !sameName(lock.sig, sig)) lock = locks[slot] = null;
-    if (!lock && sig && hasInk(sig) && index && !(nameFail[slot] && hasInk(nameFail[slot]!.sig))) {
+    if (lock?.provisional && sig && !sameName(lock.sig, sig) && !covered[slot]) lock = locks[slot] = null;
+    if (covered[slot]) {
+      // keep the lock as it is; a slot never seen uncovered stays unread (`?` once the fallback runs)
+      quickSeen[slot] = null;
+      if (lock) {
+        slotSure[slot] = true;
+        return asLock(lock);
+      }
+      pending = true;
+      return r;
+    }
+    // (with the reader down there is no name to confirm an icon guess with: no guess either, the slot shows `?`)
+    if (!lock && !down && sig && hasInk(sig) && index && !(nameFail[slot] && hasInk(nameFail[slot]!.sig))) {
       quick ??= quickGuess(img, index, squares);
       const id = quick[slot]!;
       // The guess must hold on two frames in a row with the name line still: a card is not fully drawn while it fades.
@@ -279,15 +334,6 @@ const applyNames = (
         lock = locks[slot] = { id, sig, enhanced: r.enhanced, rare: r.rare, provisional: true };
     } else if (!lock) quickSeen[slot] = null;
     const sure = r.present && r.match.score >= SURE_SCORE && r.match.margin >= SURE_MARGIN;
-    const asLock = (l: SlotLock): CardRead => ({
-      ...r,
-      present: true,
-      itemId: l.id,
-      tier: tiers[l.id] ?? r.tier,
-      enhanced: l.enhanced,
-      rare: l.rare,
-      match: { ...r.match, itemId: l.id },
-    });
     // A mark that shows up after the lock (the label draws a beat after the card) is added to it, never removed.
     if (lock && (r.present ? r.itemId === lock.id : iconless)) {
       lock.enhanced ||= r.enhanced;
@@ -304,7 +350,7 @@ const applyNames = (
     if (!crop || !sig || !hasInk(sig)) {
       // nothing printed there to read: counts as a failed read, so a slot that never shows a name falls back in time
       if (!lock) nameFail[slot] = { sig: sig ?? new Uint8Array(0), at: now, since: fail?.since ?? now };
-    } else if (!nameBusy[slot] && !failedThis && (!lock?.provisional || gate.live)) {
+    } else if (!down && !nameBusy[slot] && !failedThis && (!lock?.provisional || gate.live)) {
       // (a guess from the icon is confirmed after the set is advised: the OCR threads would take the frames' CPU while it settles)
       nameBusy[slot] = true;
       const fp0 = sigFp(slot, sig);
@@ -317,11 +363,12 @@ const applyNames = (
         t = now,
         enhanced = r.enhanced,
         rare = r.rare;
-      track(readCardName(crop, slot))
-        .then((text) => {
+      track(readCardNameTimed(crop))
+        .then(({ text, ms: readerMs }) => {
           const m = matchItemName(text, list);
           const ms = performance.now() - t;
-          post({ type: 'name', slot, icon, text, itemId: m?.itemId ?? 0, ms });
+          post({ type: 'name', slot, icon, text, itemId: m?.itemId ?? 0, score: m?.score ?? 0, ms, readerMs });
+          if (!m) post({ type: 'nameUnsure', slot, reason: text ? 'no-item' : 'empty', text });
           if (gen !== nameGen) return;
           const prev = locks[slot];
           const twin = m ? locks.findIndex((l, i) => i !== slot && l?.id === m.itemId) : -1;
@@ -355,7 +402,11 @@ const applyNames = (
             nameFail[slot] = { sig, at: performance.now(), since: f?.since ?? t };
           }
         })
-        .catch(() => {}) // the OCR engine was freed (capture stopped) while this was running
+        .catch((e: unknown) => {
+          // the reader is not running (or a recorded reader has no answer for this picture): the slot stays unread
+          if (e instanceof ReaderDownError) post({ type: 'nameUnsure', slot, reason: 'reader-down', text: '' });
+          if (gen === nameGen) nameFail[slot] = { sig, at: performance.now(), since: nameFail[slot]?.since ?? t };
+        })
         .finally(() => {
           nameBusy[slot] = false;
           if (gen === nameGen && locks[slot] !== lockBefore) restepSoon(seq);
@@ -391,7 +442,7 @@ const applyNames = (
     // the icon guess stands.
     const f = nameFail[slot];
     // Only a clear icon stands on its own once the name will not read: a shaky guess is never put on screen.
-    if (f && now - f.since > NAME_GIVE_UP_MS && r.present && sure) {
+    if (!down && f && now - f.since > NAME_GIVE_UP_MS && r.present && sure) {
       slotSure[slot] = true;
       return r;
     }
@@ -400,7 +451,18 @@ const applyNames = (
     else slotSure[slot] = true;
     return r;
   });
-  return { reads: out, waiting, pending, slotSure, changed, inked, sigs, cardsUp: emptyCount <= 1, empty: emptyCount };
+  return {
+    reads: out,
+    waiting,
+    pending,
+    slotSure,
+    changed,
+    inked,
+    sigs,
+    cardsUp: emptyCount <= 1,
+    empty: emptyCount,
+    covered,
+  };
 };
 /** The three cards at their fixed squares with no icon search: the item comes from the name lock alone (the name
  *  under a card is exact; the icon search was the slowest part of the first read). Only the RARE / ENHANCED marks are
@@ -564,6 +626,9 @@ let acceptedRound = 0,
 export const FALLBACK_MS = 2500;
 /** Two cards read and the third circle is full but unreadable (the hover tooltip covers it): a shorter wait. */
 const FALLBACK_COVERED_MS = 1200;
+/** The `?` fallback waits at most this long for a name read already on its way (see fbDue). */
+const FALLBACK_READ_HOLD_MS = 400;
+let fbHeldAt: number | null = null;
 let readingSince: number | null = null; // when the cards on the not-yet-accepted screen last changed (or were first seen)
 let lastSpent = false; // the previous frame showed a set a pick was already made from: its cards leaving is not a new set to wait on
 let readingFirst: number | null = null; // when the not-yet-accepted screen was first seen
@@ -629,7 +694,7 @@ const sameBar = (a: Uint8Array, b: Uint8Array) => {
 // sees the screen; the machine gets its facts as named events (`trackFrame`, the name-read callback) and answers with
 // the things the page shows: `Resynced to round N choice M`, a re-roll used this round, per-slot read counts, where each
 // pick came from. It never changes what is advised.
-const tracker = createTracker(() => warmOCR());
+const tracker = createTracker(() => {});
 const slotFp: { sig: Uint8Array | null; n: number }[] = [0, 1, 2].map(() => ({ sig: null, n: 0 }));
 /** The fingerprint id of a slot while its lock stands: a hover changes the line but not the card. */
 const lockFp: (string | null)[] = [null, null, null];
@@ -732,12 +797,41 @@ function trackFrame(
   if (stable && st.gridCheck && setLocked(st)) tracker.feed({ type: 'ownedGrid', ids: stable });
 }
 
-const post = (m: WorkerOut) => (self as unknown as { postMessage(m: unknown): void }).postMessage(m);
+const post = (m: WorkerOut, transfer?: Transferable[]) =>
+  (self as unknown as { postMessage(m: unknown, t?: Transferable[]): void }).postMessage(m, transfer ?? []);
 let timer: ReturnType<typeof setTimeout> | undefined;
-// Capture stops between rounds, and loading the OCR engines again on the next draft took longer than FALLBACK_MS on a
-// PC running the game: the first cards of a round came up as `?`. The engines stay loaded this long after a stop.
-const OCR_KEEP_MS = 10 * 60_000;
-let ocrFree: ReturnType<typeof setTimeout> | undefined;
+
+// ---- the name reader, through the page --------------------------------------------------------------------------
+// Text crops go to the Windows OCR helper main runs (electron/nameReader.ts): worker -> page -> main and back. A tool
+// or test that runs this file in Node installs its own reader first (scripts/lib/textReader.ts), and this relay stays out.
+/** A read with no answer in this long counts as the reader being down for that read. */
+const OCR_REPLY_MS = 2000;
+let ocrSeq = 0;
+const ocrWait = new Map<number, { done: (r: { text: string; ms: number }) => void; fail: (e: Error) => void }>();
+const installRelay = () => {
+  if (hasTextReader()) return;
+  setTextReader(
+    (img, kind) =>
+      new Promise((done, fail) => {
+        const id = ++ocrSeq;
+        const to = setTimeout(() => {
+          ocrWait.delete(id);
+          fail(new ReaderDownError('timeout'));
+        }, OCR_REPLY_MS);
+        ocrWait.set(id, {
+          done: (r) => {
+            clearTimeout(to);
+            done(r);
+          },
+          fail: (e) => {
+            clearTimeout(to);
+            fail(e);
+          },
+        });
+        post({ type: 'ocr', id, kind, width: img.width, height: img.height, data: img.data }, [img.data.buffer]);
+      }),
+  );
+};
 const tick = (after: number, full: boolean) => {
   clearTimeout(timer);
   timer = setTimeout(() => post({ type: 'tick', full }), after);
@@ -750,9 +844,6 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
     forgetDraft();
     // matchBar is kept: capture stops between every round, and the bar fingerprint is checked before it is reused
     // (a new match has different portraits), so the ~0.7 s hero bar read is paid once per match, not once per round.
-    clearTimeout(ocrFree);
-    ocrFree = setTimeout(() => void terminateOCR(), OCR_KEEP_MS);
-    (ocrFree as { unref?: () => void }).unref?.(); // Node (tests, CLI): never keep the process alive for it
     return;
   }
   if (msg.type === 'warm') {
@@ -760,9 +851,7 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
     index ??= decodeIconIndex(msg.index);
     tiers = msg.tiers;
     setNames(msg.names);
-    // Load the OCR engines now too: on a slow PC they take seconds to start, which used to land inside the first
-    // draft's 2.5 s. (They are freed OCR_KEEP_MS after a 'stop', and loaded again by the next 'init'/'reset'.)
-    warmOCR();
+    installRelay();
     return;
   }
   if (msg.type === 'init' || msg.type === 'reset') {
@@ -773,8 +862,7 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
       intervalMs = msg.intervalMs;
     }
     forgetDraft();
-    clearTimeout(ocrFree);
-    warmOCR(); // capture only runs around the draft now: load the OCR engines with it (freed OCR_KEEP_MS after 'stop')
+    installRelay();
     // Capture is started for a draft (the probe saw the CHOICE glyph, F8, test mode): ask for a whole frame at once rather
     // than a probe crop first. A frame that is not a draft falls back to probing in its own handler.
     tick(0, msg.type === 'reset');
@@ -785,6 +873,16 @@ self.addEventListener('message', (ev: MessageEvent<WorkerIn>) => {
     resetFps();
     const t = tracker.take();
     if (t) post({ type: 'track', ...t });
+    return;
+  }
+  if (msg.type === 'ocrResult') {
+    const w = ocrWait.get(msg.id);
+    ocrWait.delete(msg.id);
+    if (w) msg.error ? w.fail(new ReaderDownError(msg.error)) : w.done({ text: msg.text, ms: msg.ms });
+    return;
+  }
+  if (msg.type === 'readerState') {
+    setReaderDown(msg.down);
     return;
   }
   if (msg.type === 'forceResync') {
@@ -830,7 +928,9 @@ let lastFull: { msg: Extract<WorkerIn, { type: 'frame' }>; idx: DecodedIndex; se
 let frameSeq = 0;
 let restepping = false;
 const restep = (seq: number) => {
-  if (!lastFull || lastFull.seq !== seq || frameSeq !== seq || gate.live) return;
+  // once advised, only a `?` set is re-run: the card that read upgrades it now, not a frame later (the cards may be gone)
+  if (!lastFull || lastFull.seq !== seq || frameSeq !== seq || (gate.live && !frozenReads?.some((r) => r.unsure)))
+    return;
   restepping = true;
   try {
     draftFrame(lastFull.msg, performance.now(), lastFull.idx);
@@ -962,7 +1062,7 @@ function draftFrame(msg: Extract<WorkerIn, { type: 'frame' }>, t0: number, idx: 
   // Fallback: no sure set within FALLBACK_MS. The sure cards are advised, the others become `?`. Never for a set the
   // player already picked from (its cards read sure, so it never gets here with its own key).
   const fullKey = seen === 3 ? reads.map((r) => `${r.itemId}${r.enhanced ? '+' : ''}`).join(',') : '';
-  const fbDue =
+  const fbTime =
     !gate.live &&
     seen > 0 && // all three cards still empty (sliding in, or the game is slow): nothing to put a `?` on, keep waiting
     readingSince !== null &&
@@ -970,6 +1070,12 @@ function draftFrame(msg: Extract<WorkerIn, { type: 'frame' }>, t0: number, idx: 
       (named.empty === 0 && locks.filter((l) => l && !l.provisional).length >= 2 ? FALLBACK_COVERED_MS : FALLBACK_MS) ||
       nowMs - (readingFirst ?? nowMs) >= FALLBACK_MAX_MS) &&
     !gate.spent.some((k) => fullKey && k.replace(/\+/g, '') === fullKey.replace(/\+/g, ''));
+  // A name read of a slot that would go `?` is on its way (its line just came clear): the `?` waits for it, a read takes
+  // tens of ms, at most FALLBACK_READ_HOLD_MS.
+  const readOnItsWay = named.slotSure.some((sure, i) => !sure && nameBusy[i]);
+  if (!fbTime || !readOnItsWay) fbHeldAt = null;
+  else fbHeldAt ??= nowMs;
+  const fbDue = fbTime && (fbHeldAt === null || nowMs - fbHeldAt >= FALLBACK_READ_HOLD_MS);
   const fbReads = reads.map((r, i) =>
     named.slotSure[i] && r.present ? r : { ...r, present: true, unsure: true, itemId: 0, tier: 0, enhanced: false },
   );
@@ -1086,6 +1192,7 @@ function draftFrame(msg: Extract<WorkerIn, { type: 'frame' }>, t0: number, idx: 
     meta,
     inventory,
     track: tracker.take() ?? undefined,
+    covered: named.covered.some(Boolean) ? [0, 1, 2].filter((i) => named.covered[i]) : undefined,
     ms: performance.now() - t0,
     stages,
   });

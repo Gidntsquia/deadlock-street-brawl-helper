@@ -16,7 +16,9 @@ for (const [n, s] of all.entries()) {
   const file = `c${n}.png`;
   await sharp(Buffer.from(t.data), { raw: { width: t.width, height: t.height, channels: 4 } })
     .resize({ height: Math.max(t.height, 90), kernel: 'lanczos3' })
-    .removeAlpha().png().toFile(`${dir}/${file}`);
+    .removeAlpha()
+    .png()
+    .toFile(`${dir}/${file}`);
   idx.push({ file, frame: s.frame, slot: s.slot, label: s.label, covered: !!s.covered });
 }
 writeFileSync(`${dir}/index.json`, JSON.stringify(idx));

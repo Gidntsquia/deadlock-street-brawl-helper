@@ -47,6 +47,7 @@ const BLANK_OVERLAY = {
 };
 import { log } from '../src/log';
 import { fetchOrderStats } from './orderFetch';
+import { startNameReader, type NameReader, type ReaderState } from './nameReader';
 import { createPerf } from '../src/perf';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -183,6 +184,27 @@ function demoDir(): string {
     : path.join(__dirname, '../public/demo');
 }
 const demoImagePath = (name: string) => path.join(demoDir(), `${name}.png`);
+
+// ---- the name reader --------------------------------------------------------------------------------------------
+// One hidden PowerShell child (electron/winocr-helper.ps1, shipped next to the asar via extraResources) reads the card
+// names, the loading screen's hero name and the re-roll caption with Windows OCR. Started with the app so it is warm
+// before the first draft; nameReader.ts restarts it once and then gives up. Off Windows it is never started.
+let nameReader: NameReader | null = null;
+let readerFailedLogged = false;
+const helperScript = () =>
+  app.isPackaged
+    ? path.join(process.resourcesPath, 'winocr-helper.ps1')
+    : path.join(__dirname, '../electron/winocr-helper.ps1');
+const readerState = (): ReaderState => nameReader?.state() ?? 'failed';
+function startReader() {
+  if (process.platform !== 'win32') {
+    if (!readerFailedLogged) log('name-reader', 'error', 'reader.failed', { why: 'not-windows' });
+    readerFailedLogged = true;
+    return;
+  }
+  nameReader = startNameReader({ script: helperScript() });
+  nameReader.onState((st) => sendControl(CHANNELS.readerState, st));
+}
 
 /** Every draft screenshot test mode can show, by name (file name without .png), sorted. */
 function testFrames(): string[] {
@@ -864,6 +886,15 @@ function platformWarning(): string | null {
 
 function setupIpc() {
   ipcMain.handle(CHANNELS.getGameRect, () => lastRect);
+  ipcMain.handle(CHANNELS.readerStateGet, () => readerState());
+  ipcMain.handle(CHANNELS.readText, async (_e, width: number, height: number, data: Uint8Array) => {
+    if (!nameReader) return { text: '', ms: 0, error: 'reader-down' };
+    try {
+      return await nameReader.read(width, height, data);
+    } catch (e) {
+      return { text: '', ms: 0, error: (e as Error).message };
+    }
+  });
   ipcMain.handle(CHANNELS.captureStateGet, () => captureState());
   ipcMain.on(CHANNELS.captureIdle, () => {
     if (!probeMode()) return; // test mode / harness: capture just follows the window
@@ -989,6 +1020,7 @@ if (!app.isReady()) app.commandLine.appendSwitch('disable-features', 'AllowWgcWi
 app.whenReady().then(() => {
   setupDisplayMediaHandler();
   setupIpc();
+  startReader();
   createControlWindow();
   createOverlayWindow();
   setupTray();
@@ -1039,6 +1071,9 @@ app.whenReady().then(() => {
       getDot: () => lastDot,
       getF8: () => ({ registered: f8Registered, inUse: f8InUse }),
       captureTestComposite,
+      // The name reader's helper: its process id and state, for the reader-down check.
+      readerPid: () => nameReader?.pid(),
+      readerState,
     };
   }
 });
@@ -1048,5 +1083,6 @@ app.on('window-all-closed', () => {
 });
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
+  nameReader?.stop();
   if (pollTimer) clearInterval(pollTimer);
 });

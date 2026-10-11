@@ -48,6 +48,11 @@ export const CHANNELS = {
   roundStart: 'round-start',
   // Item stats for a custom ability order the stored data lacks: page asks, main fetches once and caches under userData.
   orderStats: 'order-stats',
+  // The name reader (Windows OCR helper, electron/nameReader.ts): the page asks main to read a prepared text crop, and
+  // main pushes the reader's state (starting / ready / failed) whenever it changes.
+  readText: 'read-text',
+  readerStateGet: 'reader-state-get',
+  readerState: 'reader-state',
   // Custom title strip buttons: renderer -> main.
   windowMinimize: 'window-minimize',
   windowClose: 'window-close',

@@ -73,6 +73,9 @@ const accept = (round: number, choice: number, self: number, inventory: number[]
   });
 
 async function start() {
+  // the page keeps one listener on its worker for the name reader's relay (added once the worker is made, which may be
+  // after the click); the result listener comes with capture: wait for both
+  listeners.length = 0;
   render(
     <BrawlView
       hero={heroes.find((h) => h.id === 1)!}
@@ -84,7 +87,7 @@ async function start() {
     />,
   );
   fireEvent.click(screen.getByRole('button', { name: /start capture/i }));
-  await waitFor(() => expect(listeners.length).toBeGreaterThan(0));
+  await waitFor(() => expect(listeners.length).toBeGreaterThanOrEqual(2));
 }
 
 describe('BrawlView with an accepted draft', () => {

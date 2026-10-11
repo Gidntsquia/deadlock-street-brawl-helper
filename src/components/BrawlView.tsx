@@ -61,6 +61,7 @@ import { AbilityOrderEditor } from './AbilityOrderEditor';
 import { AdvicePanel } from './AdvicePanel';
 import { ItemTile } from './ItemTile';
 import { log } from '../log';
+import { ReaderDownError, setReaderDown, setTextReader, readHeroName } from '../brawl/ocr';
 import { usePersisted, isNumber, isNumberArray } from '../hooks/usePersisted';
 
 const FRAME_WAIT_MS = 150; // longest wait for a new video frame before copying anyway
@@ -80,6 +81,15 @@ const SLOW_DRAFT_FPS = 8; // when the worker reports slow reads
 const PREVIEW_MS = 200; // the debug preview redraws at most 5 times a second
 const ENEMY_SLOTS = 4;
 const isElectron = typeof window !== 'undefined' && !!window.brawlAPI;
+/** Status line while the name reader (Windows OCR helper in main) is not running: cards show `?`, the hero falls back. */
+export const READER_DOWN_TEXT = 'Name reader not running';
+// The page's own reads (the loading screen's hero name) go to main's name reader too; the worker relays through here.
+if (isElectron)
+  setTextReader(async (img) => {
+    const r = await window.brawlAPI!.readText(img.width, img.height, img.data);
+    if (r.error) throw new ReaderDownError(r.error);
+    return { text: r.text, ms: r.ms };
+  });
 
 interface Props {
   hero: Hero;
@@ -170,6 +180,9 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
   const [, setDraftSeen] = useState(false);
   const [, setF8InUse] = useState(false);
   const [problem, setProblem] = useState<Problem | null>(null);
+  // The name reader's state from main: 'failed' shows READER_DOWN_TEXT and turns every name read off.
+  const [readerFailed, setReaderFailed] = useState(!isElectron);
+  const readerFailedRef = useRef(!isElectron);
   const [env, setEnv] = useState<Env | null>(null);
   const [firstRunDone, setFirstRunDone] = usePersisted<boolean>(
     'firstRunDone',
@@ -184,6 +197,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
   const detectRef = useRef<{ at: number; timer: ReturnType<typeof setTimeout> } | null>(null);
   const [took_, setTook] = useState<string>('');
   const workerRef = useRef<Worker | null>(null);
+  const coveredRef = useRef<number[]>([]);
   const workerStartedRef = useRef(false); // the worker has been sent 'init' (capture loop running or resettable)
   const workerIndexRef = useRef<IconIndex | null>(null);
   const workerTiers = () => {
@@ -203,6 +217,19 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
     workerIndexRef.current ??= await j<IconIndex>('brawl-icons.json');
     if (workerRef.current) return workerRef.current;
     const w = new Worker(new URL('../brawl/worker.ts', import.meta.url), { type: 'module' });
+    // Text crops from the worker go to main's name reader and the answer goes back (a listener of its own: the frame
+    // loop's listener exists only while capture is on, a read can land after it).
+    w.addEventListener('message', (ev: MessageEvent<WorkerOut>) => {
+      const m = ev.data;
+      if (m.type !== 'ocr') return;
+      const reply = (r: { text: string; ms: number; error?: string }) =>
+        w.postMessage({ type: 'ocrResult', id: m.id, text: r.text, ms: r.ms, error: r.error } satisfies WorkerIn);
+      if (!isElectron) return reply({ text: '', ms: 0, error: 'reader-down' });
+      window
+        .brawlAPI!.readText(m.width, m.height, m.data)
+        .then(reply, (e: Error) => reply({ text: '', ms: 0, error: e.message }));
+    });
+    w.postMessage({ type: 'readerState', down: readerFailedRef.current } satisfies WorkerIn);
     w.postMessage({
       type: 'warm',
       index: workerIndexRef.current,
@@ -731,6 +758,22 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
     });
   }, [capture, denied]);
   useEffect(() => {
+    const apply = (failed: boolean) => {
+      if (failed === readerFailedRef.current) return;
+      readerFailedRef.current = failed;
+      setReaderDown(failed);
+      setReaderFailed(failed);
+      workerRef.current?.postMessage({ type: 'readerState', down: failed } satisfies WorkerIn);
+      if (failed) log('brawl-view', 'warn', 'reader.down', {});
+    };
+    if (!isElectron) {
+      setReaderDown(true);
+      return;
+    }
+    void window.brawlAPI!.getReaderState().then((st) => apply(st === 'failed'));
+    return window.brawlAPI!.onReaderState((st) => apply(st === 'failed'));
+  }, []);
+  useEffect(() => {
     if (!isElectron) return;
     let busy = false;
     return window.brawlAPI!.onLoadingName((crop) => {
@@ -738,7 +781,6 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
       busy = true;
       void (async () => {
         try {
-          const { readHeroName, terminateOCR } = await import('../brawl/ocr');
           const { matchHeroName, nameList } = await import('../brawl/names');
           const text = await readHeroName({
             width: crop.width,
@@ -746,7 +788,6 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
             data: new Uint8ClampedArray(crop.buffer),
             channels: 4,
           });
-          void terminateOCR();
           const hs = loopCtxRef.current.heroes;
           const m = matchHeroName(
             text,
@@ -1112,19 +1153,34 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
         return;
       }
       if (ev.data.type === 'name') {
-        const { slot, icon, text, itemId, ms } = ev.data;
+        const { slot, icon, text, itemId, ms, readerMs, score } = ev.data;
         log('brawl-view', 'info', 'card.name', {
+          reader: 'winocr',
           slot,
           icon,
           text,
           itemId,
+          score: Math.round(score * 1000) / 1000,
           fixed: itemId !== 0 && itemId !== icon,
-          ms,
+          ms: readerMs,
+          roundTripMs: Math.round(ms),
           at: Math.round(performance.now()),
         });
         return;
       }
+      if (ev.data.type === 'nameUnsure') {
+        const { slot, reason, text } = ev.data;
+        log('brawl-view', 'info', 'card.name.unsure', { slot, reason, text, at: Math.round(performance.now()) });
+        return;
+      }
+      if (ev.data.type === 'ocr') return; // the reader relay in makeWorker answers it
       const r = ev.data;
+      // a slot that just became covered (a hovered card or its tooltip over the name line): logged once per cover
+      const cov = r.covered ?? [];
+      for (const slot of cov)
+        if (!coveredRef.current.includes(slot))
+          log('brawl-view', 'info', 'card.name.unsure', { slot, reason: 'covered', at: Math.round(performance.now()) });
+      coveredRef.current = cov;
       if (r.track) applyTrack(r.track);
       if (perf.enabled) {
         perf.record(r.shop ? 'worker.draft' : 'worker.probe', r.ms);
@@ -1427,6 +1483,11 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
         {problem && (
           <div className="brawl-problem" role="alert">
             {PROBLEM_TEXT[problem]}
+          </div>
+        )}
+        {readerFailed && (
+          <div className="brawl-problem brawl-reader-down" role="alert">
+            {READER_DOWN_TEXT}
           </div>
         )}
         {heroNotRead && draftOpen && <div className="muted brawl-hero-note">{`Hero not read. Using ${hero.name}`}</div>}

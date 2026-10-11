@@ -30,7 +30,7 @@ export interface Truth {
 export const TOL = 0.5;
 export const TOL_AFTER = 1.0;
 /** A readable set must be advised this soon after it becomes readable. */
-export const ADVICE_BY = 1.5;
+export const ADVICE_BY = 1.0;
 /** Sets readable for less than this are too brief to demand advice. */
 export const BRIEF = 1.0;
 

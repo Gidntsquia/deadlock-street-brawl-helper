@@ -52,7 +52,9 @@ async function frame(name: string): Promise<Out> {
   clock += 70;
   const out = posted.find((m): m is Out => m.type === 'result')!;
   await new Promise((r) => setTimeout(r, 40));
-  return out;
+  // a read that lands in the wait re-runs this frame (a re-step) and may accept the set: that counts for this frame
+  const lateAccept = posted.filter((m): m is Out => m.type === 'result' && m !== out).find((m) => m.accepted);
+  return lateAccept && !out.accepted ? lateAccept : out;
 }
 async function run(name: string, n: number) {
   const outs: Out[] = [];

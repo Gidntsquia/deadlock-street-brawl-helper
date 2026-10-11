@@ -3,6 +3,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type { Rect } from './gameWindow';
 import type { OverlayState } from '../src/brawl/draw';
 import { CHANNELS } from './channels';
+import type { ReaderState } from './nameReader';
 import type { DraftRecord, FrameShot, SessionSummary } from './sessionStore';
 import type { Env, Problem } from '../src/brawl/problems';
 
@@ -83,6 +84,17 @@ const api = {
     ipcRenderer.on(CHANNELS.loadingName, listener);
     return () => {
       ipcRenderer.removeListener(CHANNELS.loadingName, listener);
+    };
+  },
+  /** Reads a prepared text crop (src/brawl/ocr.ts) with the name reader; `error` when it is not running. */
+  readText: (width: number, height: number, data: Uint8Array): Promise<{ text: string; ms: number; error?: string }> =>
+    ipcRenderer.invoke(CHANNELS.readText, width, height, data),
+  getReaderState: (): Promise<ReaderState> => ipcRenderer.invoke(CHANNELS.readerStateGet),
+  onReaderState: (cb: (s: ReaderState) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, s: ReaderState) => cb(s);
+    ipcRenderer.on(CHANNELS.readerState, listener);
+    return () => {
+      ipcRenderer.removeListener(CHANNELS.readerState, listener);
     };
   },
   onRoundStart: (cb: (round: number) => void) => {

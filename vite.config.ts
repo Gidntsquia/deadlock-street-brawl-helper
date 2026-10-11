@@ -36,5 +36,6 @@ export default defineConfig(({ mode }) => ({
   server: { host: true },
   test: {
     environmentMatchGlobs: [['src/components/**', 'jsdom']],
+    setupFiles: ['scripts/__tests__/setup-reader.ts'],
   },
 }));
