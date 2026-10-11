@@ -376,3 +376,17 @@ Speed (advice at x4): a name read or caption read that lands before the set is a
   of uncovered labelled crops). `--engine tesseract` needs `npm i --no-save tesseract.js@7` for the run. Numbers and the unsure list
   are on the wiki page "Name reader". `scripts/__tests__/name-reads.test.ts` pins raw text and ids on the demo frames at three sizes,
   the loading frame and the caption fixtures (live too when `BRAWL_OCR=live`).
+
+## Advice latency (new vs the old app, OBS footage)
+
+- Baseline: `scripts/video-truth/footage-latency.json` (one row per labelled set: `stretch`, `draft`, `appear`, `oldPlate`, `oldMs`), made by
+  `npx tsx scripts/footage-latency.ts "<recording.mkv>" [--write-labels]` (about 95 s; teal `#2ec4b6` plates found at 4 fps; `--write-labels`
+  also writes `appear` into `labels.json`). `oldMs = oldPlate - appear`; null where the old app drew no plate. Re-run only if the labels change.
+- Guard: `scripts/__tests__/footage-latency.test.ts` replays the video-truth crops through the real worker on a virtual clock (recorded OCR ms
+  charged per frame, `ocrChargedMs`) and fails with the row name when a set's new advice time is not below its `oldMs`. `FOOTAGE_LATENCY_FILE`
+  points it at a scratch copy of the baseline. `npx tsx scripts/video-truth-report.ts` prints `ready-based` (R2) and `appear-based` numbers.
+- Live (test-mode video only, never for stills): `setTiming.ts` (`TimingTracker`) splits each accepted set into capture / read / ocr / settle;
+  main matches the set to a label (`footageMatch.ts`, by items and nearest `from`), sets `OverlayState.msText` so every plate reads
+  `Score: <n> <ms> ms` (`~` when no label matches), and when the overlay acks the draw (`overlayDrawn`) logs `video.advice` and appends a row
+  (with `draw`) to `userData/video-latency.json`. Agents run the real recording only when the user asks; a synthetic clip is fine.
+- Replay quantises frames to 250 ms (4 fps); the live app sees a picture about every 67 ms, so live numbers are the ones to quote.
