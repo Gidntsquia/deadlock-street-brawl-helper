@@ -53,7 +53,7 @@ Repo constitution for planner / worker / evaluator agents. Overrides generic sta
 
 ## Which tests to run
 
-`npm test` (vitest, ~210 tests, already the whole suite; the two real-frame worker tests can time out once under heavy machine load) takes ~3 s wall: run it after any code change; run one file with
+`npm test` (vitest, ~340 tests, already the whole suite; the two real-frame worker tests can time out once under heavy machine load) takes ~2.5 min wall (the video truth replays dominate): run it after any code change; run one file with
 `npx vitest run <file>`. `npm run check` before pushing. `npm run win:e2e` (~30 s, drives real Windows) only when
 capture, overlay, worker or Electron code changed, and only once per session. Docs/comments: run nothing.
 All e2e-needing checks belong in the single `testmode` pass in `scripts/win/e2e-main.cjs`, asserted against
@@ -78,7 +78,7 @@ from live`. `npm run brawl:fixture -- <session folder>` copies every marked-wron
 
 While the game is foreground and capture is off, the probe tick also grabs the "Joining the fight as..." name box
 (`loadingNameRect`, `probeLoadingName` in `electron/shopProbe.ts`; cream-on-dark test `looksLikeLoadingName`). A hit sends
-the pixels over `loadingName` (at most 3 times per screen) to `BrawlView`, which OCRs them (`readHeroName`), matches the
+the pixels over `loadingName` (at most 3 times per screen) to `BrawlView`, which reads them with the name reader (`readHeroName`), matches the
 text to a hero name (`matchHeroName`, score >= 0.85: one wrong letter in "SHIP" once read as Shiv) and uses it only
 when the portrait read fails, for that match (valid 60 min). A hand-picked hero (`pinned`)
 beats both. Not verified on real Windows: only the one frame in `scripts/fixtures/loading/` is tested.
@@ -233,7 +233,7 @@ in `win:e2e`/`win:demo` drives the actual game:
 - Cards sit at fixed screen positions and print their exact item name: the worker pins every card read to
   `cardSquares` (`recognise.ts`, anchors x 0.95 icon edge, matches the hand-labelled circles) so the overlay never follows
   the icon search's step/scale wobble, and each slot's item comes from a **name lock** (`applyNames` in `worker.ts`): the
-  item its name line (`cardNameCrop`, OCR in `ocr.ts`, fuzzy match in `names.ts`) last read as, plus a pixel fingerprint
+  item its name line (`cardNameCrop`, read by the name reader through `ocr.ts`, fuzzy match in `names.ts`) last read as, plus a pixel fingerprint
   of that line. While the line looks the same the slot is that item whatever the icon says; a changed line is re-read
   (~30 ms) and only a clear read of another item moves the lock; an icon that surely shows another item (re-roll) makes
   the slot unsettled at once. No set is accepted until every slot has its lock (`GateFrame.ready`), a shaky icon keeps
@@ -282,7 +282,7 @@ in `win:e2e`/`win:demo` drives the actual game:
 - Frames are region-only: `draftRegions` (`src/brawl/recognise.ts`) lists the rects the recogniser reads; the
   page copies just those and the worker pastes them into a reused buffer. `regions.test.ts` proves reads are
   identical to full frames. Do not reassign `canvas.width/height` per frame (reallocates); it cost ~100 ms.
-- The worker persists across capture sessions (`reset`/`stop` messages); OCR is warmed on `init`/`reset`.
+- The worker persists across capture sessions (`reset`/`stop` messages); the name reader itself is warmed by main at app start (see Name reader).
 - Timing (`src/perf.ts`, `process.metrics`) runs only in dev (`DEV_SERVER_URL` / `import.meta.env.DEV`).
 - Speed (advice latency): matching uses summed-area tables (`integralOf`/`sampleFast` in `recognise.ts`, exact same
   reads as `sampleSquare`, ~2x faster); the worker is built and its icon index decoded when the app opens; the hero bar
@@ -300,7 +300,7 @@ list, pick source `read|assumed|grid`); each transition is a named event with a 
 the machine counts reads per slot, re-rolls, resyncs and the pick source, which ride on `result` messages as `track` (`TrackOut`).
 A standalone `track` message carries only `roundStart`. The page's worker listener exists only while capture is on, so the page
 logs `round.start` itself in its `onRoundStart` handler (round banner probe in `electron/shopProbe.ts`, channel `roundStart`) and
-`applyTrack` skips the worker's duplicate. The handler also posts `roundStart` to the worker, which warms OCR (`warmRead`).
+`applyTrack` skips the worker's duplicate. The handler also posts `roundStart` to the worker, (`warmRead`).
 `Resynced to round N choice M` is shown by `BrawlView`'s `resyncText` (5 s) ahead of `statusFor`; F8 forces it (`forceResync`).
 e2e hooks: `__brawlE2E.roundStart(n)`; checks `round-start-warms-first`, `slots-read-once`, `f8-resync`, `frame-switch-resync`;
 the advice limit is `ADVICE_LIMIT_MS` (1000) in `e2e-main.cjs`. `--slow 4` (processor affinity) does not yet meet it (about 2.7 s).
@@ -322,7 +322,41 @@ If `npm run check` fails with ENOTDIR on prettier, delete the stray file `node_m
 
 ## Video truth set (real gameplay, 1280x720)
 
-`scripts/fixtures/video-truth/s0..s9/` are 10 stretches cut from one OBS recording (lossy webp crops, about 34 MB; frame time is `truth.video[0] + frameIndex/4`). Hand labels live in `scripts/video-truth/labels.json` (per set: items, `from`/`to` on screen, `readable` window, `covered` slots that a tooltip hides and may show `?`). `npx tsx scripts/video-truth.ts --truth-only` rewrites only the `truth.json` files from the labels; the full tool needs the source video. `npx tsx scripts/video-truth-report.ts` prints per-stretch violations and advice latency (about 3 min); `scripts/__tests__/video-truth.test.ts` fails on any. Rules in `scoreStretch` (`scripts/lib/videoTruth.ts`): R1 advised items equal a labelled set on screen; R2 a set readable 1 s or more is advised within 1.5 s; R3 no advice drop-out while readable; R4 no advice when no set is on screen. Fix labels only when the video shows them wrong.
+`scripts/fixtures/video-truth/s0..s9/` are 10 stretches cut from one OBS recording (lossy webp crops, about 34 MB; frame time is `truth.video[0] + frameIndex/4`). Hand labels live in `scripts/video-truth/labels.json` (per set: items, `from`/`to` on screen, `readable` window, `covered` slots that a tooltip hides and may show `?`). `npx tsx scripts/video-truth.ts --truth-only` rewrites only the `truth.json` files from the labels; the full tool needs the source video. `npx tsx scripts/video-truth-report.ts` prints per-stretch violations and advice latency (about 3 min); `scripts/__tests__/video-truth.test.ts` fails on any. Rules in `scoreStretch` (`scripts/lib/videoTruth.ts`): R1 advised items equal a labelled set on screen; R2 a set readable 1 s or more is advised within 1.0 s (`ADVICE_BY`); R3 no advice drop-out while readable; R4 no advice when no set is on screen. Fix labels only when the video shows them wrong.
 Worker rules found with it: a card circle with no content counts as empty (`cardEmpty`), two empty circles mean cards leaving or sliding in (advice dropped, no fallback); the fallback is 1.2 s when two names are OCR-confirmed and the third circle is full but unreadable (tooltip), else 2.5 s; a `?` set upgrades at once when the missing card reads.
 
 Speed (advice at x4): a name read or caption read that lands before the set is accepted re-runs the last frame at once (`restep` in `worker.ts`, at most 3 per frame) instead of waiting for the next picture; the last card's clear icon stands on its first frame when the other two are name-confirmed. `replayDraft` waits for in-flight reads (`readsIdle`) each frame, so replays no longer depend on wall-clock OCR speed. `win:e2e -- --slow 4` is unusable as a measure while another job loads the host (load average above 10 gave 0.6 to 7 s for the same code).
+
+## Name reader (Windows OCR)
+
+- The three fixed text crops (card name line, loading-screen hero name, re-roll caption) are read by Windows.Media.Ocr in one
+  hidden PowerShell child: `electron/nameReader.ts` spawns `electron/winocr-helper.ps1` (`windowsHide: true`, never
+  `detached`; packaged next to the asar through `extraResources`), warms it with one dummy crop and logs `reader.ready`
+  (start ms). Protocol: stdin line `<id> <w> <h> <base64 RGBA>`, stdout JSON line `{id, text, ms}`. One exit restarts it
+  (`reader.exit`, `reader.restart`); a second exit or a failed start logs `reader.failed` and the reader stays down. No tesseract.js
+  anywhere (`grep -ri tesseract package.json src electron` must stay empty).
+- Path of a read: `ocr.ts` prepares the crop (pure JS: `prepareName` trims the line to its text run, pads 20 px and scales to
+  >= 90 px tall; `prepareHero` as is; `prepareCaption` 4x) and hands it to the installed `TextReader`. In the app the worker
+  posts `ocr` to the page, the page calls `brawlAPI.readText` (channel `readText`), main asks the helper. Main pushes the reader's
+  state over `readerState` (`readerStateGet` on load); while it is failed (or off Windows) every read rejects with
+  `ReaderDownError`, the status line says `Name reader not running`, unread cards go grey `?`, the hero falls back to the
+  window/pinned hero and the caption digit uses `rerollGlyphIsOne` only. `readCardName`/`readHeroName`/`readRerollsRemaining` keep
+  their signatures; matching stays in `names.ts`/`matchHeroName`.
+- Node tools and tests: `scripts/lib/textReader.ts` (installed for vitest by `scripts/__tests__/setup-reader.ts`). `BRAWL_OCR`
+  unset = recorded answers only from `scripts/fixtures/ocr-recorded/reads.json` (keyed by sha1 of kind, size and prepared
+  pixels; a missing crop fails like a down reader); `record` = recordings first, the live helper through `powershell.exe` for
+  the rest, new answers saved; `live` = always the helper, nothing saved (use it for `brawl:replay` on user sessions, whose crops
+  are not recorded). Re-record after any change to a prepare function or a crop rect: `BRAWL_OCR=record npx vitest run` and
+  `BRAWL_OCR=record npm run names:compare`. Any change to `prepareName` changes every key.
+- Covered name lines (`coveredSlots` in `recognise.ts`): a hover tooltip panel sits beside the hovered card, left or right, over a
+  neighbour's name line; the text then sits off centre in the line (`nameLineShape` within `textRun`, |off| >= `COVER_OFF` 0.3,
+  ink >= 300). A covered line is not read and never changes the lock; a slot never seen uncovered gets the grey `?` after the
+  normal fallback times and upgrades the moment it reads (a landed read re-runs the frame while the advised set has a `?`). A read
+  equal to another slot's item is a tooltip title (both slots read again), and the `?` fallback waits up to 400 ms
+  (`FALLBACK_READ_HOLD_MS`) for a read already on its way. Logs: `card.name` (`reader: 'winocr'`, `ms`, `score`),
+  `card.name.unsure` (`no-item | empty | covered | reader-down`).
+- Measure: `npm run names:compare -- --engine winocr|tesseract` writes `logs/name-compare-<engine>.json` (bar: 0 wrong, sure >= 95 %
+  of uncovered labelled crops). `--engine tesseract` needs `npm i --no-save tesseract.js@7` for the run. Numbers and the unsure list
+  are on the wiki page "Name reader". `scripts/__tests__/name-reads.test.ts` pins raw text and ids on the demo frames at three sizes,
+  the loading frame and the caption fixtures (live too when `BRAWL_OCR=live`).
+
