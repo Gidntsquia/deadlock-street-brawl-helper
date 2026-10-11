@@ -356,7 +356,10 @@ function createOverlayWindow() {
     },
   });
   logPreloadErrors(overlay);
-  overlay.setIgnoreMouseEvents(true, { forward: true });
+  // Click-through; mouse moves are forwarded for the plate hover. Not under the harness: the person's real cursor (a game
+  // in front holds it at the screen centre, inside the overlay) would clear the harness's own hover. Its synthetic
+  // moves reach the page directly (sendInputEvent).
+  overlay.setIgnoreMouseEvents(true, { forward: !process.env.BRAWL_E2E });
   overlayIgnoresMouseEvents = true;
   overlay.setAlwaysOnTop(true, 'screen-saver');
   // Under the harness nobody looks at the overlay (checks read it via capturePage/executeJavaScript), and it

@@ -38,7 +38,8 @@ Repo constitution for planner / worker / evaluator agents. Overrides generic sta
   ability panel runs 1.2 s in the harness (`BRAWL_TIP_MS`), not the real 15 s. Target: a full run under 30 s; the
   harness's own hard timeout is 40 s. It needs a >= 1080p desktop (see Overlay behaviour). Don't touch a window it didn't
   create. A real Deadlock may stay open: under `BRAWL_E2E` the app finds and captures only its own dummy (no dummy = no
-  game, capture denied), and the run ends with `real-game-left-alone` when one was open. `--only selftest-fail` is a deliberately failing case that proves the harness can fail — it never
+  game, capture denied), and the run ends with `real-game-left-alone` when one was open. Under `BRAWL_E2E` the overlay does not forward real mouse moves
+  (a game in front holds the cursor at the screen centre, which cleared the harness's hover); the harness's `sendInputEvent` moves still reach it. `--only selftest-fail` is a deliberately failing case that proves the harness can fail — it never
   runs as part of the default full run.
 - `npm run win:demo -- choice1|choice2` — no real Deadlock window needed (one may be open; it is left alone): starts the app's own **test mode**
   (below) with that screenshot, runs it through the real find/capture/recognise/advise/draw path, and saves
