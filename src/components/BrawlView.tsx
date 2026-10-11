@@ -1,3 +1,4 @@
+import { TimingTracker } from '../brawl/setTiming';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { emptyStable, stabilise, type StableState } from '../brawl/stabilise';
 import { createPortal } from 'react-dom';
@@ -152,6 +153,8 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
   const loadedHeroRef = useRef<{ id: number; at: number } | null>(null);
   /** The overlay state of the set on screen, held unchanged until that set is no longer live. */
   const frozenRef = useRef<{ key: string; state: OverlayState } | null>(null);
+  /** Where each set's time went (test-mode video logs it); fed by the frame loop, the OCR relay and the results. */
+  const timingRef = useRef(new TimingTracker());
   // Debug-mode recording: the page keeps the log of the draft on screen and hands crops and the record to main.
   const debugRef = useRef(debug);
   const draftLogRef = useRef(new DraftLog());
@@ -227,9 +230,14 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
       const reply = (r: { text: string; ms: number; error?: string }) =>
         w.postMessage({ type: 'ocrResult', id: m.id, text: r.text, ms: r.ms, error: r.error } satisfies WorkerIn);
       if (!isElectron) return reply({ text: '', ms: 0, error: 'reader-down' });
-      window
-        .brawlAPI!.readText(m.width, m.height, m.data)
-        .then(reply, (e: Error) => reply({ text: '', ms: 0, error: e.message }));
+      const t0 = performance.now();
+      window.brawlAPI!.readText(m.width, m.height, m.data).then(
+        (r) => {
+          timingRef.current.ocrDone(performance.now() - t0);
+          reply(r);
+        },
+        (e: Error) => reply({ text: '', ms: 0, error: e.message }),
+      );
     });
     w.postMessage({ type: 'readerState', down: readerFailedRef.current } satisfies WorkerIn);
     w.postMessage({
@@ -450,6 +458,8 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
       const f = frozenRef.current;
       if (f && f.key === acceptedKeyRef.current) state = { ...f.state, rerollRect: state.rerollRect, panel: null };
       else {
+        const timing = timingRef.current.get(acceptedKeyRef.current);
+        if (timing) state = { ...state, timing: { ...timing, sentWall: Date.now() } };
         frozenRef.current = { key: acceptedKeyRef.current, state };
         const score = (id: number) => state.advice?.ranked.find((x) => x.itemId === id)?.score ?? null;
         shownRef.current = {
@@ -939,8 +949,10 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
       },
     };
     let vfcId = 0;
+    let lastVfcAt = performance.now();
     if (vid && frames.supported) {
       const loop = () => {
+        lastVfcAt = performance.now();
         frames.seen++;
         if (frames.want) frames.run();
         vfcId = vid.requestVideoFrameCallback(loop);
@@ -1069,6 +1081,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
           setTimeout(() => window.brawlAPI?.sessionFrame?.({ t: now, regions: copy }), 0);
         }
       }
+      timingRef.current.frameSent(performance.now(), frames.supported ? performance.now() - lastVfcAt : 0);
       w.postMessage({ type: 'frame', width: srcW, height: srcH, regions, prefer } satisfies WorkerIn, [
         ...regions.map((r) => r.buffer),
       ]);
@@ -1200,6 +1213,15 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
       // cards the player already picked from (see draftGate.ts).
       readsRef.current = r.live ? stableRef.current.reads : [];
       const seen = r.reads.filter((x) => x.present).length;
+      if (r.shop)
+        timingRef.current.result(
+          performance.now(),
+          Date.now(),
+          seen,
+          r.reads.filter((x) => x.present && !x.unsure).length,
+          !!r.accepted,
+          r.key,
+        );
       if (r.accepted) {
         const offers = r.reads.filter((x) => !x.unsure).map(toOffer);
         setUnsure(r.reads.filter((x) => x.unsure).length);

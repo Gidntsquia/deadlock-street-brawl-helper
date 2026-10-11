@@ -32,6 +32,7 @@ import { SessionStore, type DraftRecord, type FrameShot, type RegionShot } from 
 import { debugDefault } from '../src/brawl/debugMode';
 import { MIN_HEIGHT, MIN_WIDTH, isBounds, validBounds } from './windowBounds';
 import { overlayHasContent } from '../src/brawl/overlayContent';
+import { matchLabel, msLabel, type LabelFile, type LabelMatch } from '../src/brawl/footageMatch';
 import { dotState, initialLobby, lobbyDotVisible, stepLobby, type DotState } from '../src/brawl/lobbyDot';
 import { shouldRegisterDetectKey } from './detectKey';
 
@@ -804,11 +805,97 @@ async function setTestFrame(frame: string) {
 
 const lastVideoFile = () => path.join(app.getPath('userData'), 'test-video.json');
 
+/** The labels of the OBS recording (dev copy of the repo only: `scripts/` is not packaged), or null. */
+let videoLabels: LabelFile | null | undefined;
+function loadVideoLabels(): LabelFile | null {
+  if (videoLabels === undefined) {
+    try {
+      videoLabels = JSON.parse(
+        readFileSync(path.join(__dirname, '..', 'scripts', 'video-truth', 'labels.json'), 'utf8'),
+      ) as LabelFile;
+    } catch {
+      videoLabels = null;
+    }
+  }
+  return videoLabels;
+}
+interface TimedSet {
+  timing: import('../src/brawl/setTiming').SetTiming;
+  names: string[];
+  match: LabelMatch | null;
+  msText: string;
+}
+/** Per accepted set while a video plays: its labelled start mark and the `<n> ms` text, worked out once. */
+const timedSets = new Map<string, Promise<TimedSet>>();
+async function videoNow(): Promise<number> {
+  const w = testWindow;
+  if (!alive(w)) throw new Error('no dummy');
+  return (await readTestVideo(w)).time;
+}
+function timedSet(state: import('../src/brawl/draw').OverlayState): Promise<TimedSet> {
+  const timing = state.timing!;
+  let p = timedSets.get(timing.setKey);
+  if (!p) {
+    p = (async () => {
+      const videoAt = await videoNow();
+      const names = state.reads
+        .filter((r) => r.present && !r.unsure)
+        .map((r) => state.advice?.ranked.find((x) => x.itemId === r.itemId)?.name ?? '');
+      const match = matchLabel(loadVideoLabels(), testVideo?.name ?? '', names, videoAt);
+      const ms = match ? (videoAt - match.appearAt) * 1000 : Date.now() - timing.firstSeenWall;
+      return { timing, names, match, msText: msLabel(ms, !match) };
+    })();
+    timedSets.set(timing.setKey, p);
+  }
+  return p;
+}
+const videoLatencyFile = () => path.join(app.getPath('userData'), 'video-latency.json');
+async function logVideoAdvice(setKey: string) {
+  const p = timedSets.get(setKey);
+  if (!p || !testVideo) return;
+  const drawnWall = Date.now();
+  try {
+    const [info, videoAt] = await Promise.all([p, videoNow()]);
+    const t = info.timing;
+    const newMs = info.match
+      ? Math.round((videoAt - info.match.appearAt) * 1000)
+      : Math.round(drawnWall - t.firstSeenWall);
+    const row = {
+      at: new Date().toISOString(),
+      file: testVideo.name,
+      stretch: info.match?.stretch ?? null,
+      draft: info.match?.draft ?? null,
+      items: info.names,
+      videoAt: Math.round(videoAt * 1000) / 1000,
+      appearAt: info.match?.appearAt ?? null,
+      approx: !info.match,
+      newMs,
+      capture: t.capture,
+      read: t.read,
+      ocr: t.ocr,
+      settle: t.settle,
+      draw: Math.max(0, drawnWall - (t.sentWall ?? drawnWall)),
+    };
+    log('electron-main', 'info', 'video.advice', row);
+    let rows: unknown[] = [];
+    try {
+      rows = JSON.parse(readFileSync(videoLatencyFile(), 'utf8')) as unknown[];
+    } catch {
+      rows = [];
+    }
+    rows.push(row);
+    writeFileSync(videoLatencyFile(), JSON.stringify(rows, null, 1));
+  } catch {
+    /* the dummy closed meanwhile */
+  }
+}
+
 /** Stops the video poll and forgets the video (the dummy page itself is reset by showTestFrame or closed). */
 function endTestVideo() {
   if (testVideoTimer) clearInterval(testVideoTimer);
   testVideoTimer = null;
   testVideo = null;
+  timedSets.clear();
   tintOverlayForVideo(false);
 }
 
@@ -1103,8 +1190,18 @@ function setupIpc() {
   ipcMain.handle(CHANNELS.testModeVideo, (_e, action: unknown) =>
     isTestVideoAction(action) ? testVideoAction(action) : testState(),
   );
+  // The overlay says a set's plates are drawn: one `video.advice` line and row per set while a test-mode video plays.
+  ipcMain.on(CHANNELS.overlayDrawn, (_event, setKey: unknown) => {
+    if (typeof setKey === 'string') void logVideoAdvice(setKey);
+  });
   // Relay: the control window computes advice from its capture and forwards state for the overlay to draw.
-  ipcMain.on(CHANNELS.overlayState, (_event, state) => {
+  ipcMain.on(CHANNELS.overlayState, async (_event, incoming: import('../src/brawl/draw').OverlayState) => {
+    let state = incoming;
+    // test-mode video: print the ms on every plate (the start mark is the labelled `appear`, or the worker's first sight)
+    if (state.timing && alive(testWindow) && testVideo) {
+      const info = await timedSet(state).catch(() => null);
+      if (info) state = { ...state, msText: info.msText };
+    }
     lastOverlayState = state;
     if (state.draft) lobby = stepLobby(lobby, { type: 'draft', now: Date.now() });
     lastDot = currentDot();

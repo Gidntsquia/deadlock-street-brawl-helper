@@ -3,6 +3,8 @@ import { rerollButtonRect } from './recognise';
 import type { AbilityPanelData } from './abilities';
 import type { DotState } from './lobbyDot';
 
+import type { SetTiming } from './setTiming';
+
 export interface OverlayAdviceCard {
   itemId: number;
   name: string;
@@ -47,6 +49,10 @@ export interface OverlayState {
   dot?: DotState | null;
   /** A one-sentence problem the overlay shows for a few seconds. */
   notice?: string | null;
+  /** Test-mode video only: how long this set took (control window's breakdown); main turns it into `msText`. */
+  timing?: SetTiming | null;
+  /** Test-mode video only (set by main): `<n> ms` printed after every item plate's score, `~` when estimated. */
+  msText?: string | null;
 }
 
 /** The blank state: nothing to draw. */
@@ -315,6 +321,7 @@ export function drawReads(
   grades: Record<number, string> = {},
   theme: OverlayTheme = readTheme(),
   bonuses: Record<number, number> = {},
+  msText: string | null = null,
 ): DrawnRect[] {
   const drawn: DrawnRect[] = [];
   interface Slot {
@@ -356,7 +363,7 @@ export function drawReads(
               isBest,
               mode: 'item',
               badge: grades[read.itemId] ?? '-',
-              label: `Score: ${score.toFixed(2)}`,
+              label: `Score: ${score.toFixed(2)}${msText ? `  ${msText}` : ''}`,
               chip: null,
             },
       bonus,

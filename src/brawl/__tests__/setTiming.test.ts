@@ -1,0 +1,64 @@
+import { describe, expect, it } from 'vitest';
+import { TimingTracker } from '../setTiming';
+import { matchLabel, msLabel, type LabelFile } from '../footageMatch';
+
+describe('TimingTracker', () => {
+  it('splits a set into capture, read, ocr and settle', () => {
+    const t = new TimingTracker();
+    t.frameSent(1000, 20);
+    t.ocrDone(5); // before any card: not counted
+    t.result(1030, 5030, 1, 0, false, 'k');
+    t.ocrDone(8);
+    t.frameSent(1100, 30);
+    t.result(1140, 5140, 3, 3, false, 'k');
+    t.frameSent(1300, 10);
+    t.result(1330, 5330, 3, 3, true, 'k');
+    expect(t.get('k')).toEqual({
+      setKey: 'k',
+      firstSeenWall: 5030 - 30 - 20,
+      capture: 10,
+      read: 30 + 40 + 30,
+      ocr: 8,
+      settle: 190,
+    });
+  });
+  it('starts a new cycle after an empty frame and after an accept', () => {
+    const t = new TimingTracker();
+    t.frameSent(0, 0);
+    t.result(10, 10, 2, 2, false, 'a');
+    t.result(20, 20, 0, 0, false, 'a');
+    t.frameSent(500, 0);
+    t.result(510, 510, 3, 3, true, 'b');
+    expect(t.get('b')?.read).toBe(10);
+    expect(t.get('a')).toBeNull();
+  });
+});
+
+describe('matchLabel', () => {
+  const labels: LabelFile = {
+    video: 'v.mkv',
+    stretches: [
+      {
+        id: 's0',
+        video: [0, 20],
+        sets: [
+          { draft: 'd1', items: ['A', 'B', 'C'], from: 2, to: 5, appear: 2.5 },
+          { draft: 'd2', items: ['A', 'B', 'C'], from: 12, to: 15, appear: 12.25 },
+        ],
+      },
+    ],
+  };
+  it('picks the nearest set with the same items', () => {
+    expect(matchLabel(labels, 'v.mkv', ['A', 'B', 'C'], 13)).toEqual({ stretch: 's0', draft: 'd2', appearAt: 12.25 });
+    expect(matchLabel(labels, 'v.mkv', ['A', 'B'], 4)?.draft).toBe('d1');
+  });
+  it('is null for another file, other items or no labels', () => {
+    expect(matchLabel(labels, 'x.mkv', ['A', 'B', 'C'], 3)).toBeNull();
+    expect(matchLabel(labels, 'v.mkv', ['A', 'X', 'C'], 3)).toBeNull();
+    expect(matchLabel(null, 'v.mkv', ['A'], 3)).toBeNull();
+  });
+  it('prints ms with a tilde when approximate', () => {
+    expect(msLabel(1234.4, false)).toBe('1234 ms');
+    expect(msLabel(800, true)).toBe('~800 ms');
+  });
+});

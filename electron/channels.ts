@@ -3,6 +3,8 @@ export const CHANNELS = {
   getGameRect: 'get-game-rect',
   gameRect: 'game-rect',
   overlayState: 'overlay-state',
+  // Test-mode video only: the overlay tells main a set's plates are drawn (main logs `video.advice`).
+  overlayDrawn: 'overlay-drawn',
   captureDenied: 'capture-denied',
   // Test mode (dummy "Deadlock" window): invoke to read/toggle/switch frame, and a push of the state to the
   // control window whenever it changes (including the dummy being closed or a real game taking over).

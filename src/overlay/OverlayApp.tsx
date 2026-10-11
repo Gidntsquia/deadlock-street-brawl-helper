@@ -38,6 +38,7 @@ export default function OverlayApp() {
   const drawnRef = useRef<DrawnRect[]>([]);
   const hoverRef = useRef<number | null>(null);
   const dotRef = useRef<DotState | null>(null);
+  const ackedRef = useRef('');
   const [dotTip, setDotTip] = useState<DotState | null>(null);
   const [hover, setHover] = useState<{ itemId: number; x: number; y: number; flip: boolean } | null>(null);
 
@@ -78,8 +79,18 @@ export default function OverlayApp() {
           gradesFromAdvice(state.advice),
           undefined,
           bonusesFromAdvice(state.advice),
+          state.msText ?? null,
         ),
       );
+    // test-mode video: tell main once per set that its plates are on the canvas (it logs `video.advice` from this)
+    if (
+      state.timing &&
+      drawn.some((d) => d.kind === 'best' || d.kind === 'card') &&
+      ackedRef.current !== state.timing.setKey
+    ) {
+      ackedRef.current = state.timing.setKey;
+      window.brawlAPI?.overlayDrawn?.(state.timing.setKey);
+    }
     // The `Reading` sign stands in until the plates come, and is never drawn with them.
     const reading = state.draft && !!state.reading && !drawn.length;
     if (reading) drawReading(ctx, cardSquares(state.frameW, state.frameH)[1]!, sx, sy);

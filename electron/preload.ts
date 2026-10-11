@@ -35,6 +35,7 @@ const api = {
     };
   },
   sendOverlayState: (state: OverlayState) => ipcRenderer.send(CHANNELS.overlayState, state),
+  overlayDrawn: (setKey: string) => ipcRenderer.send(CHANNELS.overlayDrawn, setKey),
   onOverlayState: (cb: (state: OverlayState) => void) => {
     const listener = (_e: Electron.IpcRendererEvent, state: OverlayState) => cb(state);
     ipcRenderer.on(CHANNELS.overlayState, listener);
