@@ -809,6 +809,16 @@ function endTestVideo() {
   if (testVideoTimer) clearInterval(testVideoTimer);
   testVideoTimer = null;
   testVideo = null;
+  tintOverlayForVideo(false);
+}
+
+/** While a video plays the overlay draws in magenta, so it cannot be mistaken for the teal plates in the footage. */
+function tintOverlayForVideo(on: boolean) {
+  if (!alive(overlay)) return;
+  const js = on
+    ? `document.documentElement.style.setProperty('--teal','#ff4fd8');document.documentElement.style.setProperty('--teal-ink','#2a0624')`
+    : `document.documentElement.style.removeProperty('--teal');document.documentElement.style.removeProperty('--teal-ink')`;
+  void overlay.webContents.executeJavaScript(js).catch(() => undefined);
 }
 
 /** Reads the dummy's video element: time, length, playing, and an error if the file would not play. */
@@ -845,6 +855,7 @@ async function openTestVideo(win: BrowserWindow, file: string) {
   captureHeld = false;
   const error = await playTestVideo(win, file);
   testVideo = { name: path.basename(file), time: 0, duration: 0, playing: !error, error };
+  tintOverlayForVideo(!error);
   log('electron-main', error ? 'warn' : 'info', 'testmode.video', { file: path.basename(file), error });
   testVideoTimer = setInterval(() => {
     const w = testWindow;
