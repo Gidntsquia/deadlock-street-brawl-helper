@@ -824,6 +824,12 @@ interface TimedSet {
   names: string[];
   match: LabelMatch | null;
   msText: string;
+  /** What the plates say: the card to take (name), a re-roll call, tier letters, the hero, how many `?` plates. */
+  best: string | null;
+  reroll: boolean;
+  grades: string[];
+  hero: string;
+  unsure: number;
 }
 /** Per accepted set while a video plays: its labelled start mark and the `<n> ms` text, worked out once. */
 const timedSets = new Map<string, Promise<TimedSet>>();
@@ -843,7 +849,18 @@ function timedSet(state: import('../src/brawl/draw').OverlayState): Promise<Time
         .map((r) => state.advice?.ranked.find((x) => x.itemId === r.itemId)?.name ?? '');
       const match = matchLabel(loadVideoLabels(), testVideo?.name ?? '', names, videoAt);
       const ms = match ? (videoAt - match.appearAt) * 1000 : Date.now() - timing.firstSeenWall;
-      return { timing, names, match, msText: msLabel(ms, !match) };
+      const card = (id: number | null) => state.advice?.ranked.find((x) => x.itemId === id);
+      return {
+        timing,
+        names,
+        match,
+        msText: msLabel(ms, !match),
+        best: card(state.bestId)?.name ?? null,
+        reroll: !!state.reroll,
+        grades: state.reads.filter((r) => r.present && !r.unsure).map((r) => card(r.itemId)?.grade ?? '-'),
+        hero: state.advice?.hero ?? '',
+        unsure: state.reads.filter((r) => r.present && r.unsure).length,
+      };
     })();
     timedSets.set(timing.setKey, p);
   }
@@ -866,6 +883,11 @@ async function logVideoAdvice(setKey: string) {
       stretch: info.match?.stretch ?? null,
       draft: info.match?.draft ?? null,
       items: info.names,
+      grades: info.grades,
+      unsure: info.unsure,
+      best: info.best,
+      reroll: info.reroll,
+      hero: info.hero,
       videoAt: Math.round(videoAt * 1000) / 1000,
       appearAt: info.match?.appearAt ?? null,
       approx: !info.match,
@@ -1314,6 +1336,11 @@ app.whenReady().then(() => {
       // Plays a video file in the dummy without the file picker. Not used by win:e2e or win:demo: the video check is
       // manual only (see AGENTS.md "Test mode video").
       playTestVideo: (file: string) => (alive(testWindow) ? openTestVideo(testWindow, file) : Promise.resolve()),
+      // The headless latency run (scripts/win/latency-main.cjs, started only by hand): test mode without the button,
+      // and the dummy's video moved, paused, played and read directly.
+      startTestMode: (frame?: string) => startTestMode(frame),
+      videoControl: (js: string) =>
+        alive(testWindow) ? testWindow.webContents.executeJavaScript(js) : Promise.resolve(null),
       testState,
       // Same code path as F8 / the button. forceCaptureOff() gives the "capture forced off" start state.
       detectNow: () => detectNow('e2e'),

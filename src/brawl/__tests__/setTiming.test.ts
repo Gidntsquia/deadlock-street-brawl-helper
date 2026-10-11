@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { TimingTracker } from '../setTiming';
-import { matchLabel, msLabel, type LabelFile } from '../footageMatch';
+import { matchLabel, msLabel, stretchAt, type LabelFile } from '../footageMatch';
 
 describe('TimingTracker', () => {
   it('splits a set into capture, read, ocr and settle', () => {
@@ -46,8 +46,22 @@ describe('matchLabel', () => {
           { draft: 'd2', items: ['A', 'B', 'C'], from: 12, to: 15, appear: 12.25 },
         ],
       },
+      {
+        id: 's1',
+        video: [900, 920],
+        sets: [{ draft: 'd9', items: ['A', 'B', 'C'], from: 902, to: 905, appear: 902.5 }],
+      },
     ],
   };
+  it('only matches inside the stretch the video is playing (padded 1 s)', () => {
+    // the video looped back past s1: the same items must not match s0's set from 900 s away, nor the reverse
+    expect(matchLabel(labels, 'v.mkv', ['A', 'B', 'C'], 903)?.draft).toBe('d9');
+    expect(matchLabel(labels, 'v.mkv', ['A', 'B', 'C'], 20.9)?.draft).toBe('d2');
+    expect(matchLabel(labels, 'v.mkv', ['A', 'B', 'C'], 21.5)).toBeNull();
+    expect(matchLabel(labels, 'v.mkv', ['A', 'B', 'C'], 500)).toBeNull();
+    expect(stretchAt(labels, 899.2)).toBe('s1');
+    expect(stretchAt(labels, 500)).toBeNull();
+  });
   it('picks the nearest set with the same items', () => {
     expect(matchLabel(labels, 'v.mkv', ['A', 'B', 'C'], 13)).toEqual({ stretch: 's0', draft: 'd2', appearAt: 12.25 });
     expect(matchLabel(labels, 'v.mkv', ['A', 'B'], 4)?.draft).toBe('d1');
