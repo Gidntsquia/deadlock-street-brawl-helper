@@ -395,7 +395,7 @@ Speed (advice at x4): a name read or caption read that lands before the set is a
   `scripts/win/latency-main.cjs`): syncs like `win:dev`, starts the app under `BRAWL_E2E` in test mode with the user's recording,
   plays each labelled stretch padded 1 s, prints one row per labelled set (old ms, new ms from `appear`, capture/read/ocr/settle/draw,
   re-roll, `wrong`) and writes `logs/win-latency.json`; exit 1 on any row at 1000 ms or more, wrong, or never advised. Nothing is
-  visible (opacity 0, dummy at `HWND_BOTTOM`). Hard timeout 15 min; a full run takes about 4 min. **This is the only automated
+  visible (opacity 0, dummy at `HWND_BOTTOM`). Hard timeout 15 min; a full run takes about 4 min. Like win:e2e it needs a >= 1080p desktop: with the monitor asleep or off, Windows drops to 819x614, the dummy jumps to (0,0) and the run misses whole sets (`no advice`, same rows every time; 2026-10-11). Check `[System.Windows.Forms.Screen]::PrimaryScreen.Bounds` first. The overlay is kept out of the topmost band there (`BRAWL_OVERLAY_NOT_TOP`, set only by `latency-main.cjs`) so `win.sh list-topmost` stays empty. **This is the only automated
   thing that plays the user's recording**: run it by hand (worker or user), never from `npm test`, `npm run check`, `win:e2e` or CI.
   A set matches a label only while the dummy's `currentTime` is inside that stretch's `video` range padded 1 s (else `~`).
   A set whose label marks a slot `covered` counts as advised with a `?` on that slot (result `ok (covered slot ?)`), as in the video-truth rules.
