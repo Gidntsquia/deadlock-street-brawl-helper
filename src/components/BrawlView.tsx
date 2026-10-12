@@ -1107,8 +1107,10 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
           setTimeout(() => window.brawlAPI?.sessionFrame?.({ t: now, regions: copy }), 0);
         }
       }
-      timingRef.current.frameSent(performance.now(), frames.supported ? performance.now() - lastVfcAt : 0);
-      w.postMessage({ type: 'frame', width: srcW, height: srcH, regions, prefer } satisfies WorkerIn, [
+      const captureMs = frames.supported ? performance.now() - lastVfcAt : 0;
+      timingRef.current.frameSent(performance.now(), captureMs);
+      const at = Math.round(Date.now() - Math.max(0, captureMs));
+      w.postMessage({ type: 'frame', width: srcW, height: srcH, regions, prefer, at } satisfies WorkerIn, [
         ...regions.map((r) => r.buffer),
       ]);
       const pv = previewRef.current;
@@ -1263,6 +1265,12 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
       readsRef.current = r.live ? stableRef.current.reads : [];
       // a card counts from the frame its circle shows (its name may not be read yet)
       const seen = Math.max(r.shown ?? 0, r.reads.filter((x) => x.present).length);
+      // the set's last card landed on this frame (all three circles show a card): the start of the advice budget
+      if (r.land !== undefined) {
+        const at = r.frameAt ?? Date.now();
+        timingRef.current.land(at);
+        log('brawl-view', 'info', 'card.land', { slot: r.land, at, round: r.round, choice: r.choice });
+      }
       if (r.shop)
         timingRef.current.result(
           performance.now(),

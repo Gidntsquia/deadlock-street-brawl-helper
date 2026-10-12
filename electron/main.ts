@@ -861,13 +861,16 @@ function timedSet(state: import('../src/brawl/draw').OverlayState): Promise<Time
         .filter((r) => r.present && !r.unsure)
         .map((r) => state.advice?.ranked.find((x) => x.itemId === r.itemId)?.name ?? '');
       const match = matchLabel(loadVideoLabels(), testVideo?.name ?? '', names, videoAt);
-      const ms = match ? (videoAt - match.appearAt) * 1000 : Date.now() - timing.firstSeenWall;
+      // the plates print ms from the last card landing (the advice budget's start); `~` from the first card when no
+      // landing was seen
+      const last = timing.lastCardWall;
+      const ms = last !== null ? Date.now() - last : Date.now() - timing.firstSeenWall;
       const card = (id: number | null) => state.advice?.ranked.find((x) => x.itemId === id);
       return {
         timing,
         names,
         match,
-        msText: msLabel(ms, !match),
+        msText: msLabel(ms, last === null),
         best: card(state.bestId)?.name ?? null,
         reroll: !!state.reroll,
         grades: state.reads.filter((r) => r.present && !r.unsure).map((r) => card(r.itemId)?.grade ?? '-'),
@@ -890,7 +893,11 @@ async function logVideoAdvice(setKey: string) {
   const p = had.p;
   const drawnWall = Date.now();
   try {
-    const [info, videoAt] = await Promise.all([p, videoNow(drawnWall)]);
+    const [info, videoAt, landAt] = await Promise.all([
+      p,
+      videoNow(drawnWall),
+      had.p.then((i) => (i.timing.lastCardWall !== null ? videoNow(i.timing.lastCardWall) : null)),
+    ]);
     const t = info.timing;
     const newMs = info.match
       ? Math.round((videoAt - info.match.appearAt) * 1000)
@@ -910,6 +917,9 @@ async function logVideoAdvice(setKey: string) {
       appearAt: info.match?.appearAt ?? null,
       approx: !info.match,
       newMs,
+      // the last card landing, ms from the label's `appear` (the picture's video time), and advice ms after it
+      lastCard: info.match && landAt !== null ? Math.round((landAt - info.match.appearAt) * 1000) : null,
+      fromLast: t.lastCardWall !== null ? Math.round(drawnWall - t.lastCardWall) : null,
       capture: t.capture,
       read: t.read,
       ocr: t.ocr,

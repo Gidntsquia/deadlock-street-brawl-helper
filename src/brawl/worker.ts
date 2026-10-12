@@ -34,10 +34,10 @@ import {
   readerDown,
   setReaderDown,
   setTextReader,
-  type NameCrop,
   type TextKind,
 } from './ocr';
 import { matchItemName, nameList, type NameList } from './names';
+import { hasInk, nameSig } from './nameLine';
 import { initialGate, offScreenGate, RELABEL_SETTLE_MS, SETTLE_MS, stepGate } from './draftGate';
 import { setLocked } from './brawlState';
 import { createTracker, type TrackOut } from './tracker';
@@ -63,7 +63,8 @@ export type WorkerIn =
     }
   // A draft frame is only the rectangles the recogniser reads (draftRegions), each with its own pixels: the worker
   // pastes them into a reused frame-sized buffer, so nothing outside them is ever copied out of the video.
-  | { type: 'frame'; width: number; height: number; regions: FrameRegion[]; prefer: number[] }
+  // `at`: wall clock (Date.now) when the video presented this picture, echoed on the result as `frameAt`
+  | { type: 'frame'; width: number; height: number; regions: FrameRegion[]; prefer: number[]; at?: number }
   // Off the draft screen the page copies just the "CHOICE n OF 3" crop (see shopProbeRect) instead of a whole frame.
   | {
       type: 'probe';
@@ -136,6 +137,10 @@ interface FrameResult {
   /** Card circles with something in them on this frame (draft frames read in full): when the set's first card showed. */
   shown?: number;
   covered?: number[]; // card slots whose name line a hovered card or a tooltip covers on this frame: not read, lock kept
+  /** The last card of the set landed on this frame (the first frame all three circles show a card): its slot. Once per set. */
+  land?: number;
+  /** The frame message's `at` (wall clock the picture was presented), when the page sent one. */
+  frameAt?: number;
   ms: number;
   stages?: Record<string, number>; // milliseconds per recogniser stage (a few timer reads per frame)
 }
@@ -197,27 +202,6 @@ const forgetNames = () => {
   rerollAt = null;
 };
 
-// Fingerprint of a name line (the black-on-white OCR crop): ink share in a coarse grid over the text area.
-const SIG_COLS = 32,
-  SIG_ROWS = 4,
-  CROP_PAD = 12; // cardNameCrop's white margin
-const nameSig = (c: NameCrop): Uint8Array => {
-  const out = new Uint8Array(SIG_COLS * SIG_ROWS);
-  const w = c.width - 2 * CROP_PAD,
-    h = c.height - 2 * CROP_PAD;
-  const counts = new Uint32Array(out.length),
-    totals = new Uint32Array(out.length);
-  for (let y = 0; y < h; y++)
-    for (let x = 0; x < w; x++) {
-      const k =
-        Math.min(SIG_ROWS - 1, Math.floor((y * SIG_ROWS) / h)) * SIG_COLS +
-        Math.min(SIG_COLS - 1, Math.floor((x * SIG_COLS) / w));
-      totals[k]++;
-      if (c.data[((y + CROP_PAD) * c.width + x + CROP_PAD) * 4] === 0) counts[k]++;
-    }
-  for (let k = 0; k < out.length; k++) out[k] = totals[k] ? Math.round((255 * counts[k]!) / totals[k]!) : 0;
-  return out;
-};
 /** Same lettering: at most a few grid cells moved by more than a sixth. */
 const nameCellsMoved = (a: Uint8Array, b: Uint8Array) => {
   let changed = 0;
@@ -229,8 +213,6 @@ const sameName = (a: Uint8Array, b: Uint8Array) => nameCellsMoved(a, b) <= 4;
  *  another item. With no icon to tell, this is what makes a slot unsettled at once. */
 const otherName = (a: Uint8Array, b: Uint8Array) => a.length === b.length && nameCellsMoved(a, b) > OTHER_NAME_CELLS;
 const OTHER_NAME_CELLS = 6;
-/** A line with almost no ink shows no name (hidden, or the screen is mid-swap): nothing to read. */
-const hasInk = (s: Uint8Array) => s.reduce((n, v) => n + v, 0) > 255 * 2;
 
 /** The reads with each slot's item set from its name lock and its position pinned to the fixed card square;
  *  `waiting`: a slot's item is too unsure to offer the set to the gate; `pending`: a slot's name is still being read,
@@ -675,6 +657,8 @@ let fbHeldAt: number | null = null;
  *  shown a card this long. */
 const FALLBACK_FRESH_MS = 250;
 let fullSince: (number | null)[] = [null, null, null];
+/** The set being formed has had all three circles filled (its last card landed): `card.land` went out for it. */
+let landed = false;
 let lastSpent = false; // the previous frame showed a set a pick was already made from: its cards leaving is not a new set to wait on
 let cardsAt: number | null = null; // when the first card of the not-yet-accepted set appeared
 let earlyMeta: { sig: Uint8Array; meta: DraftMeta } | null = null; // the hero bar read before the accept
@@ -691,6 +675,7 @@ const forgetDraft = () => {
   acceptedRound = acceptedChoice = 0;
   cardsAt = frozenReads = earlyMeta = null;
   fullSince = [null, null, null];
+  landed = false;
   gate = initialGate();
   stableInv = null;
   gridRead = null;
@@ -1143,6 +1128,14 @@ function draftFrame(msg: Extract<WorkerIn, { type: 'frame' }>, t0: number, idx: 
   if (gate.live || named.empty === 3 || named.changed || lastSpent) cardsAt = null;
   else cardsAt ??= nowMs;
   fullSince = named.empties.map((e, i) => (e ? null : (fullSince[i] ?? nowMs)));
+  // The last card lands: the first frame of this set with all three circles filled. Its slot is the circle filled last.
+  let land: number | undefined;
+  if (cardsAt === null) landed = false;
+  else if (named.empty === 0 && !landed) {
+    landed = true;
+    land = 0;
+    for (let i = 1; i < 3; i++) if ((fullSince[i] ?? 0) >= (fullSince[land] ?? 0)) land = i;
+  }
   // Fallback: no full read within FALLBACK_MS. The read cards are advised, the others become `?`. Never for a set the
   // player already picked from (its cards read sure, so it never gets here with its own key).
   const fullKey = seen === 3 ? reads.map((r) => `${r.itemId}${r.enhanced ? '+' : ''}`).join(',') : '';
@@ -1294,6 +1287,8 @@ function draftFrame(msg: Extract<WorkerIn, { type: 'frame' }>, t0: number, idx: 
     inventory,
     track: tracker.take() ?? undefined,
     shown: 3 - named.empty,
+    land,
+    frameAt: msg.at,
     covered: named.covered.some(Boolean) ? [0, 1, 2].filter((i) => named.covered[i]) : undefined,
     ms: performance.now() - t0,
     stages,
@@ -1311,6 +1306,7 @@ const nonShopResult = (t0: number): FrameResult => {
   knownHero = null;
   acceptedRound = acceptedChoice = 0;
   cardsAt = frozenReads = null;
+  landed = false;
   gate = offScreenGate(gate);
   stableInv = null;
   gridRead = null;

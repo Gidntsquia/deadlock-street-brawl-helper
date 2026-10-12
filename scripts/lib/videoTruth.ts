@@ -45,7 +45,17 @@ export interface TruthReport {
   covered: string[];
   /** Per set with an `appear`: video seconds from `appear` to the first frame its correct advice is live (`secs`), the
    *  name reads' own time charged on top (`ocrMs`, one helper, one read at a time), and their sum `newMs`. */
-  fromAppear: { set: string; draft: string; secs: number | null; ocrMs: number; newMs: number | null }[];
+  fromAppear: {
+    set: string;
+    draft: string;
+    secs: number | null;
+    ocrMs: number;
+    newMs: number | null;
+    /** Video seconds of the replay frame on which the set's last card landed (`land` on the worker result), or null. */
+    landAt: number | null;
+    /** Advice ms after that landing frame, the name reads' own time from that frame on charged on top. */
+    fromLastMs: number | null;
+  }[];
 }
 
 export async function scoreStretch(dir: string): Promise<TruthReport> {
@@ -57,11 +67,13 @@ export async function scoreStretch(dir: string): Promise<TruthReport> {
   const frames: { t: number; on: boolean; round: number; choice: number; names: string[] }[] = [];
   const covered: string[] = [];
   const charge: number[] = [];
+  const lands: { t: number; f: number }[] = [];
   await replayDraft(dir, {
     waitNames: true,
     onResult: (f, res) => {
       for (const slot of res.covered ?? []) covered.push(`#${f}:${slot}`);
       charge[f] = ocrChargedMs();
+      if (res.land !== undefined) lands.push({ t: vt(f), f });
       frames.push({
         t: vt(f),
         on: res.live && !res.spent,
@@ -113,17 +125,24 @@ export async function scoreStretch(dir: string): Promise<TruthReport> {
   const fromAppear: TruthReport['fromAppear'] = [];
   for (const s of truth.sets) {
     if (s.appear == null) continue;
+    const appear = s.appear;
     const first = frames.find((f) => f.on && f.t >= s.from - TOL && f.t <= s.to + TOL_AFTER && matches(f, s));
     const af = Math.max(Math.round((s.appear - truth.video[0]) * truth.fps), 0);
     const fi = first ? Math.round((first.t - truth.video[0]) * truth.fps) : -1;
     const ocrMs = fi >= 0 ? Math.max(0, (charge[fi] ?? 0) - (charge[af - 1] ?? charge[af] ?? 0)) : 0;
     const secs = first ? +(first.t - s.appear).toFixed(2) : null;
+    // the landing that belongs to this set: the last one at or before its first advice, not before its `appear`
+    // (half a second of slack: a frame's time is quantised to 250 ms)
+    const land = first ? lands.filter((l) => l.t <= first.t && l.t >= appear - TOL).pop() : undefined;
+    const lastOcr = land && fi >= 0 ? Math.max(0, (charge[fi] ?? 0) - (charge[land.f - 1] ?? charge[land.f] ?? 0)) : 0;
     fromAppear.push({
       set: label(s),
       draft: s.draft,
       secs,
       ocrMs: Math.round(ocrMs),
       newMs: secs == null ? null : Math.round(secs * 1000 + ocrMs),
+      landAt: land ? land.t : null,
+      fromLastMs: land && first ? Math.round((first.t - land.t) * 1000 + lastOcr) : null,
     });
   }
   return { violations, latency, covered, fromAppear };

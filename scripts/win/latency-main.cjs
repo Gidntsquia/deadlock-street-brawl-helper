@@ -6,11 +6,15 @@
 // the desktop), starts test mode, plays the recording in the dummy `Deadlock` window (never renamed) and jumps to each
 // labelled stretch of scripts/video-truth/labels.json, playing its `video` range padded 1 s at normal speed, once per
 // run. The app's own `video.advice` lines (electron/main.ts, one per drawn set) are collected and turned into one row
-// per labelled set that the old app drew a plate for (scripts/video-truth/footage-latency.json `oldMs`): new ms from the
-// label's `appear` to the first drawn advice naming all three labelled items, and its capture/read/ocr/settle/draw parts.
-// Writes logs/win-latency.json; exit 1 when any row is at 1000 ms or more, is `wrong`, or has no advice.
+// per labelled set that the old app drew a plate for (scripts/video-truth/footage-latency.json `oldMs`): ms from the
+// label's `appear` to the first drawn advice naming all three labelled items (reference only), when the set's last card
+// landed (`last card`, ms from `appear`), advice ms after that landing (`from last`, the target: 400 ms), and the
+// capture/read/ocr/settle/draw parts. Runs the stretches 3 times by default; each draft is judged on its median `from
+// last` over the runs. A set whose label marks a slot `covered` passes when it is advised with that slot as `?` (the
+// 1.0 s fallback) and nothing wrong: the 400 ms budget does not apply to it. Records the Windows CPU load at the start
+// and end of each run. Writes logs/win-latency.json; exit 1 when any draft fails, any row is `wrong`, or has no advice.
 //
-// Flags: --only s7[,s3]  --runs N  --video <Windows path>  --commit <sha> (passed by run-latency.sh: no .git here)
+// Flags: --only s7[,s3]  --runs N (default 3)  --video <Windows path>  --commit <sha> (passed by run-latency.sh)
 //        --relay page: text reads go worker -> page -> main as before the direct port (BRAWL_OCR_RELAY), to compare
 'use strict';
 process.env.BRAWL_E2E = '1';
@@ -28,9 +32,11 @@ app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 const ROOT = path.join(__dirname, '..', '..');
 const REPORT = path.join(ROOT, 'logs', 'win-latency.json');
 const DEBUG_LOG = path.join(ROOT, 'logs', 'win-latency-debug.log');
-const LIMIT_MS = 1000;
+/** The target: advice drawn within this many ms of the set's last card landing (median of the runs). */
+const BUDGET_MS = 400;
+/** A run that starts with Windows busier than this gets a warning (it still counts). */
+const LOAD_WARN_PCT = 50;
 const PAD_S = 1;
-const HARD_TIMEOUT_MS = 15 * 60_000;
 
 const arg = (name) => {
   const i = process.argv.indexOf(name);
@@ -40,7 +46,9 @@ const only = arg('--only')
   ?.split(',')
   .map((s) => s.trim())
   .filter(Boolean);
-const runs = Math.max(1, Number(arg('--runs')) || 1);
+const runs = Math.max(1, Number(arg('--runs')) || 3);
+/** A full run takes about 4 min: 10 min per run, plus start-up. */
+const HARD_TIMEOUT_MS = (5 + 10 * runs) * 60_000;
 if (arg('--relay') === 'page') process.env.BRAWL_OCR_RELAY = 'page';
 const video = arg('--video') || 'D:\\OBS Videos\\2026-10-09 00-46-30.mkv';
 const commit = arg('--commit') || 'unknown';
@@ -154,6 +162,10 @@ function rowsFor(run) {
         hero: (full ?? first)?.hero ?? '',
         oldMs: base.oldMs,
         newMs: full ? full.newMs : null,
+        lastCard: full?.lastCard ?? null,
+        fromLast: full?.fromLast ?? null,
+        covered: !!set.covered?.length,
+        appear: set.appear,
         coveredUnsure: full ? full.unsure : 0, // `?` plates on labelled covered slots in the counted advice
         firstMs: first ? first.newMs : null,
         firstUnsure: first ? first.unsure : null,
@@ -166,7 +178,17 @@ function rowsFor(run) {
         wrong: why.length > 0,
         why: why.join('; '),
       };
-      row.fail = row.wrong ? 'wrong' : row.newMs == null ? 'no advice' : row.newMs >= LIMIT_MS ? '>= 1000 ms' : '';
+      row.fail = row.wrong
+        ? 'wrong'
+        : row.newMs == null
+          ? 'no advice'
+          : row.covered
+            ? ''
+            : row.fromLast == null
+              ? 'no landing'
+              : row.fromLast > BUDGET_MS
+                ? `> ${BUDGET_MS} ms`
+                : '';
       out.push(row);
     }
   }
@@ -180,12 +202,82 @@ const pad = (v, n) =>
 const padL = (v, n) => String(v ?? '-').padStart(n);
 function printTable(rows) {
   say(
-    `${pad('set', 9)} ${pad('label items', 52)} ${pad('advised', 52)} ${padL('old', 5)} ${padL('new', 5)} ${padL('first', 5)} ${padL('cap', 4)} ${padL('read', 5)} ${padL('ocr', 5)} ${padL('settl', 5)} ${padL('draw', 4)} rr  result`,
+    `${pad('set', 9)} ${pad('label items', 52)} ${pad('advised', 52)} ${padL('old', 5)} ${padL('new', 5)} ${padL('last', 5)} ${padL('from', 5)} ${padL('first', 5)} ${padL('cap', 4)} ${padL('read', 5)} ${padL('ocr', 5)} ${padL('settl', 5)} ${padL('draw', 4)} rr  result`,
   );
   for (const r of rows)
     say(
-      `${pad(r.stretch + ' ' + r.draft, 9)} ${pad(r.labelItems.join(', '), 52)} ${pad(r.advisedItems.join(', '), 52)} ${padL(r.oldMs, 5)} ${padL(r.newMs, 5)} ${padL(r.firstMs, 5)} ${padL(r.capture, 4)} ${padL(r.read, 5)} ${padL(r.ocr, 5)} ${padL(r.settle, 5)} ${padL(r.draw, 4)} ${r.reroll ? 'yes' : 'no '} ${r.fail || 'ok'}${r.coveredUnsure ? ' (covered slot ?)' : ''}${r.why ? ' (' + r.why + ')' : ''}`,
+      `${pad(r.stretch + ' ' + r.draft, 9)} ${pad(r.labelItems.join(', '), 52)} ${pad(r.advisedItems.join(', '), 52)} ${padL(r.oldMs, 5)} ${padL(r.newMs, 5)} ${padL(r.lastCard, 5)} ${padL(r.fromLast, 5)} ${padL(r.firstMs, 5)} ${padL(r.capture, 4)} ${padL(r.read, 5)} ${padL(r.ocr, 5)} ${padL(r.settle, 5)} ${padL(r.draw, 4)} ${r.reroll ? 'yes' : 'no '} ${r.fail || 'ok'}${r.coveredUnsure || (r.covered && !r.fail) ? ' (covered slot ?)' : ''}${r.why ? ' (' + r.why + ')' : ''}`,
     );
+}
+
+/** Windows CPU load in % over `ms`, from the cores' busy/idle times (no child process). */
+async function cpuLoad(ms = 1000) {
+  const snap = () => os.cpus().reduce((a, c) => {
+    const t = c.times;
+    a.idle += t.idle;
+    a.total += t.user + t.nice + t.sys + t.irq + t.idle;
+    return a;
+  }, { idle: 0, total: 0 });
+  const a = snap();
+  await sleep(ms);
+  const b = snap();
+  const total = b.total - a.total;
+  return total > 0 ? Math.round((100 * (total - (b.idle - a.idle))) / total) : null;
+}
+const median = (xs) => {
+  const s = [...xs].sort((a, b) => a - b);
+  return s.length ? s[Math.floor(s.length / 2)] : null;
+};
+
+/** One entry per labelled set over all runs: best / median / worst `from last` and the verdict. */
+function perDraftOf(perRun) {
+  const out = [];
+  for (const first of perRun[0] ?? []) {
+    const same = perRun.map((rows) => rows.find((r) => r.stretch === first.stretch && r.draft === first.draft && r.appear === first.appear)).filter(Boolean);
+    const fl = same.map((r) => r.fromLast).filter((x) => x != null);
+    const wrong = same.some((r) => r.wrong);
+    const none = same.some((r) => r.newMs == null);
+    const med = median(fl);
+    const verdict = wrong
+      ? 'wrong'
+      : none
+        ? 'no advice'
+        : first.covered
+          ? 'ok (covered slot ?)'
+          : med == null
+            ? 'no landing'
+            : med <= BUDGET_MS
+              ? 'ok'
+              : `median > ${BUDGET_MS} ms`;
+    const mid = (k) => median(same.map((r) => r[k]).filter((x) => x != null));
+    out.push({
+      stretch: first.stretch,
+      draft: first.draft,
+      appear: first.appear,
+      items: first.labelItems,
+      oldMs: first.oldMs,
+      runs: same.length,
+      lastCard: mid('lastCard'),
+      best: fl.length ? Math.min(...fl) : null,
+      median: med,
+      worst: fl.length ? Math.max(...fl) : null,
+      newMs: mid('newMs'),
+      capture: mid('capture'),
+      read: mid('read'),
+      ocr: mid('ocr'),
+      settle: mid('settle'),
+      draw: mid('draw'),
+      reroll: same.some((r) => r.reroll),
+      verdict,
+      pass: verdict === 'ok' || verdict === 'ok (covered slot ?)',
+    });
+  }
+  return out;
+}
+function printPerDraft(list) {
+  say(`${pad('set', 9)} ${pad('label items', 52)} ${padL('old', 5)} ${padL('last', 5)} ${padL('best', 5)} ${padL('med', 5)} ${padL('worst', 5)} ${padL('ocr', 5)} ${padL('settl', 5)} verdict`);
+  for (const d of list)
+    say(`${pad(d.stretch + ' ' + d.draft, 9)} ${pad(d.items.join(', '), 52)} ${padL(d.oldMs, 5)} ${padL(d.lastCard, 5)} ${padL(d.best, 5)} ${padL(d.median, 5)} ${padL(d.worst, 5)} ${padL(d.ocr, 5)} ${padL(d.settle, 5)} ${d.verdict}`);
 }
 
 let finished = false;
@@ -241,8 +333,13 @@ async function main() {
   await v('v.pause();');
 
   const t0 = Date.now();
+  const loads = [];
   for (let run = 1; run <= runs; run++) {
     currentRun = run;
+    const startLoad = await cpuLoad();
+    if (startLoad != null && startLoad > LOAD_WARN_PCT)
+      say(`WARNING: run ${run} starts with Windows CPU load at ${startLoad} % (over ${LOAD_WARN_PCT} %); it still counts`);
+    loads.push({ run, start: startLoad, end: null });
     for (const st of stretches) {
       const from = Math.max(0, st.video[0] - PAD_S),
         to = st.video[1] + PAD_S;
@@ -260,6 +357,8 @@ async function main() {
       }
       await v('v.pause();');
     }
+    loads[run - 1].end = await cpuLoad();
+    say(`run ${run}: Windows CPU load ${loads[run - 1].start} % at start, ${loads[run - 1].end} % at end`);
   }
   await sleep(500); // the last plates' acks
   say(`played ${stretches.length} stretch(es) x ${runs} in ${Math.round((Date.now() - t0) / 1000)} s`);
@@ -271,7 +370,8 @@ async function main() {
     video,
     runs,
     only: only ?? null,
-    limitMs: LIMIT_MS,
+    budgetMs: BUDGET_MS,
+    load: loads,
     rows: [],
     perRun: [],
     advice,
@@ -283,17 +383,24 @@ async function main() {
     printTable(rows);
     report.perRun.push(rows);
     if (run === 1) report.rows = rows;
-    bad = bad.concat(rows.filter((r) => r.fail).map((r) => `run ${run} ${r.stretch} ${r.draft} (${r.fail})`));
+    bad = bad.concat(rows.filter((r) => r.wrong || r.newMs == null).map((r) => `run ${run} ${r.stretch} ${r.draft} (${r.fail})`));
   }
+  report.perDraft = perDraftOf(report.perRun);
+  say(`--- per draft over ${runs} run(s): best / median / worst ms from the last card ---`);
+  printPerDraft(report.perDraft);
+  bad = bad.concat(report.perDraft.filter((d) => !d.pass && d.verdict !== 'wrong' && d.verdict !== 'no advice').map((d) => `${d.stretch} ${d.draft} (${d.verdict})`));
   // A looped play must not match a set of another stretch: every matched row lies within 60 s of its label.
   const stray = advice.filter((a) => a.stretch && Math.abs(a.newMs) >= 60_000);
   if (stray.length) bad.push(`${stray.length} row(s) matched 60 s or more from their label`);
   const all = report.perRun.flat();
-  const ms = all.map((r) => r.newMs).filter((x) => x != null);
+  const fl = all.map((r) => r.fromLast).filter((x) => x != null);
+  const pd = report.perDraft;
   const summary =
-    `win:latency ${report.date} ${commit}: ${all.length} rows, ${all.filter((r) => !r.fail).length} ok, ` +
-    `max ${ms.length ? Math.max(...ms) : '-'} ms, median ${ms.length ? ms.sort((a, b) => a - b)[Math.floor(ms.length / 2)] : '-'} ms, ` +
-    `${all.filter((r) => r.wrong).length} wrong` +
+    `win:latency ${report.date} ${commit}: ${runs} run(s), ${all.length} rows, ` +
+    `${all.filter((r) => r.fromLast != null && r.fromLast <= BUDGET_MS).length} rows <= ${BUDGET_MS} ms from last card, ` +
+    `${pd.filter((d) => d.pass).length}/${pd.length} drafts pass (median), ` +
+    `from last max ${fl.length ? Math.max(...fl) : '-'} ms, median ${median(fl) ?? '-'} ms, ` +
+    `${all.filter((r) => r.wrong).length} wrong, load ${loads.map((l) => `${l.start}->${l.end} %`).join(' ')}` +
     (bad.length ? `. FAIL: ${bad.join(', ')}` : '. PASS');
   report.summary = summary;
   say(summary);

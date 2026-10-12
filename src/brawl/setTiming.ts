@@ -17,6 +17,9 @@ export interface SetTiming {
   ocr: number;
   /** All three cards read to accepted: the gate's wait for the picture to hold still. */
   settle: number;
+  /** Wall clock (Date.now) of the picture on which the set's last card landed (all three circles first show a card,
+   *  the worker's `card.land`); null when no landing was seen (the set was already up when capture started). */
+  lastCardWall: number | null;
   /** Wall clock (Date.now) when the control window sent the plates to the overlay; main adds the draw time on ack. */
   sentWall?: number;
 }
@@ -26,6 +29,7 @@ export class TimingTracker {
   private firstSeen: number | null = null;
   private firstSeenWall = 0;
   private firstFull: number | null = null;
+  private lastCardWall: number | null = null;
   private read = 0;
   private trips: [number, number][] = []; // wall clock [start, end] of each text read
   private done = new Map<string, SetTiming>();
@@ -33,6 +37,10 @@ export class TimingTracker {
   /** A frame went to the worker; `captureMs` is how long ago the video presented that picture. */
   frameSent(now: number, captureMs: number) {
     this.post = { t: now, capture: Math.max(0, captureMs) };
+  }
+  /** The worker saw the set's last card land on a picture presented at `wall` (Date.now clock). */
+  land(wall: number) {
+    this.lastCardWall = wall;
   }
   /** One text read finished: it went out at `startWall` (Date.now clock) and came back `ms` later. */
   ocrTrip(startWall: number, ms: number) {
@@ -77,6 +85,7 @@ export class TimingTracker {
       read: Math.round(this.read),
       ocr: Math.round(this.ocrWithin(this.firstSeenWall, wall)),
       settle: Math.round(Math.max(0, now - (this.firstFull ?? now))),
+      lastCardWall: this.lastCardWall,
     });
     this.reset();
   }
@@ -87,6 +96,7 @@ export class TimingTracker {
   private reset() {
     this.firstSeen = null;
     this.firstFull = null;
+    this.lastCardWall = null;
     this.read = 0;
   }
 }

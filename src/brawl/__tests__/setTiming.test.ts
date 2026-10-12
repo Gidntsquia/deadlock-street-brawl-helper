@@ -21,7 +21,20 @@ describe('TimingTracker', () => {
       read: 30 + 40 + 30,
       ocr: 12,
       settle: 190,
+      lastCardWall: null,
     });
+  });
+  it('carries the last card landing into the accepted set and forgets it after', () => {
+    const t = new TimingTracker();
+    t.frameSent(0, 0);
+    t.result(10, 1010, 2, 2, false, 'a');
+    t.land(1100);
+    t.result(110, 1110, 3, 2, false, 'a');
+    t.result(210, 1210, 3, 3, true, 'a');
+    expect(t.get('a')?.lastCardWall).toBe(1100);
+    t.result(300, 1300, 0, 0, false, 'b');
+    t.result(400, 1400, 3, 3, true, 'b');
+    expect(t.get('b')?.lastCardWall).toBeNull();
   });
   it('starts a new cycle after an empty frame and after an accept', () => {
     const t = new TimingTracker();
