@@ -55,6 +55,10 @@ export const CHANNELS = {
   // The name reader (Windows OCR helper, electron/nameReader.ts): the page asks main to read a prepared text crop, and
   // main pushes the reader's state (starting / ready / failed) whenever it changes.
   readText: 'read-text',
+  // A MessagePort straight from the frame worker to main for those reads (the page's thread is busy with frames, and a
+  // read relayed through it waited 20 to 100 ms): the page asks, main answers with the port, the page hands it on.
+  ocrPortGet: 'ocr-port-get',
+  ocrPort: 'ocr-port',
   readerStateGet: 'reader-state-get',
   readerState: 'reader-state',
   // Custom title strip buttons: renderer -> main.

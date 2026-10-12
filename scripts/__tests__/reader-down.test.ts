@@ -10,9 +10,22 @@ const dir = path.join('scripts', 'fixtures', 'sessions', 'm-20261005T050819-atvp
 describe('reader down', () => {
   it('shows every card as ? at the fallback and makes no name read', async () => {
     const results: { present: boolean; unsure?: boolean; itemId: number }[][] = [];
-    const down = await replayDraft(dir, { readerDown: true, hold: 6, onResult: (_f, res) => results.push(res.reads) });
+    let cardAt: number | null = null,
+      qAt: number | null = null;
+    const down = await replayDraft(dir, {
+      readerDown: true,
+      hold: 6,
+      onResult: (_f, res, t) => {
+        results.push(res.reads);
+        if (res.shop && (res.shown ?? 0) > 0) cardAt ??= t;
+        if (res.reads.some((c) => c.unsure)) qAt ??= t;
+      },
+    });
     const shown = results.filter((r) => r.some((c) => c.present || c.unsure));
     expect(shown.length).toBeGreaterThan(0);
+    // the `?` plates come 1 s after the first card showed (frames of this recording are up to ~300 ms apart)
+    expect(qAt! - cardAt!).toBeGreaterThanOrEqual(1000);
+    expect(qAt! - cardAt!).toBeLessThan(1400);
     for (const reads of shown) expect(reads.every((c) => !!c.unsure)).toBe(true);
     expect(down.stats.unsure).toBe(3);
     expect(down.unsureLog.some((l) => l.endsWith(':reader-down'))).toBe(false);

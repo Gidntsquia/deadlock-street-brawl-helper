@@ -6,9 +6,10 @@ describe('TimingTracker', () => {
   it('splits a set into capture, read, ocr and settle', () => {
     const t = new TimingTracker();
     t.frameSent(1000, 20);
-    t.ocrDone(5); // before any card: not counted
+    t.ocrTrip(4900, 5); // before any card: not counted
     t.result(1030, 5030, 1, 0, false, 'k');
-    t.ocrDone(8);
+    t.ocrTrip(5040, 8);
+    t.ocrTrip(5044, 8); // overlaps the first: counted once (5040 to 5052)
     t.frameSent(1100, 30);
     t.result(1140, 5140, 3, 3, false, 'k');
     t.frameSent(1300, 10);
@@ -18,7 +19,7 @@ describe('TimingTracker', () => {
       firstSeenWall: 5030 - 30 - 20,
       capture: 10,
       read: 30 + 40 + 30,
-      ocr: 8,
+      ocr: 12,
       settle: 190,
     });
   });
@@ -31,6 +32,21 @@ describe('TimingTracker', () => {
     t.result(510, 510, 3, 3, true, 'b');
     expect(t.get('b')?.read).toBe(10);
     expect(t.get('a')).toBeNull();
+  });
+  it('does not start a set on frames that still show the accepted one', () => {
+    // the accepted set stays up for seconds, then the next set's cards replace it with no empty frame between
+    const t = new TimingTracker();
+    t.frameSent(0, 0);
+    t.result(10, 10, 3, 3, true, 'a');
+    t.frameSent(5000, 0);
+    t.result(5010, 5010, 3, 3, false, 'a', true);
+    t.frameSent(9000, 0);
+    t.result(9010, 9010, 1, 0, false, 'b');
+    t.frameSent(9200, 0);
+    t.result(9210, 9210, 3, 3, false, 'b');
+    t.frameSent(9300, 0);
+    t.result(9310, 9310, 3, 3, true, 'b');
+    expect(t.get('b')).toMatchObject({ firstSeenWall: 9000, read: 30, settle: 100 });
   });
 });
 

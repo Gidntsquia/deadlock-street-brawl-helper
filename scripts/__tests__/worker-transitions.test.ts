@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import sharp from 'sharp';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { CARD_NAME, cardSquares, draftRegions } from '../../src/brawl/recognise';
+import { SETTLE_MS } from '../../src/brawl/draftGate';
 import type { WorkerIn, WorkerOut } from '../../src/brawl/worker';
 import type { Item } from '../../src/types';
 
@@ -153,7 +154,7 @@ describe('worker: the draft gate on real frames', () => {
     const c1Key = '1548066885,2829638276,3633614685';
     expect(accepts(first)).toEqual([[c1Key, 1, 1]]);
     // the settle time runs from the first sight of the set (while its names are still being read), so the accept is never sooner than that
-    expect(first.findIndex((o) => o.accepted) * 70).toBeGreaterThanOrEqual(300);
+    expect(first.findIndex((o) => o.accepted) * 70).toBeGreaterThanOrEqual(SETTLE_MS);
 
     // The pick: for over a second the old cards stay up while the label and inventory grid already show the next
     // choice. Before the gate this re-accepted the old cards as "choice 2".
@@ -221,7 +222,13 @@ describe('worker: the draft gate on real frames', () => {
       expect(new Set(ids).size).toBe(ids.length);
     }
     for (let i = 0; i < 60 && !outs.some((o) => o.accepted && o.key === c1Key); i++) outs.push(await frame('c1'));
-    expect(accepts(outs)).toEqual([[c1Key, 1, 1]]);
+    // the tooltip held long enough for the 1 s fallback: the twin slots may show `?` first, never one item twice, and
+    // then the set upgrades to the three real cards
+    for (const o of outs.filter((o) => o.accepted)) {
+      const ids = o.reads.filter((r) => r.present && !r.unsure).map((r) => r.itemId);
+      expect(new Set(ids).size).toBe(ids.length);
+    }
+    expect(accepts(outs).at(-1)).toEqual([c1Key, 1, 1]);
   });
 
   it('keeps the advice and the circles still through hovers, and moves to re-rolled cards', async () => {
@@ -259,7 +266,7 @@ describe('worker: the draft gate on real frames', () => {
     for (let i = 0; i < 120 && !first.some((o) => o.accepted); i++) first.push(await frame('c1'));
     expect(accepts(first)).toEqual([[c1Ids.join(','), 1, 1]]);
     send({ type: 'readerState', down: true });
-    const after = await run('c2', 50); // 3.5 s on the virtual clock, past the 2.5 s fallback
+    const after = await run('c2', 25); // 1.75 s on the virtual clock, past the 1 s fallback
     send({ type: 'readerState', down: false });
     expect(after.every((o) => o.reads.every((r) => !c1Ids.includes(r.itemId) || !r.present))).toBe(true);
     const last = after.at(-1)!;

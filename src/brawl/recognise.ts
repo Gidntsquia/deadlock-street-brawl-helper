@@ -1536,6 +1536,52 @@ const INVENTORY = {
  *  edge and the tiles grow (72 px, 82 px pitch). `readInventory` reads both layouts and keeps the one that matches more. */
 const INVENTORY_WIDE = { ...INVENTORY, x0: 34, y0: 1261, pitch: 82, icon: 72 } as const;
 const INVENTORY_LAYOUTS = [INVENTORY, INVENTORY_WIDE] as const;
+/** A coarse picture of every grid slot (both layouts): 4x4 points per slot, three channels each. Lossy video never repeats
+ *  a frame byte for byte, so `cachedMatch` misses every frame; two of these that agree mean the grid did not change. */
+export function inventorySig(img: {
+  width: number;
+  height: number;
+  data: ArrayLike<number>;
+  channels?: number;
+}): Uint8Array[] {
+  const sx = img.width / BRAWL_LAYOUT.ref.width,
+    sy = img.height / BRAWL_LAYOUT.ref.height,
+    ch = img.channels ?? 4,
+    out: Uint8Array[] = [];
+  for (const L of INVENTORY_LAYOUTS)
+    for (let r = 0; r < L.rows; r++)
+      for (let c = 0; c < L.cols; c++) {
+        const v: number[] = [];
+        for (let j = 0; j < 4; j++)
+          for (let i = 0; i < 4; i++) {
+            const x = Math.round((L.x0 + c * L.pitch + ((i + 0.5) * L.icon) / 4) * sx),
+              y = Math.round((L.y0 + r * L.pitch + ((j + 0.5) * L.icon) / 4) * sy),
+              p = (Math.min(img.height - 1, y) * img.width + Math.min(img.width - 1, x)) * ch;
+            v.push(img.data[p]!, img.data[p + 1]!, img.data[p + 2]!);
+          }
+        out.push(Uint8Array.from(v));
+      }
+  return out;
+}
+/** Same grid: no slot has more than 3 of its 48 values moved by over 40 (an icon landing in a slot moves most of them)
+ *  nor its values moved by more than 8 on average (a fade). */
+export function sameInventory(a: Uint8Array[], b: Uint8Array[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let s = 0; s < a.length; s++) {
+    let n = 0,
+      sum = 0;
+    const x = a[s]!,
+      y = b[s]!;
+    for (let i = 0; i < x.length; i++) {
+      const d = Math.abs(x[i]! - y[i]!);
+      sum += d;
+      if (d > 40 && ++n > 3) return false;
+    }
+    // the screen fading in or out moves every value a little: that grid is not the same picture either
+    if (sum / x.length > 8) return false;
+  }
+  return true;
+}
 const MIN_INVENTORY_SCORE = 0.6; // for items that were on offer or are already owned
 const SURE_INVENTORY_SCORE = 0.85; // for anything else
 const MIN_INVENTORY_SD = 20; // raw pixel std-dev below which a slot counts as empty
@@ -1595,58 +1641,78 @@ function cachedMatch(
  * owned) settles icon twins and lowers the score floor; an item outside it needs a near-perfect match.
  */
 export function readInventory(img: RGBImage, index: DecodedIndex, prefer: number[] = []): InventoryRead[] {
-  let best: InventoryRead[] = [];
-  let bestN = -1;
-  for (const layout of INVENTORY_LAYOUTS) {
-    const r = readInventoryAt(img, index, prefer, layout);
-    const n = r.filter((x) => x.itemId !== 0).length;
-    if (n > bestN) {
-      best = r;
-      bestN = n;
-    }
-  }
-  return best;
+  return inventoryFrom(matchInventory(img, index), index, prefer);
 }
 
-function readInventoryAt(
+/** Every grid slot's raw match in both layouts (null for an empty slot, told by its flat contrast), before the offered
+ *  and owned items are weighed. This is the costly part of a grid read; `inventoryFrom` turns it into the owned list. */
+export type InventoryMatches = { slot: number; sd: number; m: IconMatch | null }[][];
+export function matchInventory(img: RGBImage, index: DecodedIndex): InventoryMatches {
+  const out: InventoryMatches = INVENTORY_LAYOUTS.map(() => []);
+  for (const spot of inventorySpots(img.width, img.height))
+    out[spot.layout]!.push(matchInventorySpot(img, index, spot));
+  return out;
+}
+
+/** One grid slot of one layout, in frame px: what `matchInventorySpot` reads. */
+export interface InventorySpot {
+  layout: number;
+  slot: number;
+  cx: number;
+  cy: number;
+  edge: number;
+  search: number;
+  scales: readonly number[];
+}
+/** Every slot of both grid layouts at this frame size, in reading order. */
+export function inventorySpots(width: number, height: number): InventorySpot[] {
+  const sx = width / BRAWL_LAYOUT.ref.width,
+    sy = height / BRAWL_LAYOUT.ref.height;
+  const out: InventorySpot[] = [];
+  INVENTORY_LAYOUTS.forEach((L, layout) => {
+    for (let r = 0; r < L.rows; r++)
+      for (let c = 0; c < L.cols; c++) {
+        const edge = L.icon * sx;
+        out.push({
+          layout,
+          slot: r * L.cols + c,
+          cx: (L.x0 + c * L.pitch) * sx + edge / 2,
+          cy: (L.y0 + r * L.pitch) * sy + edge / 2,
+          edge,
+          search: Math.round(L.search * sx),
+          scales: L.scales,
+        });
+      }
+  });
+  return out;
+}
+/** One slot's raw match (null when the slot is empty: a flat tinted square, told on contrast before matching). */
+export function matchInventorySpot(
   img: RGBImage,
   index: DecodedIndex,
-  prefer: number[],
-  INVENTORY: {
-    x0: number;
-    y0: number;
-    pitch: number;
-    icon: number;
-    cols: number;
-    rows: number;
-    search: number;
-    scales: readonly number[];
-  },
-): InventoryRead[] {
-  const sx = img.width / BRAWL_LAYOUT.ref.width,
-    sy = img.height / BRAWL_LAYOUT.ref.height;
-  const out: InventoryRead[] = [];
+  spot: InventorySpot,
+): InventoryMatches[number][number] {
+  const { cx, cy, edge } = spot;
+  const raw = sampleSquare(img, cx - edge / 2, cy - edge / 2, edge, index.size);
+  let s1 = 0,
+    s2 = 0;
+  for (const v of raw) {
+    s1 += v;
+    s2 += v * v;
+  }
+  const sd = Math.sqrt(Math.max(0, s2 / raw.length - (s1 / raw.length) ** 2));
+  if (sd < MIN_INVENTORY_SD) return { slot: spot.slot, sd, m: null };
+  return { slot: spot.slot, sd, m: cachedMatch(img, index, cx, cy, edge, spot.search, spot.scales) };
+}
+
+/** The owned list from raw grid matches: the layout that reads more items wins. */
+export function inventoryFrom(raw: InventoryMatches, index: DecodedIndex, prefer: number[] = []): InventoryRead[] {
   const pref = new Set(prefer);
-  for (let r = 0; r < INVENTORY.rows; r++)
-    for (let c = 0; c < INVENTORY.cols; c++) {
-      const edge = INVENTORY.icon * sx;
-      const cx = (INVENTORY.x0 + c * INVENTORY.pitch) * sx + edge / 2,
-        cy = (INVENTORY.y0 + r * INVENTORY.pitch) * sy + edge / 2;
-      // an empty slot is a flat tinted square: skip it on contrast before matching
-      const raw = sampleSquare(img, cx - edge / 2, cy - edge / 2, edge, index.size);
-      let s1 = 0,
-        s2 = 0;
-      for (const v of raw) {
-        s1 += v;
-        s2 += v * v;
-      }
-      const sd = Math.sqrt(Math.max(0, s2 / raw.length - (s1 / raw.length) ** 2));
-      if (sd < MIN_INVENTORY_SD) {
-        out.push({ slot: r * INVENTORY.cols + c, itemId: 0, score: 0, margin: 0, sd });
-        continue;
-      }
-      const search = Math.round(INVENTORY.search * sx);
-      const m = cachedMatch(img, index, cx, cy, edge, search, INVENTORY.scales);
+  let best: InventoryRead[] = [];
+  let bestN = -1;
+  for (const layout of raw) {
+    const r = layout.map(({ slot, sd, m }): InventoryRead => {
+      if (!m) return { slot, itemId: 0, score: 0, margin: 0, sd };
       let id = m.itemId;
       if (!pref.has(id)) {
         const tw = index.twins.get(id) ?? [];
@@ -1656,9 +1722,15 @@ function readInventoryAt(
       // a background line through an empty slot can look like a dark streaky icon (Shadow Weave at 0.74 on the
       // screenshots), so an item nobody was offered needs a much better match than one that was
       if (m.score < (pref.has(id) ? MIN_INVENTORY_SCORE : SURE_INVENTORY_SCORE)) id = 0;
-      out.push({ slot: r * INVENTORY.cols + c, itemId: id, score: m.score, margin: m.margin, sd });
+      return { slot, itemId: id, score: m.score, margin: m.margin, sd };
+    });
+    const n = r.filter((x) => x.itemId !== 0).length;
+    if (n > bestN) {
+      best = r;
+      bestN = n;
     }
-  return out;
+  }
+  return best;
 }
 
 /** Search window (2560x1440 ref px) that surely holds the "Use Re-Roll" button, whichever way the game lays it out. */

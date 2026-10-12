@@ -13,6 +13,8 @@ export interface NameMatch {
 /** A name match this strong, and this far ahead of the next item, decides the card. */
 export const NAME_MIN_SCORE = 0.75;
 export const NAME_MIN_MARGIN = 0.08;
+/** Reads with fewer letters than this must match a name exactly (Grit, Decay, Leech are the short names). */
+const SHORT_READ = 5;
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z]/g, '');
 
@@ -37,7 +39,26 @@ const similarity = (t: string, n: string): number => {
   // read of six or more letters that is the exact start or end of a longer name counts by how much of it was seen.
   const part =
     t.length >= 6 && n.length > t.length && (n.endsWith(t) || n.startsWith(t)) ? 0.7 + (0.3 * t.length) / n.length : 0;
-  return Math.max(whole, inside, part);
+  // A card fading in shows the middle of its line first ("galing Tem", "dent Co"): six or more letters that sit inside
+  // one longer name with at most one wrong letter count by how much of the name they cover.
+  let mid = 0;
+  if (t.length >= 6 && n.length > t.length) {
+    const d = infix(t, n);
+    if (d <= 1) mid = 0.7 + (0.3 * (t.length - d)) / n.length;
+  }
+  return Math.max(whole, inside, part, mid);
+};
+
+/** Edits to turn `t` into some run of letters inside `n` (free start and end in `n`). */
+const infix = (t: string, n: string): number => {
+  let prev = new Array<number>(n.length + 1).fill(0);
+  for (let i = 1; i <= t.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= n.length; j++)
+      cur[j] = Math.min(prev[j]! + 1, cur[j - 1]! + 1, prev[j - 1]! + (t[i - 1] === n[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return Math.min(...prev);
 };
 
 export type NameList = { id: number; key: string }[];
@@ -76,6 +97,9 @@ export function matchItemName(text: string, list: NameList): NameMatch | null {
   }
   const margin = best.s - Math.max(0, second);
   if (best.s < NAME_MIN_SCORE || margin < NAME_MIN_MARGIN) return null;
+  // Under five letters one wrong letter already scores 0.75: a card fading in read as "'irit" (Spirit Sap) became Grit.
+  // A read that short decides only when it is exact.
+  if (t.length < SHORT_READ && best.s < 1) return null;
   return { itemId: best.id, score: best.s, margin };
 }
 

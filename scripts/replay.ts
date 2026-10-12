@@ -169,13 +169,16 @@ export async function replayDraft(dir: string, opts: ReplayOpts = {}): Promise<R
     if (res.accepted && acceptFrame < 0) acceptFrame = fi;
     if (res.accepted) enhanced = res.reads.map((x) => x.present && !x.unsure && x.enhanced);
     if (res.reads.length === 3 && res.reads.every((x) => x.present && !x.unsure)) lastFull = fi;
-    if (res.meta?.self) {
-      hero = res.meta.self;
-      enemies = enemiesFrom(res.meta.bar, hero);
+    // the page applies every result: the hero bar and the owned list may come on a re-run before the last one
+    for (const r of results) {
+      if (r.meta?.self) {
+        hero = r.meta.self;
+        enemies = enemiesFrom(r.meta.bar, hero);
+      }
+      // the accepted set carries the count it was accepted with; later changes arrive as separate 'rerolls' messages
+      if (r.meta && r.meta.rerollsRemaining >= 0) rerolls = r.meta.rerollsRemaining;
+      if (r.inventory) inventory = r.inventory;
     }
-    // the accepted set carries the count it was accepted with; later changes arrive as separate 'rerolls' messages
-    if (res.meta && res.meta.rerollsRemaining >= 0) rerolls = res.meta.rerollsRemaining;
-    if (res.inventory) inventory = res.inventory;
     stat.push({
       t: clock,
       shop: res.shop,

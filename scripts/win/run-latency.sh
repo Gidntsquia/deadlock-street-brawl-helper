@@ -2,7 +2,7 @@
 # Headless advice-latency run on the OBS recording (scripts/win/latency-main.cjs): syncs and builds the Windows copy,
 # runs real Windows electron.exe under BRAWL_E2E (nothing shows on the desktop) and copies logs/win-latency.json back.
 # Started by hand only (the worker or the user): never part of npm test, npm run check, win:e2e or CI.
-# Flags: --only s7[,s3]  --runs N  --video "<Windows path>"
+# Flags: --only s7[,s3]  --runs N  --video "<Windows path>"  --relay page (OCR through the page, to compare)
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -19,6 +19,7 @@ while [ $# -gt 0 ]; do
     --only) EXTRA="$EXTRA --only '$2'"; shift 2 ;;
     --runs) EXTRA="$EXTRA --runs '$2'"; shift 2 ;;
     --video) EXTRA="$EXTRA --video '$2'"; shift 2 ;;
+    --relay) EXTRA="$EXTRA --relay '$2'"; shift 2 ;;
     *) shift ;;
   esac
 done

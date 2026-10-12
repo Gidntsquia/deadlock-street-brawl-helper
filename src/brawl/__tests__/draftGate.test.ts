@@ -77,7 +77,10 @@ describe('draftGate', () => {
   });
 
   it('old cards lingering under the next label are held back, not re-advised at once', () => {
-    const { outs, accepted } = run([...hold({ key: A, choice: 1 }, 500), ...hold({ key: A, choice: 2 }, 900)]);
+    const { outs, accepted } = run([
+      ...hold({ key: A, choice: 1 }, 500),
+      ...hold({ key: A, choice: 2 }, RELABEL_SETTLE_MS - 100),
+    ]);
     expect(accepted).toHaveLength(1);
     expect(outs.at(-1)!.live).toBe(false);
   });

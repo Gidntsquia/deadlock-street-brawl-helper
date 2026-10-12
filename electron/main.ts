@@ -4,6 +4,7 @@ import {
   desktopCapturer,
   globalShortcut,
   ipcMain,
+  MessageChannelMain,
   screen,
   session,
   Tray,
@@ -832,18 +833,23 @@ interface TimedSet {
   unsure: number;
 }
 /** Per accepted set while a video plays: its labelled start mark and the `<n> ms` text, worked out once. */
-const timedSets = new Map<string, Promise<TimedSet>>();
-async function videoNow(): Promise<number> {
+const timedSets = new Map<string, { wall: number; p: Promise<TimedSet> }>();
+/** The video's position at wall time `wall` (Date.now): the read is a round trip to the dummy while the video plays on,
+ *  so the time it reports is wound back by how long after `wall` the dummy sampled it. */
+async function videoNow(wall = Date.now()): Promise<number> {
   const w = testWindow;
   if (!alive(w)) throw new Error('no dummy');
-  return (await readTestVideo(w)).time;
+  const v = await readTestVideo(w);
+  return v.playing ? v.time - (v.wall - wall) / 1000 : v.time;
 }
 function timedSet(state: import('../src/brawl/draw').OverlayState): Promise<TimedSet> {
   const timing = state.timing!;
-  let p = timedSets.get(timing.setKey);
+  // the same cards dealt again later (another run of the video) are a new accept: keyed by when it was first seen
+  const had = timedSets.get(timing.setKey);
+  let p = had && had.wall === timing.firstSeenWall ? had.p : undefined;
   if (!p) {
     p = (async () => {
-      const videoAt = await videoNow();
+      const videoAt = await videoNow(Date.now());
       const names = state.reads
         .filter((r) => r.present && !r.unsure)
         .map((r) => state.advice?.ranked.find((x) => x.itemId === r.itemId)?.name ?? '');
@@ -862,17 +868,22 @@ function timedSet(state: import('../src/brawl/draw').OverlayState): Promise<Time
         unsure: state.reads.filter((r) => r.present && r.unsure).length,
       };
     })();
-    timedSets.set(timing.setKey, p);
+    timedSets.set(timing.setKey, { wall: timing.firstSeenWall, p });
   }
   return p;
 }
 const videoLatencyFile = () => path.join(app.getPath('userData'), 'video-latency.json');
+/** Sets already logged: an overlay redraw of the same plates later (a dot change, a jump in the video) is not a new row. */
+const loggedSets = new Set<string>();
 async function logVideoAdvice(setKey: string) {
-  const p = timedSets.get(setKey);
-  if (!p || !testVideo) return;
+  const had = timedSets.get(setKey);
+  const once = `${setKey}|${had?.wall}`;
+  if (!had || !testVideo || loggedSets.has(once)) return;
+  loggedSets.add(once);
+  const p = had.p;
   const drawnWall = Date.now();
   try {
-    const [info, videoAt] = await Promise.all([p, videoNow()]);
+    const [info, videoAt] = await Promise.all([p, videoNow(drawnWall)]);
     const t = info.timing;
     const newMs = info.match
       ? Math.round((videoAt - info.match.appearAt) * 1000)
@@ -918,6 +929,7 @@ function endTestVideo() {
   testVideoTimer = null;
   testVideo = null;
   timedSets.clear();
+  loggedSets.clear();
   tintOverlayForVideo(false);
 }
 
@@ -931,12 +943,14 @@ function tintOverlayForVideo(on: boolean) {
 }
 
 /** Reads the dummy's video element: time, length, playing, and an error if the file would not play. */
+/** A video read without its sample time (the test state the control window gets has no use for it). */
+const videoState = ({ wall: _wall, ...v }: Awaited<ReturnType<typeof readTestVideo>>) => v;
 async function readTestVideo(
   win: BrowserWindow,
-): Promise<{ time: number; duration: number; playing: boolean; error: string | null }> {
+): Promise<{ time: number; duration: number; playing: boolean; error: string | null; wall: number }> {
   return win.webContents.executeJavaScript(
     `(() => { const v = document.getElementById('vid');
-      return { time: v.currentTime, duration: Number.isFinite(v.duration) ? v.duration : 0, playing: !v.paused && !v.ended,
+      return { time: v.currentTime, wall: Date.now(), duration: Number.isFinite(v.duration) ? v.duration : 0, playing: !v.paused && !v.ended,
         error: v.error ? 'This video will not play (code ' + v.error.code + ')' : null }; })()`,
   );
 }
@@ -972,7 +986,7 @@ async function openTestVideo(win: BrowserWindow, file: string) {
     void readTestVideo(w)
       .then((r) => {
         if (!testVideo) return;
-        testVideo = { ...testVideo, ...r, error: r.error ?? testVideo.error };
+        testVideo = { ...testVideo, ...videoState(r), error: r.error ?? testVideo.error };
         broadcastTestState();
       })
       .catch(() => undefined);
@@ -1026,7 +1040,7 @@ async function testVideoAction(action: TestVideoAction) {
         : `(() => { const v = document.getElementById('vid'); v.currentTime = ${seekTarget(action.to, testVideo.duration)}; })()`;
   try {
     await win.webContents.executeJavaScript(js);
-    testVideo = { ...testVideo, ...(await readTestVideo(win)) };
+    testVideo = { ...testVideo, ...videoState(await readTestVideo(win)) };
   } catch {
     /* the dummy closed */
   }
@@ -1150,11 +1164,38 @@ function setupIpc() {
   ipcMain.handle(CHANNELS.readerStateGet, () => readerState());
   ipcMain.handle(CHANNELS.readText, async (_e, width: number, height: number, data: Uint8Array) => {
     if (!nameReader) return { text: '', ms: 0, error: 'reader-down' };
+    const t0 = performance.now();
     try {
-      return await nameReader.read(width, height, data);
+      const r = await nameReader.read(width, height, data);
+      return { ...r, mainMs: Math.round(performance.now() - t0) };
     } catch (e) {
       return { text: '', ms: 0, error: (e as Error).message };
     }
+  });
+  ipcMain.on(CHANNELS.ocrPortGet, (e) => {
+    if (process.env.BRAWL_OCR_RELAY === 'page') return; // win:latency --relay page: keep the old path, to compare
+    const { port1, port2 } = new MessageChannelMain();
+    port1.on('message', (m) => {
+      const q = m.data as { id: number; width: number; height: number; data: Uint8Array; sentWall: number };
+      const got = performance.timeOrigin + performance.now();
+      const answer = (r: { text: string; ms: number; error?: string }) => {
+        const now = performance.timeOrigin + performance.now();
+        const hops = {
+          toPage: Math.round(got - q.sentWall),
+          ipc: 0,
+          main: Math.round(now - got),
+          helper: Math.round(r.ms),
+          replyWall: now,
+        };
+        port1.postMessage({ type: 'ocrResult', id: q.id, text: r.text, ms: r.ms, error: r.error, hops });
+      };
+      if (!nameReader) return answer({ text: '', ms: 0, error: 'reader-down' });
+      nameReader
+        .read(q.width, q.height, q.data)
+        .then(answer, (err: Error) => answer({ text: '', ms: 0, error: err.message }));
+    });
+    port1.start();
+    e.sender.postMessage(CHANNELS.ocrPort, null, [port2]);
   });
   ipcMain.handle(CHANNELS.captureStateGet, () => captureState());
   ipcMain.on(CHANNELS.captureIdle, () => {
@@ -1218,16 +1259,20 @@ function setupIpc() {
   });
   // Relay: the control window computes advice from its capture and forwards state for the overlay to draw.
   ipcMain.on(CHANNELS.overlayState, async (_event, incoming: import('../src/brawl/draw').OverlayState) => {
-    let state = incoming;
-    // test-mode video: print the ms on every plate (the start mark is the labelled `appear`, or the worker's first sight)
-    if (state.timing && alive(testWindow) && testVideo) {
-      const info = await timedSet(state).catch(() => null);
-      if (info) state = { ...state, msText: info.msText };
-    }
-    lastOverlayState = state;
-    if (state.draft) lobby = stepLobby(lobby, { type: 'draft', now: Date.now() });
+    lastOverlayState = incoming;
+    if (incoming.draft) lobby = stepLobby(lobby, { type: 'draft', now: Date.now() });
     lastDot = currentDot();
     relayOverlay();
+    // test-mode video: print the ms on every plate (the start mark is the labelled `appear`, or the worker's first sight).
+    // The plates are drawn first and the ms added after: reading the video's clock is a round trip to the dummy, which
+    // must not hold the plates back.
+    if (incoming.timing && alive(testWindow) && testVideo) {
+      const info = await timedSet(incoming).catch(() => null);
+      if (info && lastOverlayState === incoming) {
+        lastOverlayState = { ...incoming, msText: info.msText };
+        relayOverlay();
+      }
+    }
   });
 }
 

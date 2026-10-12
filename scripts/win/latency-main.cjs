@@ -11,6 +11,7 @@
 // Writes logs/win-latency.json; exit 1 when any row is at 1000 ms or more, is `wrong`, or has no advice.
 //
 // Flags: --only s7[,s3]  --runs N  --video <Windows path>  --commit <sha> (passed by run-latency.sh: no .git here)
+//        --relay page: text reads go worker -> page -> main as before the direct port (BRAWL_OCR_RELAY), to compare
 'use strict';
 process.env.BRAWL_E2E = '1';
 
@@ -38,17 +39,33 @@ const only = arg('--only')
   .map((s) => s.trim())
   .filter(Boolean);
 const runs = Math.max(1, Number(arg('--runs')) || 1);
+if (arg('--relay') === 'page') process.env.BRAWL_OCR_RELAY = 'page';
 const video = arg('--video') || 'D:\\OBS Videos\\2026-10-09 00-46-30.mkv';
 const commit = arg('--commit') || 'unknown';
 
 fs.mkdirSync(path.dirname(DEBUG_LOG), { recursive: true });
 fs.writeFileSync(DEBUG_LOG, `${new Date().toISOString()} --- latency run start ---\n`);
-const dbg = (m) => {
+// Lines are kept in memory and written once a second off the main thread's path: a synchronous append per line
+// (about 40 ms each on this box) ran inside the app's main process and held back the OCR relay and the plates.
+let dbgLines = [];
+let dbgWriting = false; // one write at a time keeps the lines in order
+const flushDbg = (sync = false) => {
+  if (!dbgLines.length || (dbgWriting && !sync)) return;
+  const text = dbgLines.join('');
+  dbgLines = [];
   try {
-    fs.appendFileSync(DEBUG_LOG, `${new Date().toISOString()} ${m}\n`);
+    if (sync) fs.appendFileSync(DEBUG_LOG, text);
+    else {
+      dbgWriting = true;
+      fs.appendFile(DEBUG_LOG, text, () => (dbgWriting = false));
+    }
   } catch {
     /* best effort */
   }
+};
+setInterval(flushDbg, 1000).unref();
+const dbg = (m) => {
+  dbgLines.push(`${new Date().toISOString()} ${m}\n`);
 };
 const say = (m) => {
   dbg(m);
@@ -109,7 +126,15 @@ function rowsFor(run) {
           ? a.stretch === st.id && a.draft === set.draft && a.appearAt === set.appear
           : a.videoAt >= set.appear && a.videoAt < until && a.videoAt <= st.video[1] + PAD_S,
       );
-      const full = drawn.find((a) => !a.unsure && sameItems(a.items, set.items));
+      // A slot the labels mark `covered` (a hover tooltip hides its name line) may stay `?`, as in the video-truth
+      // rules: the set counts as advised when every other card is advised and the covered ones are the `?`.
+      const uncovered = set.items.filter((_, i) => !(set.covered ?? []).includes(i));
+      // The first plates that count, whichever kind came first.
+      const full = drawn.find(
+        (a) =>
+          (!a.unsure && sameItems(a.items, set.items)) ||
+          (set.covered?.length && a.unsure > 0 && a.unsure <= set.covered.length && sameItems(a.items, uncovered)),
+      );
       const first = drawn[0] ?? null;
       const strayItems = drawn.filter((a) => a.items.some((n) => n && !set.items.includes(n)));
       const reroll = drawn.some((a) => a.reroll);
@@ -127,6 +152,7 @@ function rowsFor(run) {
         hero: (full ?? first)?.hero ?? '',
         oldMs: base.oldMs,
         newMs: full ? full.newMs : null,
+        coveredUnsure: full ? full.unsure : 0, // `?` plates on labelled covered slots in the counted advice
         firstMs: first ? first.newMs : null,
         firstUnsure: first ? first.unsure : null,
         capture: full?.capture ?? null,
@@ -156,7 +182,7 @@ function printTable(rows) {
   );
   for (const r of rows)
     say(
-      `${pad(r.stretch + ' ' + r.draft, 9)} ${pad(r.labelItems.join(', '), 52)} ${pad(r.advisedItems.join(', '), 52)} ${padL(r.oldMs, 5)} ${padL(r.newMs, 5)} ${padL(r.firstMs, 5)} ${padL(r.capture, 4)} ${padL(r.read, 5)} ${padL(r.ocr, 5)} ${padL(r.settle, 5)} ${padL(r.draw, 4)} ${r.reroll ? 'yes' : 'no '} ${r.fail || 'ok'}${r.why ? ' (' + r.why + ')' : ''}`,
+      `${pad(r.stretch + ' ' + r.draft, 9)} ${pad(r.labelItems.join(', '), 52)} ${pad(r.advisedItems.join(', '), 52)} ${padL(r.oldMs, 5)} ${padL(r.newMs, 5)} ${padL(r.firstMs, 5)} ${padL(r.capture, 4)} ${padL(r.read, 5)} ${padL(r.ocr, 5)} ${padL(r.settle, 5)} ${padL(r.draw, 4)} ${r.reroll ? 'yes' : 'no '} ${r.fail || 'ok'}${r.coveredUnsure ? ' (covered slot ?)' : ''}${r.why ? ' (' + r.why + ')' : ''}`,
     );
 }
 
@@ -164,6 +190,7 @@ let finished = false;
 function finish(code, report) {
   if (finished) return;
   finished = true;
+  flushDbg(true);
   if (report) {
     fs.mkdirSync(path.dirname(REPORT), { recursive: true });
     fs.writeFileSync(REPORT, JSON.stringify(report, null, 1));

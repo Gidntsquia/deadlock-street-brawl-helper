@@ -6,7 +6,9 @@
 // new cards under the old label, or a mix of old and new cards. Accepting such a frame gave advice for the wrong
 // round / choice or ranked new cards against old ones. So:
 // - a set is accepted only once the same three cards AND the same labels have held for SETTLE_MS (two frames at
-//   least): transition states last a moment, a real draft screen stays up until the player clicks;
+//   least): transition states last a moment, a real draft screen stays up until the player clicks; a set that still
+//   holds some of the previous set's cards, or new cards under the label of a set already picked from, is a passing
+//   state and waits RELABEL_SETTLE_MS;
 // - a selection is detected when the inventory grid (when it can be read) gains one of the accepted cards, or when
 //   the labels move on while the same cards are still up. A set a selection was made from is "spent": it is never
 //   accepted again, and its advice is dropped at once;
@@ -14,9 +16,9 @@
 //   that go backwards are accepted only after RELABEL_SETTLE_MS of no change.
 
 /** A new set of cards must hold, with unchanged labels, this long before it is accepted. */
-export const SETTLE_MS = 300;
+export const SETTLE_MS = 100;
 /** The accepted cards under new labels (or labels that went backwards) must hold this long. */
-export const RELABEL_SETTLE_MS = 1200;
+export const RELABEL_SETTLE_MS = 600;
 /** Frames with no card read at all that keep an accepted set's advice up. */
 export const MISSING_FRAMES = 3;
 const SPENT_KEEP = 6;
@@ -28,7 +30,7 @@ export interface GateFrame {
   choice: number;
   now: number; // ms
   inventory: number[] | null; // the inventory grid, once two reads agree; null when not known
-  force?: boolean; // accept now whatever the settle time and the pending reads say (the 2.5 s fallback)
+  force?: boolean; // accept now whatever the settle time and the pending reads say (the 1 s fallback)
   changed?: boolean; // a card's name line shows other lettering than the accepted set's: the old advice is stale now
   cardsUp?: boolean; // at least two card circles still show something: names hidden by a tooltip are not the cards leaving
   ready?: boolean; // false: a read the advice needs (the re-roll caption) is still in flight; hold the accept
@@ -167,7 +169,14 @@ export function stepGate(s: GateState, f: GateFrame): GateOut {
   const relabel = last !== null && sameSet(last.key, f.key) && !sameLabels(last, now);
   // The set that was just up comes back under the same labels (a hover tooltip moved away): no need to wait.
   const returning = last !== null && sameSet(last.key, f.key) && sameLabels(last, now);
-  const need = returning ? 0 : relabel || back ? RELABEL_SETTLE_MS : SETTLE_MS;
+  // Passing states of a swap: some but not all of the previous set's cards still up (a half-swapped set), or new cards
+  // still under the labels of a set the player already picked from (the cards land before the label). A real new
+  // set (or a re-roll) replaces all three cards and moves the label on, so these wait as long as a relabel.
+  const prevIds = last ? cardIds(last.key) : [];
+  const mixed = last !== null && !sameSet(last.key, f.key) && cardIds(f.key).some((id) => prevIds.includes(id));
+  const lastSpent = last !== null && spent.some((k) => sameSet(k, last!.key));
+  const staleLabel = lastSpent && !sameSet(last!.key, f.key) && sameLabels(last!, now);
+  const need = returning ? 0 : relabel || back || mixed || staleLabel ? RELABEL_SETTLE_MS : SETTLE_MS;
   // A new set settles from its first sight, names still being read; the same cards under new labels wait from the first
   // frame that names them all, so the inventory read has time to show the pick that makes them spent.
   const from = relabel || back ? (cand.full ?? f.now) : cand.since;

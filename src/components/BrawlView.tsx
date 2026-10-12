@@ -56,7 +56,7 @@ import { chooseHero } from '../brawl/heroChoice';
 import { DraftLog } from '../brawl/draftLog';
 import type { DraftRecord, RegionShot } from '../../electron/sessionStore';
 import { unknownCeiling } from '../brawl/engine';
-import { itemTiers, type BrawlTierListData } from '../brawl/tierlist';
+import { holdsTopCard, itemTiers, type BrawlTierListData } from '../brawl/tierlist';
 import { AbilityPanel } from './AbilityPanel';
 import { AbilityOrderEditor } from './AbilityOrderEditor';
 import { AdvicePanel } from './AdvicePanel';
@@ -198,6 +198,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
   // A running Detect now try: pressed-at time; the first frame result decides hit or miss.
   const detectMissesRef = useRef(0);
   const lastReadSigRef = useRef('');
+  const framesSinceLogRef = useRef(0); // frames read since the last draft.read line
   const fullCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const detectRef = useRef<{ at: number; timer: ReturnType<typeof setTimeout> } | null>(null);
   const [took_, setTook] = useState<string>('');
@@ -227,19 +228,37 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
     w.addEventListener('message', (ev: MessageEvent<WorkerOut>) => {
       const m = ev.data;
       if (m.type !== 'ocr') return;
-      const reply = (r: { text: string; ms: number; error?: string }) =>
-        w.postMessage({ type: 'ocrResult', id: m.id, text: r.text, ms: r.ms, error: r.error } satisfies WorkerIn);
+      const got = performance.now();
+      const reply = (r: { text: string; ms: number; error?: string; mainMs?: number }) => {
+        const now = performance.now();
+        const hops = {
+          toPage: Math.round(performance.timeOrigin + got - m.sentWall),
+          ipc: Math.round(now - got),
+          main: r.mainMs ?? 0,
+          helper: Math.round(r.ms),
+          replyWall: performance.timeOrigin + now,
+        };
+        w.postMessage({ type: 'ocrResult', id: m.id, text: r.text, ms: r.ms, error: r.error, hops } satisfies WorkerIn);
+      };
       if (!isElectron) return reply({ text: '', ms: 0, error: 'reader-down' });
-      const t0 = performance.now();
       window.brawlAPI!.readText(m.width, m.height, m.data).then(
-        (r) => {
-          timingRef.current.ocrDone(performance.now() - t0);
-          reply(r);
-        },
+        (r) => reply(r),
         (e: Error) => reply({ text: '', ms: 0, error: e.message }),
       );
     });
     w.postMessage({ type: 'readerState', down: readerFailedRef.current } satisfies WorkerIn);
+    // Reads then go straight to main over a port of their own (see CHANNELS.ocrPort); the relay above stays for the
+    // moment before the port lands.
+    if (isElectron && typeof window.brawlAPI!.requestOcrPort === 'function') {
+      const onPort = (ev: MessageEvent) => {
+        if (ev.source !== window || !(ev.data as { brawlOcrPort?: boolean } | null)?.brawlOcrPort || !ev.ports[0])
+          return;
+        window.removeEventListener('message', onPort);
+        w.postMessage({ type: 'ocrPort' } satisfies WorkerIn, [ev.ports[0]]);
+      };
+      window.addEventListener('message', onPort);
+      window.brawlAPI!.requestOcrPort();
+    }
     w.postMessage({
       type: 'warm',
       index: workerIndexRef.current,
@@ -378,8 +397,15 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
     const sets: Offer[][] = [[], [], []];
     sets[choice - 1] = cards;
     const a = adviseDraft(input, { round, owned, enemies: enemyIds, order: activeOrder, sets });
-    return unsure ? { ...a, reroll: null } : a; // no re-roll call on a set with an unread card
-  }, [input, cards, unsure, round, owned, choice, enemyIds, activeOrder]);
+    // no re-roll call on a set with an unread card or with a card graded S or A
+    return unsure ||
+      holdsTopCard(
+        cards.map((c) => c.itemId),
+        gradeById,
+      )
+      ? { ...a, reroll: null }
+      : a;
+  }, [input, cards, unsure, round, owned, choice, enemyIds, activeOrder, gradeById]);
   /** With an unread card the best sure card is only taken when it beats anything that card could be. */
   const takeOk = useMemo(() => {
     if (!unsure || !input || !advice) return true;
@@ -1190,12 +1216,35 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
         });
         return;
       }
+      if (ev.data.type === 'namePost') {
+        log('brawl-view', 'info', 'card.name.post', { slot: ev.data.slot, at: Math.round(performance.now()) });
+        return;
+      }
+      if (ev.data.type === 'gridJob') {
+        const { phase, restart, ms } = ev.data;
+        log('brawl-view', 'info', 'grid.job', { phase, restart, ms, at: Math.round(performance.now()) });
+        return;
+      }
       if (ev.data.type === 'nameUnsure') {
         const { slot, reason, text } = ev.data;
         log('brawl-view', 'info', 'card.name.unsure', { slot, reason, text, at: Math.round(performance.now()) });
         return;
       }
       if (ev.data.type === 'ocr') return; // the reader relay in makeWorker answers it
+      if (ev.data.type === 'ocrTrip') {
+        timingRef.current.ocrTrip(ev.data.startWall, ev.data.ms);
+        const h = ev.data.hops;
+        if (h)
+          log('brawl-view', 'info', 'ocr.hops', {
+            ms: Math.round(ev.data.ms),
+            toPage: h.toPage,
+            ipc: h.ipc,
+            main: h.main,
+            helper: h.helper,
+            back: h.back,
+          });
+        return;
+      }
       const r = ev.data;
       // a slot that just became covered (a hovered card or its tooltip over the name line): logged once per cover
       const cov = r.covered ?? [];
@@ -1212,7 +1261,8 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
       // Cards are only drawn on while their set is accepted: nothing over a screen that is still changing or over
       // cards the player already picked from (see draftGate.ts).
       readsRef.current = r.live ? stableRef.current.reads : [];
-      const seen = r.reads.filter((x) => x.present).length;
+      // a card counts from the frame its circle shows (its name may not be read yet)
+      const seen = Math.max(r.shown ?? 0, r.reads.filter((x) => x.present).length);
       if (r.shop)
         timingRef.current.result(
           performance.now(),
@@ -1221,6 +1271,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
           r.reads.filter((x) => x.present && !x.unsure).length,
           !!r.accepted,
           r.key,
+          r.live,
         );
       if (r.accepted) {
         const offers = r.reads.filter((x) => !x.unsure).map(toOffer);
@@ -1321,6 +1372,15 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
         pv?.getContext('2d')?.clearRect(0, 0, pv.width, pv.height);
       }
       const readSig = `${r.shop}|${seen}|${r.round}|${r.choice}|${r.accepted}|${r.reads.map((x) => x.itemId).join(',')}`;
+      framesSinceLogRef.current++;
+      if (r.ms > 80 && r.stages) {
+        const slow = Object.fromEntries(
+          Object.entries(r.stages)
+            .filter(([, v]) => v >= 20)
+            .map(([k, v]) => [k, Math.round(v)]),
+        );
+        log('brawl-view', 'info', 'worker.slow', { ms: Math.round(r.ms), seen, stages: slow });
+      }
       if (readSig !== lastReadSigRef.current) {
         lastReadSigRef.current = readSig;
         log('brawl-view', 'info', 'draft.read', {
@@ -1332,7 +1392,9 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
           items: r.reads.map((x) => x.itemId),
           at: Math.round(performance.now()),
           workerMs: Math.round(r.ms),
+          frames: framesSinceLogRef.current,
         });
+        framesSinceLogRef.current = 0;
       }
       if (debugRef.current && window.brawlAPI?.sessionDraft) {
         const now = performance.now();

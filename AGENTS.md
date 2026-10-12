@@ -88,7 +88,7 @@ beats both. Not verified on real Windows: only the one frame in `scripts/fixture
 
 While the draft screen is up and no plates are drawn the overlay shows `Reading` (`OverlayState.reading`). Plates, take mark and
 re-roll call appear together once every sure card has advice (`pushOverlay` waits for it) and are then frozen for the set. After
-`FALLBACK_MS` (2.5 s) the sure cards are advised and the rest get grey `?` plates; take and re-roll only if the best sure card
+`FALLBACK_MS` (1.0 s from the first frame any card appeared) the sure cards are advised and the rest get grey `?` plates; take and re-roll only if the best sure card
 beats `unknownCeiling`. The hero is used only when the read is sure (`chooseHero`): else the last sure hero of the match, else
 the window's hero with the `Hero not read` line and no ability panel. Round 1 choice 1 empties the owned list.
 
@@ -236,21 +236,20 @@ in `win:e2e`/`win:demo` drives the actual game:
   don't gate that retry on `denied` (it once left capture dead after a window swap). `desktopCapturer` can
   also lag a newly found window by a moment.
 - When a draft set counts as ready is decided by `src/brawl/draftGate.ts` (pure, stepped by the worker): the same
-  three cards and the same ROUND/CHOICE labels must hold for 300 ms; the same cards under new labels (or labels
-  going backwards) need 1.2 s; a set the player picked from (the pick shows up in the inventory grid; only readable
+  three cards and the same ROUND/CHOICE labels must hold for 100 ms (`SETTLE_MS`); the same cards under new labels (or labels
+  going backwards) need 600 ms (`RELABEL_SETTLE_MS`); a set the player picked from (the pick shows up in the inventory grid; only readable
   at ~2000 px wide and up) is "spent" and never advised again. `FrameResult.live/picked/spent` carry this to the page,
   which drops its cards whenever `live` is false. The game swaps label, cards and grid a beat apart; the old
   two-frame accept advised old cards under the new label, half-swapped sets, and new cards under the stale label
   (`scripts/__tests__/worker-transitions.test.ts` replays those on real frames).
-- The worker does no icon search on the cards any more (`squareReads` in `worker.ts`): the item is whatever the name lock says, and a slot whose name will not read becomes a grey `?` at 2.5 s. A changed name line under a lock is a hover (the hovered card grows and the game's tooltip, often with an item name in it, covers the next card's line): the lock and the advice stay. Only within 3 s of a re-roll (two name lines blank in one frame as the cards fade, or the re-roll count dropping; `rerollAt` in `worker.ts`) does a line that changes by more than 6 grid cells make the slot unsettled at once (`changed` on `GateFrame`) and a read of another item move the lock. Before the names land, the gate gets the set with a `?` per unread slot so the 300 ms settle runs alongside the OCR. The re-roll caption and the inventory grid are read on that provisional set too (the caption read carries over when the names fill it in), so the accept does not wait a frame for them; the same cards under new labels still wait the 1.2 s from the first frame that names them all (`cand.full`), so the grid can show the pick first. Before the accept, a name read that matches another slot's lock is the hover tooltip's title (a draft never offers one item twice): both slots are read again. Two ids under one name (Silencer has a disabled twin) keep only the first in `nameList`. `readDraftScreen`/`matchIcon` remain for the CLI, fixtures, inventory and hero reads (`matchIcon` tries a narrow search first). Older text below about icon guesses describes the icon-based design.
+- The worker does no icon search on the cards any more (`squareReads` in `worker.ts`): the item is whatever the name lock says, and a slot whose name will not read becomes a grey `?` at 1.0 s. A changed name line under a lock is a hover (the hovered card grows and the game's tooltip, often with an item name in it, covers the next card's line): the lock and the advice stay. Only within 3 s of a re-roll (two name lines blank in one frame as the cards fade, or the re-roll count dropping; `rerollAt` in `worker.ts`) does a line that changes by more than 6 grid cells make the slot unsettled at once (`changed` on `GateFrame`) and a read of another item move the lock. Before the names land, the gate gets the set with a `?` per unread slot so the 100 ms settle runs alongside the OCR. The re-roll caption and the inventory grid are read on that provisional set too (the caption read carries over when the names fill it in), so the accept does not wait a frame for them; the same cards under new labels still wait the 600 ms from the first frame that names them all (`cand.full`), so the grid can show the pick first. Before the accept, a name read that matches another slot's lock is the hover tooltip's title (a draft never offers one item twice): both slots are read again. Two ids under one name (Silencer has a disabled twin) keep only the first in `nameList`. `readDraftScreen`/`matchIcon` remain for the CLI, fixtures, inventory and hero reads (`matchIcon` tries a narrow search first). Older text below about icon guesses describes the icon-based design.
 - Cards sit at fixed screen positions and print their exact item name: the worker pins every card read to
   `cardSquares` (`recognise.ts`, anchors x 0.95 icon edge, matches the hand-labelled circles) so the overlay never follows
   the icon search's step/scale wobble, and each slot's item comes from a **name lock** (`applyNames` in `worker.ts`): the
   item its name line (`cardNameCrop`, read by the name reader through `ocr.ts`, fuzzy match in `names.ts`) last read as, plus a pixel fingerprint
   of that line. While the line looks the same the slot is that item whatever the icon says; a changed line is re-read
-  (~30 ms) and only a clear read of another item moves the lock; an icon that surely shows another item (re-roll) makes
-  the slot unsettled at once. No set is accepted until every slot has its lock (`GateFrame.ready`), a shaky icon keeps
-  its set out of the gate entirely, and after 1.5 s of failed reads the icon guess stands. The re-roll caption is also
+  (~30 ms) and only a clear read of another item moves the lock; no icon decides anything (see Fast draft read). No set is
+  accepted until every slot has its lock (`GateFrame.ready`); a slot that never reads is a grey `?` at 1.0 s. The re-roll caption is also
   read before accept (and a later change needs two agreeing re-reads); the owned list reaches the page with the accepted
   set and not again while it stays up. Logs: `card.name` per read. `draftRegions` copies the name lines' ends as the last 6 boxes.
 - Changing the Round/Choice selects clears the accepted cards, and the worker never re-sends a set it already
@@ -326,8 +325,8 @@ If `npm run check` fails with ENOTDIR on prettier, delete the stray file `node_m
 
 ## Fast draft read (0.4.0 tracker)
 
-- Provisional icon locks: `applyNames` gives a slot a lock from `quickGuess` (`recognise.ts`; fixed card square, no search, score >= 0.75, margin >= 0.1, no twin item) the moment its name line has ink. The advice goes out on that guess; OCR then confirms or overrules once `gate.live`. Settled frames skip card reads unless a lock is still provisional.
-- A frame with two cards up gives `partialKey`, which starts the draft gate's 300 ms settle clock and pre-reads the hero bar and grid (`warmKey`), so the third card's frame accepts at once. `ready` stays false until all three locks exist, so no plate shows on a partial set.
+- No icon guesses: a slot's item comes only from its name read (`names.ts`, which also matches a half-faded line by infix). Each card's name line is posted for OCR the moment it has ink, on its own; a landed read re-runs the frame at once (`restep`). `quickGuess` is gone from the worker.
+- A frame with two cards up gives `partialKey`, which starts the draft gate's 100 ms settle clock and pre-reads the hero bar and grid (`warmKey`), so the third card's frame accepts at once. `ready` stays false until all three locks exist, so no plate shows on a partial set.
 - `stepTip` closes the ability panel's draft after `CLOSE_FRAMES`, or after `CLOSE_MIN_FRAMES` (3) frames spread over `CLOSE_MS` (1500), so a slow PC still closes it.
 - `public/demo/_*.png` frames (e.g. `_choice1-two.png`, made by `scripts/make-landing-frame.ts`) are listed only under `BRAWL_E2E`; the harness uses them for the staged reveal.
 - Harness at `--slow 4`: advice time starts before `setFrame`, the overlay is polled once during the hold, limits and timeouts scale by SLOW, and the panel expiry is measured with `pollAt`/`goneAt`.
@@ -336,7 +335,7 @@ If `npm run check` fails with ENOTDIR on prettier, delete the stray file `node_m
 ## Video truth set (real gameplay, 1280x720)
 
 `scripts/fixtures/video-truth/s0..s9/` are 10 stretches cut from one OBS recording (lossy webp crops, about 34 MB; frame time is `truth.video[0] + frameIndex/4`). Hand labels live in `scripts/video-truth/labels.json` (per set: items, `from`/`to` on screen, `readable` window, `covered` slots that a tooltip hides and may show `?`). `npx tsx scripts/video-truth.ts --truth-only` rewrites only the `truth.json` files from the labels; the full tool needs the source video. `npx tsx scripts/video-truth-report.ts` prints per-stretch violations and advice latency (about 3 min); `scripts/__tests__/video-truth.test.ts` fails on any. Rules in `scoreStretch` (`scripts/lib/videoTruth.ts`): R1 advised items equal a labelled set on screen; R2 a set readable 1 s or more is advised within 1.0 s (`ADVICE_BY`); R3 no advice drop-out while readable; R4 no advice when no set is on screen. Fix labels only when the video shows them wrong.
-Worker rules found with it: a card circle with no content counts as empty (`cardEmpty`), two empty circles mean cards leaving or sliding in (advice dropped, no fallback); the fallback is 1.2 s when two names are OCR-confirmed and the third circle is full but unreadable (tooltip), else 2.5 s; a `?` set upgrades at once when the missing card reads.
+Worker rules found with it: a card circle with no content counts as empty (`cardEmpty`), two empty circles mean cards leaving or sliding in (advice dropped, no fallback); the fallback is 1.0 s from the first card (`FALLBACK_MS`), held at most 200 ms for a read already on its way (`FALLBACK_READ_HOLD_MS`); a `?` set upgrades at once when the missing card reads.
 
 Speed (advice at x4): a name read or caption read that lands before the set is accepted re-runs the last frame at once (`restep` in `worker.ts`, at most 3 per frame) instead of waiting for the next picture; the last card's clear icon stands on its first frame when the other two are name-confirmed. `replayDraft` waits for in-flight reads (`readsIdle`) each frame, so replays no longer depend on wall-clock OCR speed. `win:e2e -- --slow 4` is unusable as a measure while another job loads the host (load average above 10 gave 0.6 to 7 s for the same code).
 
@@ -356,7 +355,7 @@ Speed (advice at x4): a name read or caption read that lands before the set is a
   > window/pinned hero and the caption digit uses `rerollGlyphIsOne` only. `readCardName`/`readHeroName`/`readRerollsRemaining` keep
   > their signatures; matching stays in `names.ts`/`matchHeroName`.
 - Reader down in the worker: no icon guess and no name read, the reading clock restarts only for cards sliding in, and three
-  full circles with no item get the `?` fallback at 2.5 s (`scripts/__tests__/reader-down.test.ts`, `replayDraft`'s
+  full circles with no item get the `?` fallback at 1.0 s (`scripts/__tests__/reader-down.test.ts`, `replayDraft`'s
   `readerDown`). `win:e2e`'s `testmode` pass ends with `reader-down`: it kills the helper twice (`__brawlE2E.readerPid`)
   and expects state `failed`, the status line, three `unknown` plates on `choice2`, and no uncaught error.
 - Node tools and tests: `scripts/lib/textReader.ts` (installed for vitest by `scripts/__tests__/setup-reader.ts`). `BRAWL_OCR`
@@ -369,7 +368,7 @@ Speed (advice at x4): a name read or caption read that lands before the set is a
   neighbour's name line; the text then sits off centre in the line (`nameLineShape` within `textRun`, |off| >= `COVER_OFF` 0.3,
   ink >= 300). A covered line is not read and never changes the lock; a slot never seen uncovered gets the grey `?` after the
   normal fallback times and upgrades the moment it reads (a landed read re-runs the frame while the advised set has a `?`). A read
-  equal to another slot's item is a tooltip title (both slots read again), and the `?` fallback waits up to 400 ms
+  equal to another slot's item is a tooltip title (both slots read again), and the `?` fallback waits up to 200 ms
   (`FALLBACK_READ_HOLD_MS`) for a read already on its way. Logs: `card.name` (`reader: 'winocr'`, `ms`, `score`),
   `card.name.unsure` (`no-item | empty | covered | reader-down`).
 - Measure: `npm run names:compare -- --engine winocr|tesseract` writes `logs/name-compare-<engine>.json` (bar: 0 wrong, sure >= 95 %
@@ -383,10 +382,38 @@ Speed (advice at x4): a name read or caption read that lands before the set is a
   `npx tsx scripts/footage-latency.ts "<recording.mkv>" [--write-labels]` (about 95 s; teal `#2ec4b6` plates found at 4 fps; `--write-labels`
   also writes `appear` into `labels.json`). `oldMs = oldPlate - appear`; null where the old app drew no plate. Re-run only if the labels change.
 - Guard: `scripts/__tests__/footage-latency.test.ts` replays the video-truth crops through the real worker on a virtual clock (recorded OCR ms
-  charged per frame, `ocrChargedMs`) and fails with the row name when a set's new advice time is not below its `oldMs`. `FOOTAGE_LATENCY_FILE`
+  charged per frame, `ocrChargedMs`) and fails with the row name when a set's new advice time is not below min(`oldMs`, 1000 ms). `FOOTAGE_LATENCY_FILE`
   points it at a scratch copy of the baseline. `npx tsx scripts/video-truth-report.ts` prints `ready-based` (R2) and `appear-based` numbers.
 - Live (test-mode video only, never for stills): `setTiming.ts` (`TimingTracker`) splits each accepted set into capture / read / ocr / settle;
   main matches the set to a label (`footageMatch.ts`, by items and nearest `from`), sets `OverlayState.msText` so every plate reads
   `Score: <n> <ms> ms` (`~` when no label matches), and when the overlay acks the draw (`overlayDrawn`) logs `video.advice` and appends a row
   (with `draw`) to `userData/video-latency.json`. Agents run the real recording only when the user asks; a synthetic clip is fine.
 - Replay quantises frames to 250 ms (4 fps); the live app sees a picture about every 67 ms, so live numbers are the ones to quote.
+- Target: advice under 1000 ms from `appear` on every labelled draft, from text reads alone (no icon guesses; see Fast draft read).
+  The fallback is 1.0 s: read cards advised, the rest grey `?`, each upgrading the moment its read lands.
+- `npm run win:latency [-- --only s3,s7] [--runs N] [--video "<Windows path>"] [--relay page]` (`scripts/win/run-latency.sh`,
+  `scripts/win/latency-main.cjs`): syncs like `win:dev`, starts the app under `BRAWL_E2E` in test mode with the user's recording,
+  plays each labelled stretch padded 1 s, prints one row per labelled set (old ms, new ms from `appear`, capture/read/ocr/settle/draw,
+  re-roll, `wrong`) and writes `logs/win-latency.json`; exit 1 on any row at 1000 ms or more, wrong, or never advised. Nothing is
+  visible (opacity 0, dummy at `HWND_BOTTOM`). Hard timeout 15 min; a full run takes about 4 min. **This is the only automated
+  thing that plays the user's recording**: run it by hand (worker or user), never from `npm test`, `npm run check`, `win:e2e` or CI.
+  A set matches a label only while the dummy's `currentTime` is inside that stretch's `video` range padded 1 s (else `~`).
+  A set whose label marks a slot `covered` counts as advised with a `?` on that slot (result `ok (covered slot ?)`), as in the video-truth rules.
+  The `settle`, `read` and `ocr` columns start at the set's first card: frames that still show the accepted set (`live`) start no set
+  in `TimingTracker`. The inventory grid hold runs at most 600 ms from the grid's first change, however often the job restarts.
+- The `ocr` column is the round trip of the set's last name read; `ocr.hops` logs split it (`toPage`, `main` with the helper, `helper`,
+  `back`). Text reads go worker -> main over a MessagePort (`CHANNELS.ocrPortGet`/`ocrPort`); `--relay page` switches back to the
+  page relay to compare. The helper answers one crop at a time, so crops sent back to back queue.
+- The inventory grid is matched as a stepped job between frames (`GRID_HOLD_MS` 600: the longest an accept waits for a grid match
+  already under way) and reused while its fingerprint (fade-aware `inventorySig`) is unchanged.
+- The page never calls a re-roll on a set holding a card graded S or A in the hero's tier list (`holdsTopCard` in `tierlist.ts`,
+  applied in `BrawlView`'s advice): the engine's fresh-set estimate is above a lone A card's score when the owned grid is unreadable.
+- `latency-main.cjs` buffers its debug log (`logs/win-latency-debug.log`) and writes it once a second: a synchronous append per log
+  line cost about 40 ms of main's time each and inflated the draw and ocr columns to over a second. Keep harness logging off main's path.
+- A name read under 5 letters (`SHORT_READ` in `names.ts`) must match a name exactly: Spirit Sap fading in read as "'irit" and
+  scored 0.75 against Grit, and a lock taken after the accept never moves (the hover rule).
+- Physical floor (measured on the recording, 4 fps): the game deals the three cards over up to 1.5 s after `appear`; on 6 sets the
+  third card lands 1250 to 1500 ms after `appear`, so those rows cannot be under 1000 ms by any read. Live, the third card's name
+  line fades in: it reads blank or garbled ("Heatinq Noun") for 100 to 350 ms after its circle shows, and the accept follows the
+  first clean read within one frame. On the full runs (2026-10-11) the rows over 1000 ms are the sets whose third line had its
+  first ink 850 ms or more after `appear`.

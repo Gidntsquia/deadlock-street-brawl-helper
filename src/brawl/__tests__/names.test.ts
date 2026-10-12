@@ -18,10 +18,12 @@ describe('matchItemName', () => {
     ['Torment Pulse r', 'Torment Pulse'], // a stray letter from the card art
     ['Metal Skin', 'Metal Skin'],
     ['a Health', 'Extra Health'], // the left end hidden by a capture glitch
+    ['Grit', 'Grit'], // a short name still reads when it is exact
   ])('%s -> %s', (text, name) => {
     expect(matchItemName(text, all)?.itemId).toBe(idOf(name));
   });
-  it.each(['', 'r', 'xqzvw kfj', 'Spirit'])('gives no item for %j', (text) => {
+  // "'irit" is Spirit Sap fading in (win:latency, s8 d024): one letter off Grit, but too short to decide on.
+  it.each(['', 'r', 'xqzvw kfj', 'Spirit', "'irit", 'Gril'])('gives no item for %j', (text) => {
     expect(matchItemName(text, all)).toBeNull();
   });
 });

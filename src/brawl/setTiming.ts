@@ -12,7 +12,8 @@ export interface SetTiming {
   capture: number;
   /** Recogniser and name reads: sum of (result back - frame sent) from the first card to the accept. */
   read: number;
-  /** Helper round trips of this set's text reads, summed (the helper reads one crop at a time). */
+  /** Text read round trips (worker to page to main to the helper and back) between the set's first card and the accept,
+   *  overlapping reads counted once: the wall time the set spent with a read in flight. */
   ocr: number;
   /** All three cards read to accepted: the gate's wait for the picture to hold still. */
   settle: number;
@@ -26,20 +27,38 @@ export class TimingTracker {
   private firstSeenWall = 0;
   private firstFull: number | null = null;
   private read = 0;
-  private ocr = 0;
+  private trips: [number, number][] = []; // wall clock [start, end] of each text read
   private done = new Map<string, SetTiming>();
 
   /** A frame went to the worker; `captureMs` is how long ago the video presented that picture. */
   frameSent(now: number, captureMs: number) {
     this.post = { t: now, capture: Math.max(0, captureMs) };
   }
-  /** One text read finished (helper round trip in ms). */
-  ocrDone(ms: number) {
-    if (this.firstSeen !== null) this.ocr += ms;
+  /** One text read finished: it went out at `startWall` (Date.now clock) and came back `ms` later. */
+  ocrTrip(startWall: number, ms: number) {
+    this.trips.push([startWall, startWall + ms]);
+    if (this.trips.length > 64) this.trips.shift();
   }
-  /** A worker result: how many cards are present, whether all three are sure, whether it accepted a set. */
-  result(now: number, wall: number, present: number, sure: number, accepted: boolean, key: string) {
-    if (!present) {
+  /** Wall time in [from, to] covered by at least one read. */
+  private ocrWithin(from: number, to: number) {
+    const iv = this.trips
+      .map(([a, b]) => [Math.max(a, from), Math.min(b, to)] as [number, number])
+      .filter(([a, b]) => b > a)
+      .sort((x, y) => x[0] - y[0]);
+    let sum = 0,
+      end = -Infinity;
+    for (const [a, b] of iv) {
+      if (b <= end) continue;
+      sum += b - Math.max(a, end);
+      end = b;
+    }
+    return sum;
+  }
+  /** A worker result: how many cards are present, whether all three are sure, whether it accepted a set, and whether
+   *  an accepted set is still up (`live`): those frames belong to no new set, so they never start one. Without that a
+   *  set that followed with no empty frame between (a seek, a quick pick) carried the old set's start and settle. */
+  result(now: number, wall: number, present: number, sure: number, accepted: boolean, key: string, live = false) {
+    if (!present || (live && !accepted)) {
       this.reset();
       return;
     }
@@ -56,7 +75,7 @@ export class TimingTracker {
       firstSeenWall: Math.round(this.firstSeenWall),
       capture: Math.round(this.post?.capture ?? 0),
       read: Math.round(this.read),
-      ocr: Math.round(this.ocr),
+      ocr: Math.round(this.ocrWithin(this.firstSeenWall, wall)),
       settle: Math.round(Math.max(0, now - (this.firstFull ?? now))),
     });
     this.reset();
@@ -69,6 +88,5 @@ export class TimingTracker {
     this.firstSeen = null;
     this.firstFull = null;
     this.read = 0;
-    this.ocr = 0;
   }
 }

@@ -90,8 +90,14 @@ const api = {
     };
   },
   /** Reads a prepared text crop (src/brawl/ocr.ts) with the name reader; `error` when it is not running. */
-  readText: (width: number, height: number, data: Uint8Array): Promise<{ text: string; ms: number; error?: string }> =>
+  readText: (
+    width: number,
+    height: number,
+    data: Uint8Array,
+  ): Promise<{ text: string; ms: number; error?: string; mainMs?: number }> =>
     ipcRenderer.invoke(CHANNELS.readText, width, height, data),
+  /** Asks main for a MessagePort to the name reader; it arrives as a window message `{ brawlOcrPort: true }`. */
+  requestOcrPort: () => ipcRenderer.send(CHANNELS.ocrPortGet),
   getReaderState: (): Promise<ReaderState> => ipcRenderer.invoke(CHANNELS.readerStateGet),
   onReaderState: (cb: (s: ReaderState) => void) => {
     const listener = (_e: Electron.IpcRendererEvent, s: ReaderState) => cb(s);
@@ -161,3 +167,5 @@ const api = {
 
 export type BrawlApi = typeof api;
 contextBridge.exposeInMainWorld('brawlAPI', api);
+// The name reader's port (see requestOcrPort) cannot cross the context bridge as a value: it is posted to the page.
+ipcRenderer.on(CHANNELS.ocrPort, (e) => window.postMessage({ brawlOcrPort: true }, '*', e.ports));
