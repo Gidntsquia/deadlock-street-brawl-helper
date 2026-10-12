@@ -389,7 +389,7 @@ Speed (advice at x4): a name read or caption read that lands before the set is a
   `Score: <n> <ms> ms` (`~` when no label matches), and when the overlay acks the draw (`overlayDrawn`) logs `video.advice` and appends a row
   (with `draw`) to `userData/video-latency.json`. Agents run the real recording only when the user asks; a synthetic clip is fine.
 - Replay quantises frames to 250 ms (4 fps); the live app sees a picture about every 67 ms, so live numbers are the ones to quote.
-- Target: advice under 1000 ms from `appear` on every labelled draft, from text reads alone (no icon guesses; see Fast draft read).
+- Target: advice within 400 ms of the last card landing (`fromLast`), judged per draft on the median of 3 `win:latency` runs (the old 1000 ms from `appear` stays the guard in the footage test), from text reads alone (no icon guesses; see Fast draft read).
   The fallback is 1.0 s: read cards advised, the rest grey `?`, each upgrading the moment its read lands.
 - `npm run win:latency [-- --only s3,s7] [--runs N] [--video "<Windows path>"] [--relay page]` (`scripts/win/run-latency.sh`,
   `scripts/win/latency-main.cjs`): syncs like `win:dev`, starts the app under `BRAWL_E2E` in test mode with the user's recording,
@@ -412,8 +412,4 @@ Speed (advice at x4): a name read or caption read that lands before the set is a
   line cost about 40 ms of main's time each and inflated the draw and ocr columns to over a second. Keep harness logging off main's path.
 - A name read under 5 letters (`SHORT_READ` in `names.ts`) must match a name exactly: Spirit Sap fading in read as "'irit" and
   scored 0.75 against Grit, and a lock taken after the accept never moves (the hover rule).
-- Physical floor (measured on the recording, 4 fps): the game deals the three cards over up to 1.5 s after `appear`; on 6 sets the
-  third card lands 1250 to 1500 ms after `appear`, so those rows cannot be under 1000 ms by any read. Live, the third card's name
-  line fades in: it reads blank or garbled ("Heatinq Noun") for 100 to 350 ms after its circle shows, and the accept follows the
-  first clean read within one frame. On the full runs (2026-10-11) the rows over 1000 ms are the sets whose third line had its
-  first ink 850 ms or more after `appear`.
+- Floor: the game deals the three cards over up to 1.5 s after `appear`, so the target is measured from the last card landing, not from `appear`. The last-card mark is the first frame where all three circles hold a card (`card.land` in the worker log; `lastCard`/`fromLast` in `logs/win-latency.json`). The cost after it is the third name line fading in (100 to 350 ms blank or garbled), one OCR round trip, the 100 ms settle and the draw. Icon branch outcome: text only (no icon read decides anything). On a loaded host the OCR hop alone is 300 to 1000 ms, so judge on a quiet machine.
