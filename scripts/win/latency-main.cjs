@@ -14,6 +14,8 @@
 //        --relay page: text reads go worker -> page -> main as before the direct port (BRAWL_OCR_RELAY), to compare
 'use strict';
 process.env.BRAWL_E2E = '1';
+// The overlay is invisible here (opacity 0) and read through executeJavaScript: keep it out of the topmost band too.
+process.env.BRAWL_OVERLAY_NOT_TOP = '1';
 
 const path = require('node:path');
 const fs = require('node:fs');

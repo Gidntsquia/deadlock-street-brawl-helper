@@ -353,11 +353,20 @@ function createControlWindow() {
   });
 }
 
+/** win:latency sets this: its overlay is invisible (opacity 0), and a topmost window would still list as on top of the
+ *  person's desktop. win:e2e keeps the real topmost overlay and checks it. */
+const overlayNotTop = !!process.env.BRAWL_OVERLAY_NOT_TOP;
+function overlayOnTop(move = false) {
+  if (!alive(overlay) || overlayNotTop) return;
+  overlay.setAlwaysOnTop(true, 'screen-saver');
+  if (move) overlay.moveTop();
+}
+
 function createOverlayWindow() {
   overlay = new BrowserWindow({
     frame: false,
     transparent: true,
-    alwaysOnTop: true,
+    alwaysOnTop: !overlayNotTop,
     skipTaskbar: true,
     focusable: false,
     hasShadow: false,
@@ -375,7 +384,7 @@ function createOverlayWindow() {
   // moves reach the page directly (sendInputEvent).
   overlay.setIgnoreMouseEvents(true, { forward: !process.env.BRAWL_E2E });
   overlayIgnoresMouseEvents = true;
-  overlay.setAlwaysOnTop(true, 'screen-saver');
+  overlayOnTop();
   // Under the harness nobody looks at the overlay (checks read it via capturePage/executeJavaScript), and it
   // is always-on-top: left visible it would draw over whatever the person is working in. Same opacity-0
   // approach as the control window above.
@@ -544,8 +553,7 @@ function syncOverlay() {
   if (rect && show && !overlay.isVisible()) {
     overlay.setBounds(toDipBounds(rect));
     overlay.showInactive();
-    overlay.setAlwaysOnTop(true, 'screen-saver');
-    overlay.moveTop();
+    overlayOnTop(true);
   } else if (!show && overlay.isVisible()) {
     overlay.hide();
   }
@@ -638,8 +646,7 @@ function startRectPolling() {
       const fg = isGameForeground();
       const now = Date.now();
       if (reassert || (fg && !gameWasForeground) || now - lastReassert >= OVERLAY_REASSERT_MS) {
-        overlay.setAlwaysOnTop(true, 'screen-saver');
-        overlay.moveTop();
+        overlayOnTop(true);
         lastReassert = now;
       }
       gameWasForeground = fg;
