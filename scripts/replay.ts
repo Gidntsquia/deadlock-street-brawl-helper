@@ -165,6 +165,8 @@ export async function replayDraft(dir: string, opts: ReplayOpts = {}): Promise<R
     for (const slot of cov) if (!coveredBefore.includes(slot)) unsureLog.push(`${fi}:${slot}:covered`);
     coveredBefore = res.covered ?? [];
     if (results.some((r) => r.accepted) && !res.accepted) res.accepted = true;
+    const landed = results.find((r) => r.land !== undefined)?.land;
+    if (landed !== undefined && res.land === undefined) res.land = landed;
     opts.onResult?.(fi, res, f.t);
     if (res.accepted && acceptFrame < 0) acceptFrame = fi;
     if (res.accepted) enhanced = res.reads.map((x) => x.present && !x.unsure && x.enhanced);
