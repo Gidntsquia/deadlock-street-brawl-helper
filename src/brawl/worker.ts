@@ -170,7 +170,13 @@ interface SlotLock {
   sig: Uint8Array;
   enhanced: boolean;
   rare: boolean;
+  /** when the lock was taken and how well its read matched: a fresh, strong lock is a line still fading in */
+  at?: number;
+  score?: number;
 }
+/** A lock taken this recently on a read this good is not held for a confirming re-read: the line is only fading in. */
+const FRESH_LOCK_MS = 500;
+const FRESH_LOCK_SCORE = 0.9;
 let locks: (SlotLock | null)[] = [null, null, null];
 /** `until`: the ban on re-reading this picture ends then (a read that was fine but clashed with another slot's). */
 let nameFail: ({ sig: Uint8Array; at: number; since: number; until?: number } | null)[] = [null, null, null];
@@ -381,7 +387,10 @@ const applyNames = (
             // CHOICE label a beat before the cards, so the first lock can be the previous choice's card.
             nameFail[slot] = { sig, at: performance.now(), since: nameFail[slot]?.since ?? t };
           } else if (m) {
-            locks[slot] = prev?.id === m.itemId ? { ...prev, sig } : { id: m.itemId, sig, enhanced, rare };
+            locks[slot] =
+              prev?.id === m.itemId
+                ? { ...prev, sig }
+                : { id: m.itemId, sig, enhanced, rare, at: performance.now(), score: m.score };
             nameFail[slot] = null;
             if (fp0) {
               if (!prev || prev.id !== m.itemId || !lockFp[slot]) lockFp[slot] = fp0;
@@ -421,7 +430,8 @@ const applyNames = (
       }
       // Before the accept, other lettering under a lock may be the real card replacing the previous choice's: hold the
       // accept until that picture has been read (a hover tooltip's title is caught by the twin check).
-      if (!advising() && sig && hasInk(sig) && otherName(lock.sig, sig) && !failedThis) pending = true;
+      const freshLock = now - (lock.at ?? -1e9) < FRESH_LOCK_MS && (lock.score ?? 0) >= FRESH_LOCK_SCORE;
+      if (!advising() && sig && hasInk(sig) && otherName(lock.sig, sig) && !failedThis && !freshLock) pending = true;
       slotSure[slot] = true;
       return asLock(lock);
     }
