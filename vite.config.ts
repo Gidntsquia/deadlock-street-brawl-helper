@@ -35,6 +35,8 @@ export default defineConfig(({ mode }) => ({
   ],
   server: { host: true },
   test: {
+    // jsdom component tests take 6-8 s when the whole suite runs in parallel (pass in ~1 s alone)
+    testTimeout: 20000,
     environmentMatchGlobs: [['src/components/**', 'jsdom']],
     setupFiles: ['scripts/__tests__/setup-reader.ts'],
   },
