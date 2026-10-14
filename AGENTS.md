@@ -400,6 +400,8 @@ Speed (advice at x4): a name read or caption read that lands before the set is a
   visible (opacity 0, dummy at `HWND_BOTTOM`). Hard timeout 15 min; a full run takes about 4 min. Like win:e2e it needs a >= 1080p desktop: with the monitor asleep or off, Windows drops to 819x614, the dummy jumps to (0,0) and the run misses whole sets (`no advice`, same rows every time; 2026-10-11). Check `[System.Windows.Forms.Screen]::PrimaryScreen.Bounds` first. The overlay is kept out of the topmost band there (`BRAWL_OVERLAY_NOT_TOP`, set only by `latency-main.cjs`) so `win.sh list-topmost` stays empty. **This is the only automated
   thing that plays the user's recording**: run it by hand (worker or user), never from `npm test`, `npm run check`, `win:e2e` or CI.
   A set matches a label only while the dummy's `currentTime` is inside that stretch's `video` range padded 1 s (else `~`).
+  `--only` without `s0` plus `--runs` above 1 is not a valid measure: nothing returns to round 1 choice 1 between passes, so the
+  worker still remembers pass 1's accepted sets and passes 2+ show `no advice` on the same rows (2026-10-14). Use `--runs 1` per call.
   A set whose label marks a slot `covered` counts as advised with a `?` on that slot (result `ok (covered slot ?)`), as in the video-truth rules.
   The `settle`, `read` and `ocr` columns start at the set's first card: frames that still show the accepted set (`live`) start no set
   in `TimingTracker`. The inventory grid hold runs at most 600 ms from the grid's first change, however often the job restarts.
