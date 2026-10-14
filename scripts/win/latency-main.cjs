@@ -154,12 +154,18 @@ function rowsFor(run) {
       const calledReroll = full ? !!full.reroll : reroll;
       if (set.expect === 'reroll' && !calledReroll) why.push('expected re-roll, drew take');
       if (set.expect === 'take' && calledReroll) why.push('expected take, drew re-roll');
+      // `best`: the item the set must end on (its last complete advice; a late ENHANCED mark re-ranks the set).
+      const complete = drawn.filter((a) => !a.unsure && sameItems(a.items, set.items));
+      const last = complete.at(-1) ?? null;
+      const finalBest = last ? (last.reroll ? 're-roll' : last.best) : null;
+      if (set.best && last && finalBest !== set.best) why.push(`expected take ${set.best}, ended on ${finalBest}`);
       const row = {
         stretch: st.id,
         draft: set.draft,
         labelItems: set.items,
         advisedItems: (full ?? first)?.items ?? [],
         best: (full ?? first)?.best ?? null,
+        finalBest,
         grades: full?.grades ?? [],
         hero: (full ?? first)?.hero ?? '',
         oldMs: base.oldMs,

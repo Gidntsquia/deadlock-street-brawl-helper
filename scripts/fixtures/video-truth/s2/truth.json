@@ -20,7 +20,9 @@
     393,
     400
    ],
-   "appear": 392.25
+   "appear": 392.25,
+   "expect": "take",
+   "best": "Transcendent Cooldown"
   },
   {
    "draft": "d007",
@@ -37,7 +39,8 @@
     403.25,
     426.25
    ],
-   "appear": 401.75
+   "appear": 401.75,
+   "expect": "reroll"
   },
   {
    "draft": "d007",

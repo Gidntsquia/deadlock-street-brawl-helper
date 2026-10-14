@@ -25,6 +25,8 @@ export interface TruthSet {
   covered?: number[];
   /** The call the engine must make on this set: re-roll or take (the user's judgement of the recording). */
   expect?: 'reroll' | 'take';
+  /** The item the engine must end on for this set (the last advice while it is up: a late ENHANCED mark re-ranks it). */
+  best?: string;
 }
 export interface Truth {
   video: [number, number];
@@ -161,6 +163,18 @@ export async function scoreStretch(dir: string): Promise<TruthReport> {
     else if (s.expect === 'reroll' && !call.reroll)
       violations.push(`R5 ${label(s)} expected re-roll, drew take ${call.best}`);
     else if (s.expect === 'take' && call.reroll) violations.push(`R5 ${label(s)} expected take, drew re-roll`);
+    if (!s.best) continue;
+    const last = frames.filter((x) => x.on && x.t >= s.from - TOL && x.t <= s.to && matches(x, s)).at(-1) ?? f;
+    const end = engineCall(
+      last.hero,
+      s.round,
+      s.choice,
+      last.ids.map((itemId, i) => ({ itemId, enhanced: last.enh[i] })),
+      last.owned,
+      last.enemies,
+    );
+    if (end && (end.reroll || end.best !== s.best))
+      violations.push(`R5 ${label(s)} expected take ${s.best}, ended on ${end.reroll ? 're-roll' : end.best}`);
   }
   const fromAppear: TruthReport['fromAppear'] = [];
   for (const s of truth.sets) {

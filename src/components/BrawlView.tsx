@@ -455,8 +455,12 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
     if (draft || tipNow) {
       // A newly accepted set's reads arrive before React has ranked it: sending them now would draw them with the
       // previous set's scores and pick for a frame. Wait for the advice effect, which pushes again once it has run.
-      const adviceIds = overlayAdviceRef.current?.ranked.map((r) => r.itemId) ?? [];
-      if (draft && readsRef.current.some((r) => r.present && !r.unsure && !adviceIds.includes(r.itemId))) return;
+      // The same goes for a late ENHANCED mark on a card already ranked: the old ranking scored it plain, and the plates
+      // freeze on the first state sent for a set key.
+      const ranked = overlayAdviceRef.current?.ranked ?? [];
+      const rankedAs = (o: Offer) => ranked.some((x) => x.itemId === o.itemId && x.enhanced === !!o.enhanced);
+      const stale = readsRef.current.some((r) => r.present && !r.unsure && !ranked.some((x) => x.itemId === r.itemId));
+      if (draft && (stale || !cardsRef.current.every(rankedAs))) return;
       const rerollNow = !!rerollRef.current;
       const plates = draft && readsRef.current.some((r) => r.present);
       state = {
@@ -1287,6 +1291,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
           round: meta.round,
           choice: meta.choice,
           items: offers.map((o) => o.itemId),
+          enhanced: offers.map((o) => !!o.enhanced),
         });
         // Round / choice come from the labels on this very frame. If the round label can't be read (small or
         // scaled windows), the round advances only when the choice wraps back to 1 (3 -> 1, or 2 -> 1 after a skipped frame); anything else keeps the old value.

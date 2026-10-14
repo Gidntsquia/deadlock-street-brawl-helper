@@ -97,7 +97,9 @@
           "from": 392,
           "to": 400,
           "readable": [393, 400],
-          "appear": 392.25
+          "appear": 392.25,
+          "expect": "take",
+          "best": "Transcendent Cooldown"
         },
         {
           "draft": "d007",
