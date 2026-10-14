@@ -152,8 +152,8 @@ one-off hidden check (with a synthetic clip, never the user's recording) and no 
   panel (`src/components/AbilityPanel.tsx`, data from `abilityPanelFor` in `src/brawl/abilities.ts`) for 15 s after
   the draft screen closes (`src/brawl/abilityPanelTimer.ts`, a pure state machine); a reopened draft ends it at once.
   It shows this round's standard points highlighted (Street Brawl gives 6/6/5/5/10 points in rounds 1-5; pills cost 1/2/5; `pillRounds` in `abilities.ts` follows the standard order, carries unspent points, and fills leftovers so all 32 are spent by round 5), earlier rounds' greyed with a check, later ones plain, with a "Round N: X points" title. Every ability starts unlocked in Street Brawl: there is no unlock advice anywhere.
-- No yellow outline: Windows Graphics Capture draws one; `disable-features=AllowWgcWindowCapturer` (in
-  `electron/main.ts` and both harnesses) falls back to Chromium's GDI window capturer, which has none. Keep that
+- No yellow outline: Windows Graphics Capture draws one; `disable-features=CalculateNativeWinOcclusion,AllowWgcWindowCapturer` (in
+  `electron/main.ts` and the harnesses; occlusion off so a covered test-mode dummy keeps painting its video) falls back to Chromium's GDI window capturer, which has none. Keep that
   switch in all three places.
 - `findGameWindow` caches the game's handle and only re-enumerates windows when it is gone; the cached path must
   still honour the `exclude` set (test mode's dummy is excluded by the poll that watches for a real game).
@@ -332,6 +332,8 @@ If `npm run check` fails with ENOTDIR on prettier, delete the stray file `node_m
 - Harness at `--slow 4`: advice time starts before `setFrame`, the overlay is polled once during the hold, limits and timeouts scale by SLOW, and the panel expiry is measured with `pollAt`/`goneAt`.
 - The ScoreTip shows `Order: no data` (no number) when the active ability order matches no stored order, whatever `BRAWL_ORDER_TERM` is.
 
+- A live set whose ENHANCED mark appears after the accept (the box fades in after the name) is advised again once the mark holds two frames (`up` in `draftGate.ts`). In test-mode video runs each plate is prefixed with the item name the app read (`namesFromAdvice`, only when `msText` is set).
+
 ## Video truth set (real gameplay, 1280x720)
 
 `scripts/fixtures/video-truth/s0..s9/` are 10 stretches cut from one OBS recording (lossy webp crops, about 34 MB; frame time is `truth.video[0] + frameIndex/4`). Hand labels live in `scripts/video-truth/labels.json` (per set: items, `from`/`to` on screen, `readable` window, `covered` slots that a tooltip hides and may show `?`). `npx tsx scripts/video-truth.ts --truth-only` rewrites only the `truth.json` files from the labels; the full tool needs the source video. `npx tsx scripts/video-truth-report.ts` prints per-stretch violations and advice latency (about 3 min); `scripts/__tests__/video-truth.test.ts` fails on any. Rules in `scoreStretch` (`scripts/lib/videoTruth.ts`): R1 advised items equal a labelled set on screen; R2 a set readable 1 s or more is advised within 1.0 s (`ADVICE_BY`); R3 no advice drop-out while readable; R4 no advice when no set is on screen. Fix labels only when the video shows them wrong.
@@ -389,7 +391,7 @@ Speed (advice at x4): a name read or caption read that lands before the set is a
   `Score: <n> <ms> ms` (`~` when no label matches), and when the overlay acks the draw (`overlayDrawn`) logs `video.advice` and appends a row
   (with `draw`) to `userData/video-latency.json`. Agents run the real recording only when the user asks; a synthetic clip is fine.
 - Replay quantises frames to 250 ms (4 fps); the live app sees a picture about every 67 ms, so live numbers are the ones to quote.
-- Target: advice within 400 ms of the last card landing (`fromLast`), judged per draft on the median of 3 `win:latency` runs (the old 1000 ms from `appear` stays the guard in the footage test), from text reads alone (no icon guesses; see Fast draft read).
+- Target: advice within 400 ms of the last card landing (`fromLast`), judged per draft on the median of 3 `win:latency` runs (the footage test checks 400 ms + one 250 ms replay frame from the last-card frame, and below the old app's time), from text reads alone (no icon guesses; see Fast draft read).
   The fallback is 1.0 s: read cards advised, the rest grey `?`, each upgrading the moment its read lands.
 - `npm run win:latency [-- --only s3,s7] [--runs N] [--video "<Windows path>"] [--relay page]` (`scripts/win/run-latency.sh`,
   `scripts/win/latency-main.cjs`): syncs like `win:dev`, starts the app under `BRAWL_E2E` in test mode with the user's recording,

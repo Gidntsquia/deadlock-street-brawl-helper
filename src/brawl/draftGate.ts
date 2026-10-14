@@ -49,6 +49,8 @@ export interface GateState {
   live: boolean; // `last` is what is on screen now, so its advice stands
   missing: number; // consecutive key-less frames while live
   spent: string[]; // keys of sets a selection was made from
+  /** The accepted set read with more ENHANCED marks than it was accepted with, and for how many frames in a row. */
+  up?: { key: string; frames: number } | null;
 }
 
 export interface GateOut {
@@ -81,6 +83,7 @@ const sameLabels = (a: Labelled, b: Labelled) => a.choice === b.choice && (!a.ro
 
 export function stepGate(s: GateState, f: GateFrame): GateOut {
   let { cand, last, live, missing, spent } = s;
+  let up = s.up ?? null;
   let picked: number | null = null;
 
   // A selection shows up in the inventory grid: an item that was on the last accepted set and was not owned then.
@@ -102,7 +105,7 @@ export function stepGate(s: GateState, f: GateFrame): GateOut {
   if (f.changed && live) live = false;
 
   const out = (accept: boolean, isSpent = false): GateOut => ({
-    state: { cand, last, live, missing, spent },
+    state: { cand, last, live, missing, spent, up },
     accept,
     live,
     picked,
@@ -151,6 +154,20 @@ export function stepGate(s: GateState, f: GateFrame): GateOut {
   if (live && last && sameSet(last.key, f.key) && sameLabels(last, now)) {
     if (!last.round && f.round) last = { ...last, round: f.round };
     cand = null;
+    // The ENHANCED box fades in a little after the name: a mark that shows up on the live set and stays for two frames
+    // is part of the set, so the advice is made again with it.
+    const was = last.key.split(','),
+      nowK = f.key.split(',');
+    const gained = nowK.some((k, i) => k.endsWith('+') && !(was[i] ?? '').endsWith('+'));
+    const lost = was.some((k, i) => k.endsWith('+') && !(nowK[i] ?? '').endsWith('+'));
+    if (gained && !lost) {
+      up = up && up.key === f.key ? { key: f.key, frames: up.frames + 1 } : { key: f.key, frames: 1 };
+      if (up.frames >= 2) {
+        last = { ...last, key: f.key };
+        up = null;
+        return out(true);
+      }
+    } else up = null;
     return out(false);
   }
 

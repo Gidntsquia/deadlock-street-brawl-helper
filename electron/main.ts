@@ -1351,7 +1351,8 @@ if (process.env.BRAWL_E2E && !app.isReady()) app.disableHardwareAcceleration();
 // borderless capture access that would remove it). Chromium's older GDI window capturer has no border, so switch the
 // WGC window capturer off: the game window is read without any outline. The harnesses (which are already `ready`
 // when this module loads) pass the same switch themselves; keep the two in sync (scripts/win/*-main.cjs).
-if (!app.isReady()) app.commandLine.appendSwitch('disable-features', 'AllowWgcWindowCapturer');
+if (!app.isReady())
+  app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion,AllowWgcWindowCapturer');
 
 app.whenReady().then(() => {
   setupDisplayMediaHandler();

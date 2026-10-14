@@ -172,3 +172,15 @@ describe('draftGate', () => {
     expect(run(hold({ key: A, choice: 1 }, 600), off).accepted).toHaveLength(0);
   });
 });
+
+describe('an ENHANCED mark that shows up after the accept', () => {
+  it('is advised again once it holds for two frames, not on one', () => {
+    const a = { key: '1,2,3', choice: 1 };
+    const b = { key: '1,2,3+', choice: 1 };
+    const one = run([...hold(a, SETTLE_MS + DT), b, a]);
+    expect(one.accepted.map((x) => x.key)).toEqual(['1,2,3']);
+    const two = run([...hold(a, SETTLE_MS + DT), b, b, b]);
+    expect(two.accepted.map((x) => x.key)).toEqual(['1,2,3', '1,2,3+']);
+    expect(two.state.live).toBe(true);
+  });
+});

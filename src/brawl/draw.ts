@@ -322,6 +322,7 @@ export function drawReads(
   theme: OverlayTheme = readTheme(),
   bonuses: Record<number, number> = {},
   msText: string | null = null,
+  names: Record<number, string> = {},
 ): DrawnRect[] {
   const drawn: DrawnRect[] = [];
   interface Slot {
@@ -363,7 +364,7 @@ export function drawReads(
               isBest,
               mode: 'item',
               badge: grades[read.itemId] ?? '-',
-              label: `Score: ${score.toFixed(2)}${msText ? `  ${msText}` : ''}`,
+              label: `${msText && names[read.itemId] ? `${names[read.itemId]}  ` : ''}Score: ${score.toFixed(2)}${msText ? `  ${msText}` : ''}`,
               chip: null,
             },
       bonus,
@@ -474,6 +475,13 @@ export function drawReads(
 export function bonusesFromAdvice(advice: OverlayAdvice | null): Record<number, number> {
   const out: Record<number, number> = {};
   for (const r of advice?.ranked ?? []) out[r.itemId] = r.enhancedBonus;
+  return out;
+}
+
+/** itemId -> item name, from the advice ranking. */
+export function namesFromAdvice(advice: OverlayAdvice | null): Record<number, string> {
+  const out: Record<number, string> = {};
+  for (const r of advice?.ranked ?? []) out[r.itemId] = r.name;
   return out;
 }
 

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   bonusesFromAdvice,
+  namesFromAdvice,
   drawReads,
   drawReading,
   drawDot,
@@ -80,6 +81,7 @@ export default function OverlayApp() {
           undefined,
           bonusesFromAdvice(state.advice),
           state.msText ?? null,
+          namesFromAdvice(state.advice),
         ),
       );
     // test-mode video: tell main once per set that its plates are on the canvas (it logs `video.advice` from this)
