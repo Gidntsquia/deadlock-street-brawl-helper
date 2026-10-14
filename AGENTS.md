@@ -332,7 +332,7 @@ If `npm run check` fails with ENOTDIR on prettier, delete the stray file `node_m
 - Harness at `--slow 4`: advice time starts before `setFrame`, the overlay is polled once during the hold, limits and timeouts scale by SLOW, and the panel expiry is measured with `pollAt`/`goneAt`.
 - The ScoreTip shows `Order: no data` (no number) when the active ability order matches no stored order, whatever `BRAWL_ORDER_TERM` is.
 
-- A live set whose ENHANCED mark appears after the accept (the box fades in after the name) is advised again once the mark holds two frames (`up` in `draftGate.ts`). In test-mode video runs each plate is prefixed with the item name the app read (`namesFromAdvice`, only when `msText` is set).
+- A live set whose ENHANCED mark appears after the accept (the box fades in after the name) is advised again once the mark holds two frames (`up` in `draftGate.ts`); `pushOverlay` in `BrawlView.tsx` waits until the ranking matches the accepted cards' enhanced flags too, else it froze the plain set's plates under the new key (s2 d006 stayed on Ricochet; `BrawlView.enhanced.test.tsx`). Labels may carry `best` (the item a set must end on, its last complete advice); `win:latency` marks `wrong` with `expected take <X>, ended on <Y>` and `scoreStretch` R5 checks it on replay. Re-run `npx tsx scripts/video-truth.ts --truth-only` after any label edit: until 2026-10-14 the `expect` labels never reached `truth.json`, so R5 checked nothing on replay. In test-mode video runs each plate is prefixed with the item name the app read (`namesFromAdvice`, only when `msText` is set).
 
 ## Video truth set (real gameplay, 1280x720)
 
