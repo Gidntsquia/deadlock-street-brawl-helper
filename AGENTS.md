@@ -408,8 +408,12 @@ Speed (advice at x4): a name read or caption read that lands before the set is a
   page relay to compare. The helper answers one crop at a time, so crops sent back to back queue.
 - The inventory grid is matched as a stepped job between frames (`GRID_HOLD_MS` 600: the longest an accept waits for a grid match
   already under way) and reused while its fingerprint (fade-aware `inventorySig`) is unchanged.
-- The page never calls a re-roll on a set holding a card graded S or A in the hero's tier list (`holdsTopCard` in `tierlist.ts`,
-  applied in `BrawlView`'s advice): the engine's fresh-set estimate is above a lone A card's score when the owned grid is unreadable.
+- No re-roll veto: the engine's gain math alone decides (gain above 0 and above the hold value; a set with an unread card never calls one).
+  The enhanced bonus is multiplied by a per-hero factor in [0, 1] (`enhancedFactor` in `kit.ts`; Infernus uses little weapon damage, so
+  enhanced Ricochet gets 0.2 of it; items with no priced stat lines get the 0.5 floor; the tooltip row says why). A rare (legendary) slot's
+  fresh draw weights items graded S for the hero `BRAWL_WEIGHTS.legendaryS` times. Labels may carry `expect: reroll|take`; `win:latency`
+  marks `wrong` on a disagreement and `scoreStretch` (rule R5) checks it on replay. `scripts/cli-calls.sh` prints the engine's reasoning
+  (`npm run brawl -- ... --explain`) for the two labelled calls: s2 d007 re-roll, s7 d023 take Burst Fire.
 - `latency-main.cjs` buffers its debug log (`logs/win-latency-debug.log`) and writes it once a second: a synchronous append per log
   line cost about 40 ms of main's time each and inflated the draw and ocr columns to over a second. Keep harness logging off main's path.
 - A name read under 5 letters (`SHORT_READ` in `names.ts`) must match a name exactly: Spirit Sap fading in read as "'irit" and
