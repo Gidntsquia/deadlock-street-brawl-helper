@@ -124,3 +124,13 @@ if (advice.reroll)
     `reroll set ${advice.reroll.set + 1}: its best card scores ${advice.reroll.currentBest.toFixed(2)}, a fresh set is expected to offer ${advice.reroll.expectedBest.toFixed(2)} (rare and enhanced slots keep their bonus through the re-roll; an unseen card is tier ${advice.reroll.pool.rareTier} with ${(advice.reroll.pool.pRare * 100).toFixed(0)}% chance)${advice.reroll.holdValue ? `; holding the re-roll for a later set is worth ${advice.reroll.holdValue.toFixed(2)}` : ''}`,
   );
 else console.log('reroll: keep all three sets');
+if (args.includes('--explain'))
+  for (const c of advice.considered ?? [])
+    console.log(
+      `explain set ${c.set + 1}: current best ${c.currentBest.toFixed(2)} (state terms stripped), fresh-set expected best ${c.expectedBest.toFixed(2)}, gain ${c.gain.toFixed(2)}, hold value ${c.holdValue.toFixed(2)} -> ${advice.reroll?.set === c.set ? 'RE-ROLL' : 'TAKE ' + (advice.picks[0]?.item.name ?? '')}${c.gain <= 0 ? ' (gain not above 0)' : c.gain <= c.holdValue ? ' (gain not above hold value)' : ''}`,
+    );
+for (const r of advice.sets.flat())
+  if (r.enhanced)
+    console.log(
+      `enhanced ${r.item.name}: Enhanced row +${r.enhancedBonus.toFixed(2)}${r.enhancedNote ? ` (${r.enhancedNote})` : ''}`,
+    );

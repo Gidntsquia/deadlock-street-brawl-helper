@@ -4,6 +4,8 @@ export interface BreakdownRow {
   label: string;
   /** Signed value in hundredths, so the rows add up exactly to the rounded score. */
   cents: number;
+  /** Words after the number, e.g. why the Enhanced row is reduced for this hero. */
+  note?: string;
 }
 
 /** Fixed noun labels for the score parts, in display order. */
@@ -32,6 +34,7 @@ export function breakdownRows(
   known: boolean,
   enhancedBonus?: number,
   orderNoData?: boolean,
+  enhancedNote?: string,
 ): BreakdownRow[] {
   // With a bonus, the Enhanced row is the whole bonus and Hero fit the not-enhanced fit, matching the plate's cell.
   const pinned = enhancedBonus !== undefined && enhancedBonus !== 0;
@@ -46,7 +49,8 @@ export function breakdownRows(
     const big = (pool.length ? pool : rows).reduce((a, r) => (Math.abs(r.cents) > Math.abs(a.cents) ? r : a));
     big.cents += diff;
   }
-  const out = rows.filter((r) => r.cents !== 0);
+  const out: BreakdownRow[] = rows.filter((r) => r.cents !== 0);
+  if (enhancedNote) for (const r of out) if (r.label === 'Enhanced') r.note = enhancedNote;
   if (orderNoData) out.unshift({ label: ORDER_NO_DATA_LABEL, cents: 0 });
   return out;
 }

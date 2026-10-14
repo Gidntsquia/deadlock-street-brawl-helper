@@ -148,10 +148,12 @@ function rowsFor(run) {
       const first = drawn[0] ?? null;
       const strayItems = drawn.filter((a) => a.items.some((n) => n && !set.items.includes(n)));
       const reroll = drawn.some((a) => a.reroll);
-      const strong = (full?.grades ?? []).filter((g) => g === 'S' || g === 'A').length > 0;
       const why = [];
       if (strayItems.length) why.push(`advised ${strayItems.map((a) => a.items.join('/')).join('; ')}`);
-      if (reroll && strong) why.push('re-roll called on a set with an S or A item');
+      // The label's expected call (`expect`: reroll | take) judges the counted advice; sets without one are never wrong on it.
+      const calledReroll = full ? !!full.reroll : reroll;
+      if (set.expect === 'reroll' && !calledReroll) why.push('expected re-roll, drew take');
+      if (set.expect === 'take' && calledReroll) why.push('expected take, drew re-roll');
       const row = {
         stretch: st.id,
         draft: set.draft,

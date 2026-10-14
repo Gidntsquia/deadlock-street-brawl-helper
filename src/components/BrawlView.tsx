@@ -56,7 +56,7 @@ import { chooseHero } from '../brawl/heroChoice';
 import { DraftLog } from '../brawl/draftLog';
 import type { DraftRecord, RegionShot } from '../../electron/sessionStore';
 import { unknownCeiling } from '../brawl/engine';
-import { holdsTopCard, itemTiers, type BrawlTierListData } from '../brawl/tierlist';
+import { itemTiers, type BrawlTierListData } from '../brawl/tierlist';
 import { AbilityPanel } from './AbilityPanel';
 import { AbilityOrderEditor } from './AbilityOrderEditor';
 import { AdvicePanel } from './AdvicePanel';
@@ -397,15 +397,9 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
     const sets: Offer[][] = [[], [], []];
     sets[choice - 1] = cards;
     const a = adviseDraft(input, { round, owned, enemies: enemyIds, order: activeOrder, sets });
-    // no re-roll call on a set with an unread card or with a card graded S or A
-    return unsure ||
-      holdsTopCard(
-        cards.map((c) => c.itemId),
-        gradeById,
-      )
-      ? { ...a, reroll: null }
-      : a;
-  }, [input, cards, unsure, round, owned, choice, enemyIds, activeOrder, gradeById]);
+    // no re-roll call on a set with an unread card; otherwise the engine's gain math alone decides
+    return unsure ? { ...a, reroll: null } : a;
+  }, [input, cards, unsure, round, owned, choice, enemyIds, activeOrder]);
   /** With an unread card the best sure card is only taken when it beats anything that card could be. */
   const takeOk = useMemo(() => {
     if (!unsure || !input || !advice) return true;
@@ -522,7 +516,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
             winRate: r.winRate,
             grade: gradeById.get(r.item.id) ?? '-',
             enhancedBonus: r.enhancedBonus,
-            rows: breakdownRows(r.parts, r.score, r.known, r.enhancedBonus, r.orderNoData),
+            rows: breakdownRows(r.parts, r.score, r.known, r.enhancedBonus, r.orderNoData, r.enhancedNote),
           })),
         }
       : null;

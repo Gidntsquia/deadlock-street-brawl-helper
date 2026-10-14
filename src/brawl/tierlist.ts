@@ -57,7 +57,7 @@ interface Row<T> {
 }
 
 /** Grades one population against itself: both inputs are standardised, mixed, then cut into S/A/B/C. */
-function rank<T>(rows: Row<T>[], games: number): TierEntry<T>[] {
+export function rank<T>(rows: Row<T>[], games: number): TierEntry<T>[] {
   if (!rows.length) return [];
   const base = sum(rows.map((r) => r.wins)) / Math.max(1, sum(rows.map((r) => r.matches)));
   const win = z(rows.map((r) => (r.wins + PRIOR * base) / (r.matches + PRIOR)));
@@ -107,13 +107,3 @@ export function itemTiers(data: BrawlTierListData, items: Item[]): TierEntry<Ite
 
 export const byGrade = <T>(rows: TierEntry<T>[]) =>
   GRADES.map((grade) => ({ grade, rows: rows.filter((r) => r.grade === grade) }));
-
-/**
- * True when a set holds a card graded S or A. The page then calls no re-roll on that set: the player keeps a top
- * card rather than gamble it on a fresh draw (the user's rule after a re-roll call on Ricochet, Burst Fire sets).
- */
-export const holdsTopCard = (itemIds: number[], grades: ReadonlyMap<number, string>): boolean =>
-  itemIds.some((id) => {
-    const g = grades.get(id);
-    return g === 'S' || g === 'A';
-  });

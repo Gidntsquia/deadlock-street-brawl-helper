@@ -22,6 +22,7 @@ export function ScoreTip({
         <div key={r.label} className="tip-row">
           <span>{r.label}</span>
           {!noData && r.label !== ORDER_NO_DATA_LABEL && <b>{formatSigned(r.cents)}</b>}
+          {r.note && <small className="tip-note"> ({r.note})</small>}
         </div>
       ))}
       {!noData && (

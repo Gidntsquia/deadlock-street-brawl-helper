@@ -102,3 +102,49 @@ const OVERRIDES: Record<number, Record<string, number>> = {
     BonusMoveSpeed: 1.2,
   },
 };
+
+/** Stat lines that count as weapon damage for the enhanced factor (Ricochet's `WeaponPower` among them). */
+const WEAPON_STATS = new Set(['WeaponPower', 'BaseAttackDamagePercent']);
+
+/**
+ * How much of its weapon damage a hero's kit actually uses, 0..1. Infernus deals little weapon damage: his bullets
+ * mostly carry on-hit effects (Afterburn), so a weapon-damage boost is worth about a fifth of what it is for a
+ * gunner (the user's judgement, 2026-10-14). Heroes not listed get 1: no discount.
+ */
+const WEAPON_USE: Record<number, number> = { 1: 0.2 };
+
+/**
+ * What an item's enhancement boosts. UNVERIFIED: the API does not publish enhanced numbers, so this lists the items
+ * whose boosted stat is known from the user's words; every other item falls back to all its own stat lines.
+ */
+const ENHANCE_BOOSTS: Record<string, string[]> = {
+  // enhanced Ricochet raises weapon damage; the bounce that applies on-hit effects is the same enhanced or not
+  upgrade_ricochet: ['WeaponPower'],
+};
+
+export const ENHANCED_FLOOR = 0.5;
+
+export interface EnhancedFactor {
+  /** 0..1: how much of the enhanced bonus this hero keeps for this item. */
+  factor: number;
+  /** Short text for the tooltip row, e.g. `weapon stats, little use for Infernus`; empty when the factor is 1. */
+  note: string;
+}
+
+/**
+ * Per-hero factor of an item's enhanced bonus: the value-weighted relevance of the stats the enhancement boosts to
+ * the hero's kit. A stat is fully relevant (1) unless it is weapon damage and the hero makes little use of it. An item
+ * with no known boosted stats gets `ENHANCED_FLOOR`.
+ */
+export function enhancedFactor(hero: Hero, item: Item, boosts?: string[]): EnhancedFactor {
+  const listed = boosts ?? ENHANCE_BOOSTS[item.class_name];
+  // an item with no listed boosted stats: its priced stat lines other than weapon damage (the enhancement is assumed to
+  // lift those); weapon damage only counts where the item is listed, since that is where the user said it matters
+  const keys = (listed ?? Object.keys(item.properties).filter((k) => !WEAPON_STATS.has(k))).filter(
+    (k) => item.properties[k] !== undefined && (WEAPON_STATS.has(k) || UNIT_VALUE[k]),
+  );
+  if (!keys.length) return { factor: ENHANCED_FLOOR, note: 'boosted stats unknown' };
+  const use = WEAPON_USE[hero.id] ?? 1;
+  const f = keys.every((k) => WEAPON_STATS.has(k)) ? use : 1;
+  return { factor: Math.max(0, Math.min(1, f)), note: f < 0.95 ? `weapon stats, little use for ${hero.name}` : '' };
+}

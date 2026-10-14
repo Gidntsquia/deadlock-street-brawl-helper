@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { GRADES, heroTiers, holdsTopCard, itemTiers } from '../tierlist';
+import { GRADES, heroTiers, itemTiers } from '../tierlist';
 import { heroes, items, tierList } from './testData';
 
 describe('heroTiers', () => {
@@ -40,22 +40,5 @@ describe('itemTiers', () => {
       for (let i = 1; i < sorted.length; i++)
         expect(rank.get(sorted[i].grade)!).toBeGreaterThanOrEqual(rank.get(sorted[i - 1].grade)!);
     }
-  });
-});
-
-describe('holdsTopCard', () => {
-  const grades = new Map([
-    [1, 'S'],
-    [2, 'A'],
-    [3, 'B'],
-    [4, 'C'],
-  ]);
-  it('is true when any card is graded S or A, so no re-roll is called on that set', () => {
-    expect(holdsTopCard([3, 2, 4], grades)).toBe(true);
-    expect(holdsTopCard([1], grades)).toBe(true);
-  });
-  it('is false for a set of B, C and ungraded cards', () => {
-    expect(holdsTopCard([3, 4, 99], grades)).toBe(false);
-    expect(holdsTopCard([], grades)).toBe(false);
   });
 });

@@ -4,8 +4,10 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { replayDraft } from '../replay';
+import { enemiesFrom } from '../../src/brawl';
 import type { Item } from '../../src/types';
 import { ocrChargedMs } from './textReader';
+import { engineCall } from './engineCall';
 
 export interface TruthSet {
   draft: string;
@@ -21,6 +23,8 @@ export interface TruthSet {
   appear?: number;
   /** Slots a tooltip or the cursor hides for good: a grey `?` is right there, a wrong item is not. */
   covered?: number[];
+  /** The call the engine must make on this set: re-roll or take (the user's judgement of the recording). */
+  expect?: 'reroll' | 'take';
 }
 export interface Truth {
   video: [number, number];
@@ -64,7 +68,21 @@ export async function scoreStretch(dir: string): Promise<TruthReport> {
   const name = (id: number) => (id ? (items.find((i) => i.id === id)?.name ?? `#${id}`) : '?');
   const vt = (f: number) => truth.video[0] + f / truth.fps;
   const label = (s: TruthSet) => `${s.draft} ${s.round}.${s.choice}`;
-  const frames: { t: number; on: boolean; round: number; choice: number; names: string[] }[] = [];
+  const frames: {
+    t: number;
+    on: boolean;
+    round: number;
+    choice: number;
+    names: string[];
+    ids: number[];
+    enh: boolean[];
+    hero: number;
+    owned: number[];
+    enemies: number[];
+  }[] = [];
+  let hero = 0,
+    owned: number[] = [],
+    enemies: number[] = [];
   const covered: string[] = [];
   const charge: number[] = [];
   const lands: { t: number; f: number }[] = [];
@@ -74,12 +92,22 @@ export async function scoreStretch(dir: string): Promise<TruthReport> {
       for (const slot of res.covered ?? []) covered.push(`#${f}:${slot}`);
       charge[f] = ocrChargedMs();
       if (res.land !== undefined) lands.push({ t: vt(f), f });
+      if (res.meta?.self) {
+        hero = res.meta.self;
+        enemies = enemiesFrom(res.meta.bar, hero);
+      }
+      if (res.inventory) owned = res.inventory;
       frames.push({
         t: vt(f),
         on: res.live && !res.spent,
         round: res.round,
         choice: res.choice,
         names: res.reads.map((r) => (r.present && !r.unsure ? name(r.itemId) : '?')),
+        ids: res.reads.map((r) => r.itemId),
+        enh: res.reads.map((r) => !!r.enhanced),
+        hero,
+        owned: [...owned],
+        enemies: [...enemies],
       });
     },
   });
@@ -121,6 +149,18 @@ export async function scoreStretch(dir: string): Promise<TruthReport> {
           dropped = !f.on;
         }
     }
+  }
+  // R5: a set labelled with the expected call gets that call from the engine on the read (hero, owned, enemies as read)
+  for (const s of truth.sets) {
+    if (!s.expect) continue;
+    const f = frames.find((x) => x.on && x.t >= s.from - TOL && x.t <= s.to + TOL_AFTER && matches(x, s));
+    if (!f) continue; // never advised: R2 already says so
+    const offers = f.ids.map((itemId, i) => ({ itemId, enhanced: f.enh[i] }));
+    const call = engineCall(f.hero, s.round, s.choice, offers, f.owned, f.enemies);
+    if (!call) violations.push(`R5 ${label(s)} hero not read`);
+    else if (s.expect === 'reroll' && !call.reroll)
+      violations.push(`R5 ${label(s)} expected re-roll, drew take ${call.best}`);
+    else if (s.expect === 'take' && call.reroll) violations.push(`R5 ${label(s)} expected take, drew re-roll`);
   }
   const fromAppear: TruthReport['fromAppear'] = [];
   for (const s of truth.sets) {

@@ -107,7 +107,8 @@
           "from": 402,
           "to": 427,
           "readable": [403.25, 426.25],
-          "appear": 401.75
+          "appear": 401.75,
+          "expect": "reroll"
         },
         {
           "draft": "d007",
@@ -318,7 +319,8 @@
           "from": 2502,
           "to": 2510,
           "readable": [2503.25, 2509.25],
-          "appear": 2502.25
+          "appear": 2502.25,
+          "expect": "take"
         }
       ]
     },

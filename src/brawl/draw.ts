@@ -17,7 +17,7 @@ export interface OverlayAdviceCard {
   /** Points enhanced adds to this card's score (its score minus the same card's score not enhanced); 0 when not enhanced. */
   enhancedBonus: number;
   /** Tooltip rows: fixed labels and hundredths (see `breakdownRows`); one "No Street Brawl data" row without data. */
-  rows: { label: string; cents: number }[];
+  rows: { label: string; cents: number; note?: string }[];
 }
 
 /** Everything the overlay panel needs to render the same advice as the pop-out, without alt-tabbing:

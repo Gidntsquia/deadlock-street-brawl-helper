@@ -1,7 +1,8 @@
 // Street Brawl draft engine. Pure function of (hero assets, item catalog, Street Brawl aggregate analytics,
 // mode config). Everything in the draft is free and the order is fixed by round, so there is no cost-efficiency or buy-time term. It never reads per-player data.
 import type { Item, ItemStat } from '../types';
-import { kitProfile, statValue } from './kit';
+import { enhancedFactor, kitProfile, statValue } from './kit';
+import { rank } from './tierlist';
 import type { BrawlInput, DraftAdvice, DraftState, Offer, RankedOffer, RerollAdvice, ScoreParts } from './types';
 
 // tier: popularity and win-lift are normalised within a tier (see baseScores), so the within-tier score spread is
@@ -35,6 +36,11 @@ export const BRAWL_WEIGHTS = {
   enhanced800: 0.9,
   enhancedCarry800: 0.6,
   dup: 1.0,
+  // legendary: a fresh draw of a rare-tier (legendary) slot weights the items graded S for the hero (top of the tier by
+  // the hero's own win rate and use) this many times as likely as the rest. The user's reasoning (2026-10-14): legendary
+  // items are gotten at the end of the game, some are game-breaking (Mystic Conduit, Frostbite Charm), so re-rolling a
+  // weak legendary for a chance at a top one is high EV, even though the average legendary is no better than this one.
+  legendaryS: 4,
 };
 const WIN_SHRINK_FRAC = 0.05; // K = max(200, 5 % of the tier's most-picked item)
 const MIN_PAIR_MATCHES = 20;
@@ -75,16 +81,25 @@ export interface Base {
   carry: number;
   /** The upgrade `carry` was measured on. */
   carryInto?: Item;
+  /** Per-hero factor in [0, 1] on the enhanced bonus (see `enhancedFactor`), and the words the tooltip shows for it. */
+  enhFactor: number;
+  enhNote: string;
+  /** Graded S among the hero's items of the same tier. */
+  topGrade: boolean;
 }
 
 /** The `enhanced` score part: the flat bonus plus the upgrade carry, both larger for an 800-soul (tier-1) card. */
 const enhancedPart = (b: Base) =>
-  b.item.item_tier === 1
+  b.enhFactor *
+  (b.item.item_tier === 1
     ? BRAWL_WEIGHTS.enhanced800 + BRAWL_WEIGHTS.enhancedCarry800 * b.carry
-    : BRAWL_WEIGHTS.enhanced + BRAWL_WEIGHTS.enhancedCarry * b.carry;
+    : BRAWL_WEIGHTS.enhanced + BRAWL_WEIGHTS.enhancedCarry * b.carry);
+
+/** The kit part an enhanced copy adds, scaled by the same per-hero factor. */
+const enhancedKit = (b: Base) => BRAWL_WEIGHTS.kit * b.kit * (ENHANCED_STAT_MULT - 1) * b.enhFactor;
 
 /** Score an enhanced copy of the item adds over the plain one: the enhanced part and the stat multiplier. */
-const enhancedExtra = (b: Base) => enhancedPart(b) + BRAWL_WEIGHTS.kit * b.kit * (ENHANCED_STAT_MULT - 1);
+const enhancedExtra = (b: Base) => enhancedPart(b) + enhancedKit(b);
 
 /** Items that can appear on a draft card. */
 const draftable = (i: Item) => !i.disabled && i.item_tier >= 1 && !/^upgrade_|Disabled/.test(i.name);
@@ -203,8 +218,33 @@ export function baseScores(input: BrawlInput, enemies: number[] = [], order?: nu
       BRAWL_WEIGHTS.kit * k +
       BRAWL_WEIGHTS.tier * (it.item_tier - 1) +
       (it.is_active_item ? BRAWL_WEIGHTS.active : 0);
-    out.set(it.id, { item: it, stat, pop, winLift, kit: k, base, counter, order: orderShift, orderNoData, carry: 0 });
+    const ef = enhancedFactor(hero, it);
+    out.set(it.id, {
+      item: it,
+      stat,
+      pop,
+      winLift,
+      kit: k,
+      base,
+      counter,
+      order: orderShift,
+      orderNoData,
+      carry: 0,
+      enhFactor: ef.factor,
+      enhNote: ef.note,
+      topGrade: false,
+    });
   }
+  // grade each tier's items for this hero as the tier list does (S is the top slice); only S matters here
+  const byTierRows = new Map<number, { subject: Base; wins: number; matches: number }[]>();
+  for (const b of out.values()) {
+    if (!b.stat) continue;
+    const xs = byTierRows.get(b.item.item_tier) ?? [];
+    xs.push({ subject: b, wins: b.stat.wins, matches: b.stat.matches });
+    byTierRows.set(b.item.item_tier, xs);
+  }
+  for (const rows of byTierRows.values())
+    for (const r of rank(rows, Math.max(1, totalM))) if (r.grade === 'S') r.subject.topGrade = true;
   // every item an item builds into, directly or through another upgrade
   const upgrades = new Map<string, Base[]>();
   for (const b of out.values())
@@ -283,7 +323,7 @@ export function scoreOffer(
   const parts: ScoreParts = {
     pop: b ? BRAWL_WEIGHTS.popularity * Math.sqrt(b.pop) : 0,
     winLift: b ? BRAWL_WEIGHTS.winLift * b.winLift : 0,
-    kit: b ? BRAWL_WEIGHTS.kit * b.kit * (enhanced ? ENHANCED_STAT_MULT : 1) : 0,
+    kit: b ? BRAWL_WEIGHTS.kit * b.kit * (enhanced ? 1 + (ENHANCED_STAT_MULT - 1) * b.enhFactor : 1) : 0,
     tier: BRAWL_WEIGHTS.tier * (item.item_tier - 1),
     counter: b ? BRAWL_WEIGHTS.counter * b.counter : 0,
     order: b ? BRAWL_WEIGHTS.order * b.order : 0,
@@ -324,7 +364,8 @@ export function scoreOffer(
     item,
     enhanced,
     score,
-    enhancedBonus: enhanced ? parts.enhanced + (b ? BRAWL_WEIGHTS.kit * b.kit * (ENHANCED_STAT_MULT - 1) : 0) : 0,
+    enhancedBonus: enhanced ? parts.enhanced + (b ? enhancedKit(b) : 0) : 0,
+    enhancedNote: enhanced && b && b.enhFactor < 0.95 ? b.enhNote : '',
     parts,
     why,
     usage: b?.pop ?? 0,
@@ -381,7 +422,8 @@ function drawWeights(input: BrawlInput, tier: number, xs: Base[]): number[] {
   const total = bucket ? bucket.normal + bucket.good : 0;
   const good = total ? bucket!.good / total : 0;
   const popSum = xs.reduce((a, b) => a + b.pop, 0);
-  return xs.map((b) => (popSum ? (1 - good) / xs.length + (good * b.pop) / popSum : 1 / xs.length));
+  const w = xs.map((b) => (popSum ? (1 - good) / xs.length + (good * b.pop) / popSum : 1 / xs.length));
+  return w;
 }
 
 interface Dist {
@@ -422,6 +464,12 @@ function cardDist(
     if (p <= 0) continue;
     const xs = [...bases.values()].filter((b) => b.item.item_tier === tier);
     const ws = drawWeights(input, tier, xs);
+    // a rare slot's draw favours the hero's top (S) legendary items, see BRAWL_WEIGHTS.legendaryS
+    if (tier === tiers.rare_mod_tier && tier !== tiers.normal_mod_tier) {
+      const boosted = xs.map((b, k) => ws[k] * (b.topGrade ? BRAWL_WEIGHTS.legendaryS : 1));
+      const total = boosted.reduce((a, x) => a + x, 0);
+      boosted.forEach((x, k) => (ws[k] = total ? x / total : ws[k]));
+    }
     for (const [k, b] of xs.entries()) {
       const pen = b.item.is_active_item && actives >= MAX_ACTIVES ? -ACTIVE_OVERFLOW_PENALTY : 0;
       const plain = b.base + pen;
@@ -554,6 +602,7 @@ export function adviseDraft(input: BrawlInput, state: DraftState): DraftAdvice {
   // card, V_j = E[max(gain_j, V_{j+1})]) and vetoes the re-roll when saving it is worth at least as much as re-rolling now.
   // The state-dependent terms (synergy, counter, upgrade) are stripped from the current best so it is on the pool's scale.
   let reroll: RerollAdvice | null = null;
+  const considered: NonNullable<DraftAdvice['considered']> = [];
   const rerolls =
     input.config.item_draft_rerolls_per_round[
       Math.min(state.round, input.config.item_draft_rerolls_per_round.length) - 1
@@ -595,6 +644,13 @@ export function adviseDraft(input: BrawlInput, state: DraftState): DraftAdvice {
     }
     known.forEach((k, i) => {
       if (!k) return;
+      considered.push({
+        set: i,
+        currentBest: k.currentBest,
+        expectedBest: k.expected,
+        gain: k.gain,
+        holdValue: hold[i + 1],
+      });
       if (k.gain > REROLL_GAIN_THRESHOLD && k.gain > hold[i + 1] && (!reroll || k.gain > reroll.gain))
         reroll = {
           set: i,
@@ -606,7 +662,7 @@ export function adviseDraft(input: BrawlInput, state: DraftState): DraftAdvice {
         };
     });
   }
-  return { sets, picks: best, reroll };
+  return { sets, picks: best, reroll, considered };
 }
 
 /** Best few items per tier, ranked by `base` (quality within that tier, ignoring the current draft/enemies). */

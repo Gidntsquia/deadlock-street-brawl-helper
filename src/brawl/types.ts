@@ -80,6 +80,8 @@ export interface RankedOffer {
   score: number;
   /** Points enhanced adds to this card's score (score minus the same card's score not enhanced); 0 when not enhanced. */
   enhancedBonus: number;
+  /** Why the enhanced bonus is reduced for this hero (`weapon stats, little use for Infernus`); '' when it is not. */
+  enhancedNote?: string;
   parts: ScoreParts;
   why: string[];
   usage: number;
@@ -103,6 +105,8 @@ export interface DraftAdvice {
   sets: RankedOffer[][]; // every card scored against `owned`, best first
   picks: RankedOffer[]; // the jointly best one-per-set choice (synergy between picks included)
   reroll: RerollAdvice | null;
+  /** Per set on screen: the numbers the re-roll call was made from (`--explain` in the CLI), call or not. */
+  considered?: { set: number; currentBest: number; expectedBest: number; gain: number; holdValue: number }[];
 }
 
 /** public/data/brawl-icons.json: item id -> base64 RGB bytes of the icon at size x size (see scripts/build-icon-index.mjs). */

@@ -162,3 +162,66 @@ describe('unknownCeiling: the take-mark rule with an unread card', () => {
     expect(ceiling).toBeGreaterThanOrEqual(top);
   });
 });
+
+describe('hero-aware enhanced bonus and legendary-aware re-roll', () => {
+  const state = { round: 5, owned: [], enemies: [], sets: [] };
+  const score = (hero: typeof infernus, name: string, enhanced: boolean) => {
+    const bases = baseScores(hero);
+    return scoreOffer(hero, bases, pairLifts(hero), state, { itemId: itemByName(name).id, enhanced });
+  };
+  it('enhanced Ricochet is worth under half as much to Infernus (little weapon damage) as to a gunner', () => {
+    const lash = inputFor(heroByName('Haze').id);
+    const inf = score(infernus, 'Ricochet', true);
+    const gun = score(lash, 'Ricochet', true);
+    expect(inf.enhancedBonus).toBeLessThan(0.5 * BRAWL_WEIGHTS.enhanced);
+    expect(inf.enhancedBonus).toBeLessThan(0.5 * gun.enhancedBonus);
+    expect(inf.enhancedNote).toContain('weapon stats, little use for Infernus');
+    expect(gun.enhancedNote).toBe('');
+  });
+  it('an item with no priced stats gets the floor factor', () => {
+    const bases = baseScores(infernus);
+    for (const b of bases.values()) {
+      expect(b.enhFactor).toBeGreaterThanOrEqual(0);
+      expect(b.enhFactor).toBeLessThanOrEqual(1);
+    }
+  });
+  const call = (round: number, choice: number, names: string[], enh: boolean[], owned: string[], enemies: string[]) => {
+    const sets = [[], [], []] as { itemId: number; enhanced: boolean }[][];
+    sets[choice - 1] = names.map((n, i) => ({ itemId: itemByName(n).id, enhanced: enh[i] }));
+    return adviseDraft(infernus, {
+      round,
+      owned: owned.map((n) => itemByName(n).id),
+      enemies: enemies.map((n) => heroByName(n).id),
+      sets,
+    });
+  };
+  it('s2 d007: Lightning Scroll / enhanced Ricochet / Runed Gauntlets is a re-roll', () => {
+    const a = call(
+      5,
+      2,
+      ['Lightning Scroll', 'Ricochet', 'Runed Gauntlets'],
+      [false, true, false],
+      ['Counterspell'],
+      ['Viscous'],
+    );
+    expect(a.reroll?.set).toBe(1);
+    expect(a.reroll!.gain).toBeGreaterThan(a.reroll!.holdValue);
+  });
+  it('s7 d023: Burst Fire / Alchemical Fire / Rapid Recharge takes Burst Fire', () => {
+    const a = call(
+      2,
+      3,
+      ['Burst Fire', 'Alchemical Fire', 'Rapid Recharge'],
+      [false, false, false],
+      ['Inhibitor', 'Toxic Bullets'],
+      ['Mirage', 'Lash', 'Rat King'],
+    );
+    expect(a.reroll).toBeNull();
+    expect(a.sets[2][0].item.name).toBe('Burst Fire');
+  });
+  it('a top-graded legendary in hand is not re-rolled while a weak one is', () => {
+    const bases = baseScores(infernus);
+    expect([...bases.values()].some((b) => b.item.item_tier === 5 && b.topGrade)).toBe(true);
+    expect(BRAWL_WEIGHTS.legendaryS).toBeGreaterThan(1);
+  });
+});
