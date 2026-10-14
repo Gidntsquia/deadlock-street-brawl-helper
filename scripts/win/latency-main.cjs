@@ -212,12 +212,16 @@ function printTable(rows) {
 
 /** Windows CPU load in % over `ms`, from the cores' busy/idle times (no child process). */
 async function cpuLoad(ms = 1000) {
-  const snap = () => os.cpus().reduce((a, c) => {
-    const t = c.times;
-    a.idle += t.idle;
-    a.total += t.user + t.nice + t.sys + t.irq + t.idle;
-    return a;
-  }, { idle: 0, total: 0 });
+  const snap = () =>
+    os.cpus().reduce(
+      (a, c) => {
+        const t = c.times;
+        a.idle += t.idle;
+        a.total += t.user + t.nice + t.sys + t.irq + t.idle;
+        return a;
+      },
+      { idle: 0, total: 0 },
+    );
   const a = snap();
   await sleep(ms);
   const b = snap();
@@ -233,7 +237,11 @@ const median = (xs) => {
 function perDraftOf(perRun) {
   const out = [];
   for (const first of perRun[0] ?? []) {
-    const same = perRun.map((rows) => rows.find((r) => r.stretch === first.stretch && r.draft === first.draft && r.appear === first.appear)).filter(Boolean);
+    const same = perRun
+      .map((rows) =>
+        rows.find((r) => r.stretch === first.stretch && r.draft === first.draft && r.appear === first.appear),
+      )
+      .filter(Boolean);
     const fl = same.map((r) => r.fromLast).filter((x) => x != null);
     const wrong = same.some((r) => r.wrong);
     const none = same.some((r) => r.newMs == null);
@@ -275,9 +283,13 @@ function perDraftOf(perRun) {
   return out;
 }
 function printPerDraft(list) {
-  say(`${pad('set', 9)} ${pad('label items', 52)} ${padL('old', 5)} ${padL('last', 5)} ${padL('best', 5)} ${padL('med', 5)} ${padL('worst', 5)} ${padL('ocr', 5)} ${padL('settl', 5)} verdict`);
+  say(
+    `${pad('set', 9)} ${pad('label items', 52)} ${padL('old', 5)} ${padL('last', 5)} ${padL('best', 5)} ${padL('med', 5)} ${padL('worst', 5)} ${padL('ocr', 5)} ${padL('settl', 5)} verdict`,
+  );
   for (const d of list)
-    say(`${pad(d.stretch + ' ' + d.draft, 9)} ${pad(d.items.join(', '), 52)} ${padL(d.oldMs, 5)} ${padL(d.lastCard, 5)} ${padL(d.best, 5)} ${padL(d.median, 5)} ${padL(d.worst, 5)} ${padL(d.ocr, 5)} ${padL(d.settle, 5)} ${d.verdict}`);
+    say(
+      `${pad(d.stretch + ' ' + d.draft, 9)} ${pad(d.items.join(', '), 52)} ${padL(d.oldMs, 5)} ${padL(d.lastCard, 5)} ${padL(d.best, 5)} ${padL(d.median, 5)} ${padL(d.worst, 5)} ${padL(d.ocr, 5)} ${padL(d.settle, 5)} ${d.verdict}`,
+    );
 }
 
 let finished = false;
@@ -338,7 +350,9 @@ async function main() {
     currentRun = run;
     const startLoad = await cpuLoad();
     if (startLoad != null && startLoad > LOAD_WARN_PCT)
-      say(`WARNING: run ${run} starts with Windows CPU load at ${startLoad} % (over ${LOAD_WARN_PCT} %); it still counts`);
+      say(
+        `WARNING: run ${run} starts with Windows CPU load at ${startLoad} % (over ${LOAD_WARN_PCT} %); it still counts`,
+      );
     loads.push({ run, start: startLoad, end: null });
     for (const st of stretches) {
       const from = Math.max(0, st.video[0] - PAD_S),
@@ -383,12 +397,18 @@ async function main() {
     printTable(rows);
     report.perRun.push(rows);
     if (run === 1) report.rows = rows;
-    bad = bad.concat(rows.filter((r) => r.wrong || r.newMs == null).map((r) => `run ${run} ${r.stretch} ${r.draft} (${r.fail})`));
+    bad = bad.concat(
+      rows.filter((r) => r.wrong || r.newMs == null).map((r) => `run ${run} ${r.stretch} ${r.draft} (${r.fail})`),
+    );
   }
   report.perDraft = perDraftOf(report.perRun);
   say(`--- per draft over ${runs} run(s): best / median / worst ms from the last card ---`);
   printPerDraft(report.perDraft);
-  bad = bad.concat(report.perDraft.filter((d) => !d.pass && d.verdict !== 'wrong' && d.verdict !== 'no advice').map((d) => `${d.stretch} ${d.draft} (${d.verdict})`));
+  bad = bad.concat(
+    report.perDraft
+      .filter((d) => !d.pass && d.verdict !== 'wrong' && d.verdict !== 'no advice')
+      .map((d) => `${d.stretch} ${d.draft} (${d.verdict})`),
+  );
   // A looped play must not match a set of another stretch: every matched row lies within 60 s of its label.
   const stray = advice.filter((a) => a.stretch && Math.abs(a.newMs) >= 60_000);
   if (stray.length) bad.push(`${stray.length} row(s) matched 60 s or more from their label`);

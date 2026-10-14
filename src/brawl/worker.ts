@@ -320,7 +320,9 @@ const applyNames = (
       rare: l.rare,
       match: { ...r.match, itemId: l.id },
     });
-    if (covered[slot]) {
+    // A line still fading in reads as off-centre text: with no lock yet it is read anyway (a tooltip's title over it
+    // matches another slot's lock and is caught by the twin check), so the first clear read is not held back.
+    if (covered[slot] && (lock || gate.live)) {
       // keep the lock as it is; a slot never seen uncovered stays unread (`?` once the fallback runs)
       if (lock) {
         slotSure[slot] = true;

@@ -53,10 +53,7 @@ const labels = JSON.parse(readFileSync('scripts/video-truth/labels.json', 'utf8'
 };
 const items: Item[] = JSON.parse(readFileSync('public/data/items.json', 'utf8'));
 const idx = decodeIconIndex(JSON.parse(readFileSync('public/data/brawl-icons.json', 'utf8')));
-const list = nameList(
-  idx.ids,
-  Object.fromEntries(items.map((i) => [i.id, i.name])),
-);
+const list = nameList(idx.ids, Object.fromEntries(items.map((i) => [i.id, i.name])));
 const tiers = Object.fromEntries(items.map((i) => [i.id, i.item_tier]));
 const idOf = (n: string) => items.find((i) => i.name === n)?.id ?? 0;
 const nameOf = (id: number) => items.find((i) => i.id === id)?.name ?? `#${id}`;
@@ -101,7 +98,8 @@ for (const st of labels.stretches) {
     const buf = await decode(from, to);
     const nf = Math.floor(buf.length / N);
     const frames: RGBImage[] = [];
-    for (let f = 0; f < nf; f++) frames.push({ width: W, height: H, data: buf.subarray(f * N, (f + 1) * N), channels: 3 });
+    for (let f = 0; f < nf; f++)
+      frames.push({ width: W, height: H, data: buf.subarray(f * N, (f + 1) * N), channels: 3 });
     const appear = set.appear;
     const tAt = (f: number) => Math.round((from + f / FPS - appear) * 1000);
     const sq = cardSquares(W, H);
