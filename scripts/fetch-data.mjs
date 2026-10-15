@@ -15,7 +15,6 @@
 //   --brawl                     refresh the Street Brawl snapshot only
 //   --catalog                   refresh items, heroes, abilities and their images only (no analytics)
 //   --brawl-tierlist            rebuild analytics/brawl/tier-list.json only (one request + the files already on disk)
-//   --brawl-orders              refresh item_stats_by_order (item-stats per top-5 full ability order) only
 //   --brawl-abilities           refresh ability_order_stats in every analytics/brawl/<id>.json only
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -33,7 +32,6 @@ const BRAWL_ONLY = process.argv.includes('--brawl');
 const BRAWL_TIERLIST_ONLY = process.argv.includes('--brawl-tierlist');
 // `--brawl-abilities` refreshes only ability_order_stats in every analytics/brawl/<id>.json (~1 request
 // per hero) and leaves the rest of each file untouched, instead of the full ~1400-request --brawl run.
-const BRAWL_ORDERS_ONLY = process.argv.includes('--brawl-orders');
 const BRAWL_ABILITIES_ONLY = process.argv.includes('--brawl-abilities');
 // `--since YYYY-MM-DD` starts the Street Brawl window at that UTC date instead of 30 days back.
 const sinceArg = process.argv.indexOf('--since');
@@ -45,10 +43,9 @@ if (SINCE && !Number.isFinite(SINCE_TS)) {
 }
 // Heroes that must be present after a full pull; the fetch stops before writing if the hero filter drops one.
 const REQUIRED_HEROES = [78, 84, 85, 88];
-// Hand override (user, 2026-10-15): Baba (88) is playable but the API still flags him in_development, so the
-// filter ignores that one flag for these ids. Remove the id once the API clears the flag.
-const FORCE_KEEP_IN_DEV = new Set([88]);
-const keepHero = (h) => h.player_selectable && !h.disabled && (!h.in_development || FORCE_KEEP_IN_DEV.has(h.id));
+// The API still flags Baba (88) in_development although he is playable, so that flag is not used: every other
+// in_development hero is also disabled or not player_selectable (checked 2026-10-15).
+const keepHero = (h) => h.player_selectable && !h.disabled;
 // Longest retry-after honoured on a 429; a longer one throws instead of stalling the run.
 const MAX_WAIT_MS = 60_000;
 // Street Brawl analytics: the API has no rank filter for this mode (400 "Cannot filter by average badge"),
@@ -197,17 +194,6 @@ async function fetchBrawlAbilityOrder(q) {
   return [...rows].sort((a, b) => b.matches - a.matches).slice(0, 200);
 }
 
-// Item stats conditioned on each of the hero's five most-played full ability orders (comma-joined prefix).
-async function fetchItemStatsByOrder(q, ability_order_stats) {
-  const top = [...ability_order_stats].sort((a, b) => b.matches - a.matches).slice(0, 5);
-  const out = [];
-  for (const o of top) {
-    const rows = await getJson(`${API}/v1/analytics/item-stats?${q}&ability_order_prefix=${o.abilities.join(',')}`);
-    out.push({ order: o.abilities, matches: o.matches, item_stats: rows.map(slimStat) });
-  }
-  return out;
-}
-
 async function fetchBrawl(heroes, manifest) {
   // Pin the window for a brawl run reached from the full pipeline too, and take both ends from the clock here:
   // the earlier steps can run for hours, so the module-load MIN_TS would make the span wider than WINDOW_DAYS.
@@ -227,7 +213,6 @@ async function fetchBrawl(heroes, manifest) {
     const perm = await getJson(`${API}/v1/analytics/item-permutation-stats?${q}&comb_size=2`);
     const permutation_stats = [...perm].sort((a, b) => b.matches - a.matches).slice(0, 600);
     const ability_order_stats = await fetchBrawlAbilityOrder(q);
-    const item_stats_by_order = await fetchItemStatsByOrder(q, ability_order_stats);
     const vs = {};
     for (const e of heroes) {
       if (e.id === h.id) continue;
@@ -248,7 +233,6 @@ async function fetchBrawl(heroes, manifest) {
       item_stats,
       permutation_stats,
       ability_order_stats,
-      item_stats_by_order,
       vs,
     });
   }
@@ -261,7 +245,6 @@ async function fetchBrawl(heroes, manifest) {
     window_days: Math.round((MAX_TS - MIN_TS) / 86400),
     ...(SINCE ? { since: `City Never Sleeps ${SINCE}` } : {}),
     matches_per_hero: Object.fromEntries(heroes.map((h) => [h.id, matchesOf(h.id)])),
-    orders_fetched_at: new Date().toISOString(),
   };
   console.log('Street Brawl matches per hero:');
   for (const h of [...heroes].sort((a, b) => matchesOf(b.id) - matchesOf(a.id)))
@@ -316,22 +299,6 @@ async function buildTierList(heroes, manifest) {
 }
 
 async function main() {
-  if (BRAWL_ORDERS_ONLY) {
-    const manifest = JSON.parse(await readFile(path.join(OUT, 'manifest.json'), 'utf8'));
-    const heroes = JSON.parse(await readFile(path.join(OUT, 'heroes.json'), 'utf8'));
-    MIN_TS = manifest.brawl?.min_unix_timestamp ?? manifest.min_unix_timestamp;
-    MAX_TS = manifest.brawl?.max_unix_timestamp ?? Math.floor(Date.now() / 1000);
-    for (const h of heroes) {
-      const q = `hero_id=${h.id}&game_mode=${BRAWL_GAME_MODE}&${windowQ()}`;
-      const file = JSON.parse(await readFile(path.join(OUT, `analytics/brawl/${h.id}.json`), 'utf8'));
-      const item_stats_by_order = await fetchItemStatsByOrder(q, file.ability_order_stats ?? []);
-      console.log(`   ${h.name}: ${item_stats_by_order.length} orders`);
-      await save(`analytics/brawl/${h.id}.json`, { ...file, item_stats_by_order });
-    }
-    if (manifest.brawl) manifest.brawl.orders_fetched_at = new Date().toISOString();
-    await save('manifest.json', manifest);
-    return;
-  }
   if (BRAWL_ABILITIES_ONLY) {
     const manifest = JSON.parse(await readFile(path.join(OUT, 'manifest.json'), 'utf8'));
     const heroes = JSON.parse(await readFile(path.join(OUT, 'heroes.json'), 'utf8'));
@@ -378,15 +345,7 @@ async function main() {
     let bad = 0;
     for (const id of REQUIRED_HEROES) {
       const h = raw.find((x) => x.id === id);
-      const flag = !h
-        ? 'missing'
-        : !h.player_selectable
-          ? 'not player_selectable'
-          : h.disabled
-            ? 'disabled'
-            : h.in_development && !FORCE_KEEP_IN_DEV.has(id)
-              ? 'in_development'
-              : null;
+      const flag = !h ? 'missing' : !h.player_selectable ? 'not player_selectable' : h.disabled ? 'disabled' : null;
       if (flag) {
         console.error(`Required hero dropped by the filter: ${h?.name ?? '?'} (id ${id}): ${flag}`);
         bad++;
