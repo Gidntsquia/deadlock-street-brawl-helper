@@ -35,6 +35,20 @@ const BRAWL_TIERLIST_ONLY = process.argv.includes('--brawl-tierlist');
 // per hero) and leaves the rest of each file untouched, instead of the full ~1400-request --brawl run.
 const BRAWL_ORDERS_ONLY = process.argv.includes('--brawl-orders');
 const BRAWL_ABILITIES_ONLY = process.argv.includes('--brawl-abilities');
+// `--since YYYY-MM-DD` starts the Street Brawl window at that UTC date instead of 30 days back.
+const sinceArg = process.argv.indexOf('--since');
+const SINCE = sinceArg > 0 ? process.argv[sinceArg + 1] : null;
+const SINCE_TS = SINCE ? Math.floor(Date.parse(`${SINCE}T00:00:00Z`) / 1000) : null;
+if (SINCE && !Number.isFinite(SINCE_TS)) {
+  console.error(`--since needs a date like 2026-09-29, got "${SINCE}"`);
+  process.exit(1);
+}
+// Heroes that must be present after a full pull; the fetch stops before writing if the hero filter drops one.
+const REQUIRED_HEROES = [78, 84, 85, 88];
+// Hand override (user, 2026-10-15): Baba (88) is playable but the API still flags him in_development, so the
+// filter ignores that one flag for these ids. Remove the id once the API clears the flag.
+const FORCE_KEEP_IN_DEV = new Set([88]);
+const keepHero = (h) => h.player_selectable && !h.disabled && (!h.in_development || FORCE_KEEP_IN_DEV.has(h.id));
 // Longest retry-after honoured on a 429; a longer one throws instead of stalling the run.
 const MAX_WAIT_MS = 60_000;
 // Street Brawl analytics: the API has no rank filter for this mode (400 "Cannot filter by average badge"),
@@ -199,12 +213,14 @@ async function fetchBrawl(heroes, manifest) {
   // the earlier steps can run for hours, so the module-load MIN_TS would make the span wider than WINDOW_DAYS.
   if (MAX_TS === null) {
     MAX_TS = Math.floor(Date.now() / 1000);
-    MIN_TS = MAX_TS - WINDOW_DAYS * 86400;
+    MIN_TS = SINCE_TS ?? MAX_TS - WINDOW_DAYS * 86400;
   }
   console.log(`brawl 1/2 mode config`);
   const generic = await getJson(`${ASSETS}/generic-data`);
   await save('brawl-config.json', { fetched_at: new Date().toISOString(), ...generic.street_brawl });
   console.log(`brawl 2/2 per-hero Street Brawl analytics (${heroes.length} heroes x ${heroes.length} enemies)`);
+  const heroRows = await getJson(`${API}/v1/analytics/hero-stats?game_mode=${BRAWL_GAME_MODE}&${windowQ()}`);
+  const matchesOf = (id) => heroRows.find((r) => r.hero_id === id)?.matches ?? 0;
   for (const h of heroes) {
     const q = `hero_id=${h.id}&game_mode=${BRAWL_GAME_MODE}&${windowQ()}`;
     const item_stats = await getJson(`${API}/v1/analytics/item-stats?${q}`);
@@ -228,6 +244,7 @@ async function fetchBrawl(heroes, manifest) {
     await save(`analytics/brawl/${h.id}.json`, {
       hero_id: h.id,
       game_mode: BRAWL_GAME_MODE,
+      matches: matchesOf(h.id),
       item_stats,
       permutation_stats,
       ability_order_stats,
@@ -242,7 +259,12 @@ async function fetchBrawl(heroes, manifest) {
     min_unix_timestamp: MIN_TS,
     max_unix_timestamp: MAX_TS,
     window_days: Math.round((MAX_TS - MIN_TS) / 86400),
+    ...(SINCE ? { since: `City Never Sleeps ${SINCE}` } : {}),
+    matches_per_hero: Object.fromEntries(heroes.map((h) => [h.id, matchesOf(h.id)])),
   };
+  console.log('Street Brawl matches per hero:');
+  for (const h of [...heroes].sort((a, b) => matchesOf(b.id) - matchesOf(a.id)))
+    console.log(`${h.id} ${h.name} ${matchesOf(h.id)}`);
   await buildTierList(heroes, manifest);
 }
 
@@ -345,10 +367,31 @@ async function main() {
     // A brawl refresh takes a fresh window rather than inheriting the one the last full run froze into the
     // manifest, which otherwise widened on every run while every label still said WINDOW_DAYS.
     MAX_TS = Math.floor(Date.now() / 1000);
-    MIN_TS = MAX_TS - WINDOW_DAYS * 86400;
+    MIN_TS = SINCE_TS ?? MAX_TS - WINDOW_DAYS * 86400;
     await fetchBrawl(heroes, manifest);
     await save('manifest.json', manifest);
     return;
+  }
+  {
+    const raw = await getJson(`${ASSETS}/heroes`);
+    let bad = 0;
+    for (const id of REQUIRED_HEROES) {
+      const h = raw.find((x) => x.id === id);
+      const flag = !h
+        ? 'missing'
+        : !h.player_selectable
+          ? 'not player_selectable'
+          : h.disabled
+            ? 'disabled'
+            : h.in_development && !FORCE_KEEP_IN_DEV.has(id)
+              ? 'in_development'
+              : null;
+      if (flag) {
+        console.error(`Required hero dropped by the filter: ${h?.name ?? '?'} (id ${id}): ${flag}`);
+        bad++;
+      }
+    }
+    if (bad) process.exit(1);
   }
   await mkdir(OUT, { recursive: true });
   const manifest = {
@@ -375,7 +418,7 @@ async function main() {
 
   console.log('2/3 heroes');
   const heroesRaw = await getJson(`${ASSETS}/heroes`);
-  const active = heroesRaw.filter((h) => h.player_selectable && !h.disabled && !h.in_development);
+  const active = heroesRaw.filter(keepHero);
   const heroes = active.map(slimHero);
   for (const h of heroes) {
     const l = await saveImage(h.images.small, 'heroes', h.id);

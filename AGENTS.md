@@ -23,7 +23,7 @@ Repo constitution for planner / worker / evaluator agents. Overrides generic sta
 - `npm run check` — lint + typecheck + prettier --check + vitest; the Release workflow runs it before building.
 - `npm run brawl:see -- --fixtures` — recogniser accuracy on `scripts/fixtures/` (must stay 27/27).
 - `npm run brawl -- --hero 1 --round 2 --set "…"` — engine CLI without the screen reader.
-- `npm run fetch-data` — full brawl refresh (~1400 requests, ~9 min), run by hand before a release; there is no
+- `npm run fetch-data` — full brawl refresh (~1400 requests, ~9 min; `-- --since YYYY-MM-DD` starts the Street Brawl window at that UTC date, and it prints `<id> <name> <matches>` per hero and stores `matches`; it exits before writing if a required hero 78/84/85/88 is filtered out, and `FORCE_KEEP_IN_DEV` overrides `in_development` for Baba 88), run by hand before a release; there is no
   scheduled refresh workflow. Assets come from `api.deadlock-api.com/v1/assets` (the old `assets.` host is gone).
 - Release: push a `v*` tag; `.github/workflows/release.yml` builds the portable exe + NSIS installer on windows-latest
   and attaches them to the GitHub Release. No Pages deploy exists.
