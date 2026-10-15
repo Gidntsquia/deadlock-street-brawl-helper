@@ -1,0 +1,84 @@
+{
+ "video": [
+  691,
+  711
+ ],
+ "fps": 4,
+ "sets": [
+  {
+   "draft": "d035",
+   "round": 3,
+   "choice": 1,
+   "items": [
+    "Split Shot",
+    "Improved Spirit",
+    "Recharging Rush"
+   ],
+   "from": 692.25,
+   "to": 694.75,
+   "readable": [
+    693.25,
+    694.75
+   ],
+   "expect": "take",
+   "best": "Improved Spirit",
+   "appear": 692.5
+  },
+  {
+   "draft": "d036",
+   "round": 3,
+   "choice": 2,
+   "items": [
+    "Toxic Bullets",
+    "Vortex Web",
+    "Spirit Snatch"
+   ],
+   "from": 696.25,
+   "to": 698.75,
+   "readable": [
+    697,
+    698.75
+   ],
+   "appear": 696.25
+  },
+  {
+   "draft": "d036",
+   "round": 3,
+   "choice": 2,
+   "items": [
+    "Spirit Resilience",
+    "Spellbreaker",
+    "Torment Pulse"
+   ],
+   "from": 700.25,
+   "to": 702.75,
+   "readable": [
+    701,
+    702.5
+   ],
+   "expect": "take",
+   "best": "Spellbreaker",
+   "appear": 700.25
+  },
+  {
+   "draft": "d037",
+   "round": 3,
+   "choice": 3,
+   "items": [
+    "Glass Cannon",
+    "Silencer",
+    "Refresher"
+   ],
+   "from": 703.75,
+   "to": 709.75,
+   "readable": [
+    705,
+    706.75
+   ],
+   "covered": [
+    1
+   ],
+   "appear": 704
+  }
+ ]
+}

@@ -1,0 +1,81 @@
+{
+ "video": [
+  910,
+  956
+ ],
+ "fps": 4,
+ "sets": [
+  {
+   "draft": "d038",
+   "round": 4,
+   "choice": 1,
+   "items": [
+    "Silence Wave",
+    "Toxic Bullets",
+    "Tankbuster"
+   ],
+   "from": 911.75,
+   "to": 929.75,
+   "readable": [
+    912.5,
+    918.75
+   ],
+   "expect": "take",
+   "best": "Toxic Bullets",
+   "appear": 911.75
+  },
+  {
+   "draft": "d039",
+   "round": 4,
+   "choice": 2,
+   "items": [
+    "Weighted Shots",
+    "Knockdown",
+    "Burst Fire"
+   ],
+   "from": 930.75,
+   "to": 940.75,
+   "readable": [
+    932.5,
+    939.75
+   ],
+   "expect": "take",
+   "best": "Burst Fire",
+   "appear": 931
+  },
+  {
+   "draft": "d040",
+   "round": 4,
+   "choice": 3,
+   "items": [
+    "Transcendent Cooldown",
+    "Healing Tempo",
+    "Indomitable"
+   ],
+   "from": 942.75,
+   "to": 947.75,
+   "readable": [
+    944,
+    947.5
+   ],
+   "appear": 943
+  },
+  {
+   "draft": "d040",
+   "round": 4,
+   "choice": 3,
+   "items": [
+    "Juggernaut",
+    "Plated Armor",
+    "Arctic Blast"
+   ],
+   "from": 949.25,
+   "to": 954.75,
+   "readable": [
+    950.25,
+    953.75
+   ],
+   "appear": 949.5
+  }
+ ]
+}

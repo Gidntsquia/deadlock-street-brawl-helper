@@ -1,0 +1,80 @@
+{
+ "video": [
+  82,
+  109
+ ],
+ "fps": 4,
+ "sets": [
+  {
+   "draft": "d029",
+   "round": 1,
+   "choice": 1,
+   "items": [
+    "Extra Charge",
+    "Guardian Ward",
+    "Rapid Rounds"
+   ],
+   "from": 83.25,
+   "to": 95,
+   "readable": [
+    84.5,
+    94.75
+   ],
+   "appear": 83
+  },
+  {
+   "draft": "d030",
+   "round": 1,
+   "choice": 2,
+   "items": [
+    "Melee Charge",
+    "Enduring Speed",
+    "Opening Rounds"
+   ],
+   "from": 97,
+   "to": 99.75,
+   "readable": [
+    98,
+    98.75
+   ],
+   "covered": [
+    0
+   ],
+   "appear": 97
+  },
+  {
+   "draft": "d031",
+   "round": 1,
+   "choice": 3,
+   "items": [
+    "Hollow Point",
+    "Shadow Weave",
+    "Decay"
+   ],
+   "from": 101,
+   "to": 104,
+   "readable": [
+    102,
+    103.75
+   ],
+   "appear": 101.25
+  },
+  {
+   "draft": "d031",
+   "round": 1,
+   "choice": 3,
+   "items": [
+    "Escalating Resilience",
+    "Spirit Resilience",
+    "Superior Duration"
+   ],
+   "from": 105,
+   "to": 108,
+   "readable": [
+    106,
+    107.5
+   ],
+   "appear": 105.25
+  }
+ ]
+}

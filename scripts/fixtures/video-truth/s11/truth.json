@@ -1,0 +1,78 @@
+{
+ "video": [
+  381,
+  398
+ ],
+ "fps": 4,
+ "sets": [
+  {
+   "draft": "d032",
+   "round": 2,
+   "choice": 1,
+   "items": [
+    "Enchanter's Emblem",
+    "Quicksilver Reload",
+    "Fleetfoot"
+   ],
+   "from": 382.25,
+   "to": 385.25,
+   "readable": [
+    383.25,
+    384.75
+   ],
+   "appear": 382.5
+  },
+  {
+   "draft": "d033",
+   "round": 2,
+   "choice": 2,
+   "items": [
+    "Point Blank",
+    "Torment Pulse",
+    "Warp Stone"
+   ],
+   "from": 386.25,
+   "to": 389,
+   "readable": [
+    387,
+    388.75
+   ],
+   "appear": 386.5
+  },
+  {
+   "draft": "d034",
+   "round": 2,
+   "choice": 3,
+   "items": [
+    "Ballistic Enchantment",
+    "Headhunter",
+    "Hollow Point"
+   ],
+   "from": 390.25,
+   "to": 392.75,
+   "readable": [
+    391,
+    392.75
+   ],
+   "expect": "reroll",
+   "appear": 390.5
+  },
+  {
+   "draft": "d034",
+   "round": 2,
+   "choice": 3,
+   "items": [
+    "Cultist Sacrifice",
+    "Fortitude",
+    "Radiant Regeneration"
+   ],
+   "from": 394,
+   "to": 396.75,
+   "readable": [
+    395,
+    396.75
+   ],
+   "appear": 394.25
+  }
+ ]
+}

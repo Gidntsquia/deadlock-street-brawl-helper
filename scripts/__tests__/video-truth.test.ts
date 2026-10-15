@@ -15,7 +15,7 @@ const dirs = existsSync(root)
   : [];
 
 describe('video truth set', () => {
-  it('has stretches', () => expect(dirs.length).toBe(10));
+  it('has stretches', () => expect(dirs.length).toBe(14));
   it.each(dirs)('%s is advised correctly', async (d) => {
     const rep = await scoreStretch(path.join(root, d));
     expect(rep.violations).toEqual([]);
