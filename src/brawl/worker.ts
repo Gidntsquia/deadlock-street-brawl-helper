@@ -18,6 +18,7 @@ import {
   sameInventory,
   cardEmpty,
   cardNameCrop,
+  nameLineDim,
   readMarkers,
   cardSquares,
   coveredSlots,
@@ -239,6 +240,7 @@ const applyNames = (
   empties: boolean[];
   sigs: (Uint8Array | null)[];
   covered: boolean[];
+  dim: boolean[]; // name lines with dim lettering (still fading in), not yet readable
 } => {
   const squares = cardSquares(img.width, img.height);
   // The RARE / ENHANCED marks are read at the fixed card square too: the icon search's wobble (an enhanced icon
@@ -263,6 +265,7 @@ const applyNames = (
       empties: [false, false, false],
       sigs: [null, null, null],
       covered: [false, false, false],
+      dim: [false, false, false],
     };
   // With the name reader down nothing can confirm that the cards under a new CHOICE label are the advised ones (a test
   // mode screenshot switch has no fade): the old advice goes, and the new set gets its `?` plates at the fallback.
@@ -454,6 +457,7 @@ const applyNames = (
     empty: emptyCount,
     empties,
     covered,
+    dim: out.map((_, i) => !slotSure[i] && !hasInk(sigs[i] ?? new Uint8Array(0)) && nameLineDim(img, pinned[i]!.match)),
   };
 };
 /** The three cards at their fixed squares with no icon search: the item comes from the name lock alone (the name
@@ -668,6 +672,8 @@ let fbHeldAt: number | null = null;
 /** A card that just landed is still fading in and its name may read blank: a slot goes `?` only after its circle has
  *  shown a card this long. */
 const FALLBACK_FRESH_MS = 250;
+/** The longest the `?` fallback waits for a name line whose lettering is still dim (see `nameLineDim`). */
+const FALLBACK_DIM_MS = 2000;
 let fullSince: (number | null)[] = [null, null, null];
 /** The set being formed has had all three circles filled (its last card landed): `card.land` went out for it. */
 let landed = false;
@@ -1159,6 +1165,8 @@ function draftFrame(msg: Extract<WorkerIn, { type: 'frame' }>, t0: number, idx: 
     cardsAt !== null &&
     nowMs - cardsAt >= FALLBACK_MS &&
     named.slotSure.every((sure, i) => sure || nowMs - (fullSince[i] ?? nowMs) >= FALLBACK_FRESH_MS) &&
+    // a line with dim lettering is a name on its way: the `?` waits for it, at most FALLBACK_DIM_MS from the first card
+    (nowMs - cardsAt >= FALLBACK_DIM_MS || !named.dim.some(Boolean)) &&
     !gate.spent.some((k) => fullKey && k.replace(/\+/g, '') === fullKey.replace(/\+/g, ''));
   // A name read of a slot that would go `?` is on its way (its line just came clear): the `?` waits for it, a read takes
   // tens of ms, at most FALLBACK_READ_HOLD_MS.

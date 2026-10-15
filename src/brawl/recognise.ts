@@ -520,6 +520,26 @@ export function cardNameCrop(
   return { data, width: ow, height: oh, line: h };
 }
 
+/** A name line whose text is there but still dim: the game dims a card's lettering for a moment after it lands, below the
+ *  brightness `cardNameCrop` counts as ink, so the line reads as blank for up to a second. Grey, low-colour pixels in the
+ *  line's box (the text's mid-grey, not the dark art or the coloured ring). The `?` fallback waits for such a line. */
+export function nameLineDim(img: RGBImage, m: IconMatch): boolean {
+  const cx = m.x + m.edge / 2;
+  const x0 = Math.round(cx - CARD_NAME.text * m.edge),
+    x1 = Math.round(cx + CARD_NAME.text * m.edge),
+    y0 = Math.round(m.y + CARD_NAME.top * m.edge),
+    y1 = Math.round(m.y + CARD_NAME.bottom * m.edge);
+  let n = 0;
+  for (let y = y0; y < y1; y++)
+    for (let x = x0; x < x1; x++) {
+      const [r, g, b] = rgb(img, x, y);
+      const hi = Math.max(r, g, b);
+      if (hi > 110 && hi <= 170 && hi - Math.min(r, g, b) < 40) n++;
+    }
+  return n >= DIM_LINE_PX;
+}
+const DIM_LINE_PX = 700;
+
 /** The name's own columns in a name line (cardNameCrop output, or any black-on-white line): the run of inked columns
  *  with the most ink whose gaps stay within 0.35 of the line's height (a word space is far less). Stray light marks
  *  beside a name (the RARE sparkle, a ring's glint) fall outside it. `line` is the line's height without margins.
