@@ -2,8 +2,10 @@
  * Cuts the hand-labelled stretches of a gameplay video into replayable folders under
  * scripts/fixtures/video-truth/<id>/ (frames.json, draft.json, truth.json and WebP crops, lossy, quality 95 for the three card squares and 90 for the rest).
  *
- *   npx tsx scripts/video-truth.ts "<video.mkv>"        (rebuilds every crop, about 6 minutes)
+ *   npx tsx scripts/video-truth.ts "/mnt/d/OBS Videos"   (rebuilds every crop from the recording each stretch names)
+ *   npx tsx scripts/video-truth.ts "<dir or name.mkv=path>..." [--only s10,s11]
  *   npx tsx scripts/video-truth.ts --truth-only          (rewrites only truth.json from the labels)
+ * Each stretch of labels.json names its recording in `file`; the arguments say where those files are.
  *
  * The labels (what the cards truly were, and when they were readable) live in scripts/video-truth/labels.json and were
  * written by looking at the video; they are never derived from the app's own output. Frames are 4 per second at the
@@ -15,6 +17,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import sharp from 'sharp';
 import { draftRegions } from '../src/brawl';
+import { onlyIds, resolveVideos } from './lib/videoFiles';
 
 const W = 1280,
   H = 720,
@@ -22,11 +25,19 @@ const W = 1280,
   FPS = 4;
 const args = process.argv.slice(2);
 const truthOnly = args.includes('--truth-only');
-const video = args.find((a) => !a.startsWith('--'));
-if (!video && !truthOnly) throw new Error('usage: npx tsx scripts/video-truth.ts "<video.mkv>" [--truth-only]');
+const only = onlyIds(args);
+const pathArgs = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--only');
 const labels = JSON.parse(readFileSync('scripts/video-truth/labels.json', 'utf8')) as {
-  stretches: { id: string; video: [number, number]; sets: unknown[] }[];
+  stretches: { id: string; file: string; video: [number, number]; sets: unknown[] }[];
 };
+if (!pathArgs.length && !truthOnly)
+  throw new Error('usage: npx tsx scripts/video-truth.ts "<dir or name.mkv=path>..." [--only s10,s11] [--truth-only]');
+const videos = truthOnly
+  ? new Map<string, string>()
+  : resolveVideos(
+      pathArgs,
+      labels.stretches.filter((s) => !only || only.has(s.id)).map((s) => s.file),
+    );
 const regs = draftRegions(W, H).map((r) => {
   const x = Math.max(0, Math.floor(r.x)),
     y = Math.max(0, Math.floor(r.y));
@@ -35,9 +46,9 @@ const regs = draftRegions(W, H).map((r) => {
 /** Mean absolute difference per byte below this counts as "the same picture" (video noise only). */
 const SAME = 3;
 
-async function decode(from: number, to: number): Promise<Buffer> {
+async function decode(video: string, from: number, to: number): Promise<Buffer> {
   const p = spawn('ffmpeg', [
-    ...['-v', 'error', '-ss', String(from), '-t', String(to - from), '-i', video!],
+    ...['-v', 'error', '-ss', String(from), '-t', String(to - from), '-i', video],
     ...['-vf', `fps=${FPS}`, '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'],
   ]);
   const chunks: Buffer[] = [];
@@ -47,6 +58,7 @@ async function decode(from: number, to: number): Promise<Buffer> {
 }
 
 for (const st of labels.stretches) {
+  if (only && !only.has(st.id)) continue;
   const dir = path.join('scripts/fixtures/video-truth', st.id);
   if (truthOnly) {
     writeFileSync(path.join(dir, 'truth.json'), JSON.stringify({ video: st.video, fps: FPS, sets: st.sets }, null, 1));
@@ -55,7 +67,7 @@ for (const st of labels.stretches) {
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   const [from, to] = st.video;
-  const all = await decode(from, to);
+  const all = await decode(videos.get(st.file)!, from, to);
   const nf = Math.floor(all.length / N);
   const last: (Buffer | null)[] = regs.map(() => null);
   const frames: unknown[] = [];

@@ -2,7 +2,7 @@
  * Old-app baseline read off the OBS footage: for every labelled set, `appear` (first frame any card circle is
  * filled) and `oldPlate` (first frame the old app's teal plate is drawn above a card), `oldMs = (oldPlate - appear)`.
  *
- *   npx tsx scripts/footage-latency.ts "<video.mkv>" [--write-labels]
+ *   npx tsx scripts/footage-latency.ts "<dir or name.mkv=path>..." [--only s10,s11] [--write-labels]
  *
  * Teal detection: in the plate box above each card (card centre x +-70, y -108 +-22 at 1280x720) count pixels within
  * +-20 of the plate fill `#2ec4b6` (46,196,182); the card ring's green has low blue and the game's teal glow is
@@ -15,19 +15,28 @@
 import { spawn } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { cardEmpty, cardSquares } from '../src/brawl';
+import { onlyIds, resolveVideos } from './lib/videoFiles';
 
 const W = 1280,
   H = 720,
   N = W * H * 3,
   FPS = 4,
   TEAL_PX = 150;
-const video = process.argv[2];
-if (!video) throw new Error('usage: npx tsx scripts/footage-latency.ts "<video.mkv>" [--write-labels]');
+const only = onlyIds(process.argv);
+const pathArgs = process.argv.slice(2).filter((a, i, all) => !a.startsWith('--') && all[i - 1] !== '--only');
+if (!pathArgs.length)
+  throw new Error(
+    'usage: npx tsx scripts/footage-latency.ts "<dir or name.mkv=path>..." [--only s10,s11] [--write-labels]',
+  );
 const labelsPath = 'scripts/video-truth/labels.json';
 const labels = JSON.parse(readFileSync(labelsPath, 'utf8'));
+const videos = resolveVideos(
+  pathArgs,
+  labels.stretches.filter((s: { id: string }) => !only || only.has(s.id)).map((s: { file: string }) => s.file),
+);
 const squares = cardSquares(W, H);
 
-async function decode(from: number, to: number): Promise<Buffer> {
+async function decode(video: string, from: number, to: number): Promise<Buffer> {
   const p = spawn('ffmpeg', [
     ...['-v', 'error', '-ss', String(from), '-t', String(to - from), '-i', video],
     ...['-vf', `fps=${FPS}`, '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'],
@@ -57,10 +66,12 @@ function tealPlates(buf: Buffer): number {
   return hits;
 }
 
-const rows: unknown[] = [];
+const rows: { stretch: string; draft: string; appear: number | null; oldPlate: number | null; oldMs: number | null }[] =
+  [];
 for (const st of labels.stretches) {
+  if (only && !only.has(st.id)) continue;
   const [v0, v1] = st.video as [number, number];
-  const all = await decode(v0, v1);
+  const all = await decode(videos.get(st.file)!, v0, v1);
   const nf = Math.floor(all.length / N);
   const frame = (f: number) => all.subarray(f * N, (f + 1) * N);
   const anyCard = (f: number) =>
@@ -99,5 +110,18 @@ for (const st of labels.stretches) {
     prevTo = s.to;
   }
 }
-writeFileSync('scripts/video-truth/footage-latency.json', JSON.stringify(rows, null, 1) + '\n');
+const rowsPath = 'scripts/video-truth/footage-latency.json';
+// With --only, the other stretches' rows stay as they were.
+const kept = only
+  ? (JSON.parse(readFileSync(rowsPath, 'utf8')) as { stretch: string }[]).filter((r) => !only.has(r.stretch))
+  : [];
+const order = (r: { stretch: string }) => Number(r.stretch.slice(1));
+writeFileSync(
+  rowsPath,
+  JSON.stringify(
+    [...kept, ...rows].sort((a, b) => order(a) - order(b)),
+    null,
+    1,
+  ) + '\n',
+);
 if (process.argv.includes('--write-labels')) writeFileSync(labelsPath, JSON.stringify(labels, null, 2) + '\n');

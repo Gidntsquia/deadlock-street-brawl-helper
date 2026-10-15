@@ -65,10 +65,10 @@ describe('TimingTracker', () => {
 
 describe('matchLabel', () => {
   const labels: LabelFile = {
-    video: 'v.mkv',
     stretches: [
       {
         id: 's0',
+        file: 'v.mkv',
         video: [0, 20],
         sets: [
           { draft: 'd1', items: ['A', 'B', 'C'], from: 2, to: 5, appear: 2.5 },
@@ -77,6 +77,7 @@ describe('matchLabel', () => {
       },
       {
         id: 's1',
+        file: 'v.mkv',
         video: [900, 920],
         sets: [{ draft: 'd9', items: ['A', 'B', 'C'], from: 902, to: 905, appear: 902.5 }],
       },
