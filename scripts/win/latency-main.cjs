@@ -15,7 +15,6 @@
 // and end of each run. Writes logs/win-latency.json; exit 1 when any draft fails, any row is `wrong`, or has no advice.
 //
 // Flags: --only s7[,s3]  --runs N (default 3)  --video <Windows path>  --commit <sha> (passed by run-latency.sh)
-//        --relay page: text reads go worker -> page -> main as before the direct port (BRAWL_OCR_RELAY), to compare
 'use strict';
 process.env.BRAWL_E2E = '1';
 // The overlay is invisible here (opacity 0) and read through executeJavaScript: keep it out of the topmost band too.
@@ -49,7 +48,6 @@ const only = arg('--only')
 const runs = Math.max(1, Number(arg('--runs')) || 3);
 /** A full run takes about 4 min: 10 min per run, plus start-up. */
 const HARD_TIMEOUT_MS = (5 + 10 * runs) * 60_000;
-if (arg('--relay') === 'page') process.env.BRAWL_OCR_RELAY = 'page';
 const video = arg('--video') || 'D:\\OBS Videos\\2026-10-09 00-46-30.mkv';
 const commit = arg('--commit') || 'unknown';
 
