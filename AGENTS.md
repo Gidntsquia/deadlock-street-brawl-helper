@@ -23,7 +23,7 @@ Repo constitution for planner / worker / evaluator agents. Overrides generic sta
 - `npm run check` — lint + typecheck + prettier --check + vitest; the Release workflow runs it before building.
 - `npm run brawl:see -- --fixtures` — recogniser accuracy on `scripts/fixtures/` (must stay 27/27).
 - `npm run brawl -- --hero 1 --round 2 --set "…"` — engine CLI without the screen reader.
-- `npm run fetch-data` — full brawl refresh (~1400 requests, ~9 min; `-- --since YYYY-MM-DD` starts the Street Brawl window at that UTC date, and it prints `<id> <name> <matches>` per hero and stores `matches`; it exits before writing if a required hero 78/84/85/88 is filtered out, and `FORCE_KEEP_IN_DEV` overrides `in_development` for Baba 88), run by hand before a release; there is no
+- `npm run fetch-data` — full brawl refresh (~1400 requests, ~9 min; `-- --since YYYY-MM-DD` starts the Street Brawl window at that UTC date, and it prints `<id> <name> <matches>` per hero and stores `matches`; it exits before writing if a required hero 78/84/85/88 is filtered out, and the hero filter ignores `in_development`: the API still flags Baba 88 that way though he is live), run by hand before a release; there is no
   scheduled refresh workflow. Assets come from `api.deadlock-api.com/v1/assets` (the old `assets.` host is gone).
 - Release: push a `v*` tag; `.github/workflows/release.yml` builds the portable exe + NSIS installer on windows-latest
   and attaches them to the GitHub Release. No Pages deploy exists.
@@ -54,7 +54,7 @@ Repo constitution for planner / worker / evaluator agents. Overrides generic sta
 
 ## Which tests to run
 
-`npm test` (vitest, ~340 tests, already the whole suite; the two real-frame worker tests can time out once under heavy machine load) takes ~2.5 min wall (the video truth replays dominate): run it after any code change; run one file with
+`npm test` (vitest, about 400 tests, already the whole suite; the two real-frame worker tests can time out once under heavy machine load) takes ~2.5 min wall (the video truth replays dominate): run it after any code change; run one file with
 `npx vitest run <file>`. `npm run check` before pushing. `npm run win:e2e` (~30 s, drives real Windows) only when
 capture, overlay, worker or Electron code changed, and only once per session. Docs/comments: run nothing.
 All e2e-needing checks belong in the single `testmode` pass in `scripts/win/e2e-main.cjs`, asserted against
@@ -62,7 +62,7 @@ that one session; do not add a new case or a second app launch.
 
 ## Debug mode, sessions, replay
 
-Debug mode (`src/debugMode.ts`) is on in dev and in any `-rc` version (last rc is `0.4.0-rc.1`; `0.3.0` was final, debug off); the title bar shows `DEBUG`.
+Debug mode (`src/brawl/debugMode.ts`) is on in dev and in any `-rc` version (last rc is `0.4.0-rc.2`; `0.3.0` and `0.5.0` are final, debug off); the title bar shows `DEBUG`.
 Ctrl+Shift+D (or the tray entry, channel `debugToggle`) toggles the Debug panel: Start/Stop capture, Detect now (F8 still
 works without it), test mode, round/choice/re-rolls, enemies, owned, advice list, ability order, and the **session report**
 (one row per draft with its crops, items, shown plates, advice ms, and `Mark wrong`). The main view has only the status
@@ -109,8 +109,6 @@ has a right-end cell `Enhanced +n` (`Enh +n` when plates would touch), n = `Rank
 enhanced, carried as `OverlayAdviceCard.enhancedBonus`, `bonusesFromAdvice`), and the tooltip Enhanced row equals it (`breakdownRows`). Geometry
 is shared in `plateGeometry` (`draw.ts`); the `Reading` sign sits above the middle plate by max(6 px, 0.35 plate height), below it if clamped.
 A re-roll call is a filled teal `RE-ROLL` plate (card-plate size) centred above the button plus a 4 px teal outline, and all cards go grey and veiled.
-`scripts/render-ux.ts` (with `scripts/lib/svgCtx.ts`) renders before/after pictures into `plans/eval-artifacts/ux-pass/`; it needs the old
-drawing as `src/brawl/draw.before.ts` (`git show b4c0e95:src/brawl/draw.ts`, not committed). The overlay wiki page was updated for 0.4.0-rc.1.
 The e2e debug checks follow `debugDefault`: off at start in a final version, on in dev or `-rc`; the harness then turns it on to reach test mode.
 
 ## Window and overlay look
@@ -138,8 +136,9 @@ source list) — nothing else can be captured. The old keyboard-shortcut demo an
 Test mode can play a video file in the dummy `Deadlock` window instead of a screenshot (`Play a video` in the Debug panel's
 test-mode row, `TestVideoControls.tsx`; main's `testVideoAction`/`openTestVideo`, channel `testModeVideo`, helpers in
 `src/brawl/testVideo.ts`). It plays at normal speed, muted, with Play/Pause, -10 s/+10 s, a position slider and
-`Back to screenshot`; the picker remembers the last file in `userData/test-video.json`. The user's OBS recording is
-`D:\OBS Videos\2026-10-09 00-46-30.mkv` (H.264 in MKV, 1280x720, 51 min; Chromium plays it).
+`Back to screenshot`; the picker remembers the last file in `userData/test-video.json`. The user's OBS recordings are
+`D:\OBS Videos\2026-10-09 00-46-30.mkv` (stretches s0..s9; H.264 in MKV, 1280x720, 51 min; Chromium plays it) and
+`D:\OBS Videos\2026-10-15 15-04-37.mkv` (stretches s10..s13; 1280x720, 30 fps, 20.8 min, four Infernus drafts, recorded on a 0.4.0 debug build).
 **Agents must not start the video check unless the user asks for it in that session**: it needs the user there. Nothing in
 `npm test`, `npm run check`, `win:e2e`, `win:demo` or CI plays a video; `__brawlE2E.playTestVideo(file)` exists for a
 one-off hidden check (with a synthetic clip, never the user's recording) and no harness calls it. Keep it that way.
@@ -242,7 +241,7 @@ in `win:e2e`/`win:demo` drives the actual game:
   which drops its cards whenever `live` is false. The game swaps label, cards and grid a beat apart; the old
   two-frame accept advised old cards under the new label, half-swapped sets, and new cards under the stale label
   (`scripts/__tests__/worker-transitions.test.ts` replays those on real frames).
-- The worker does no icon search on the cards any more (`squareReads` in `worker.ts`): the item is whatever the name lock says, and a slot whose name will not read becomes a grey `?` at 1.0 s. A changed name line under a lock is a hover (the hovered card grows and the game's tooltip, often with an item name in it, covers the next card's line): the lock and the advice stay. Only within 3 s of a re-roll (two name lines blank in one frame as the cards fade, or the re-roll count dropping; `rerollAt` in `worker.ts`) does a line that changes by more than 6 grid cells make the slot unsettled at once (`changed` on `GateFrame`) and a read of another item move the lock. Before the names land, the gate gets the set with a `?` per unread slot so the 100 ms settle runs alongside the OCR. The re-roll caption and the inventory grid are read on that provisional set too (the caption read carries over when the names fill it in), so the accept does not wait a frame for them; the same cards under new labels still wait the 600 ms from the first frame that names them all (`cand.full`), so the grid can show the pick first. Before the accept, a name read that matches another slot's lock is the hover tooltip's title (a draft never offers one item twice): both slots are read again. Two ids under one name (Silencer has a disabled twin) keep only the first in `nameList`. `readDraftScreen`/`matchIcon` remain for the CLI, fixtures, inventory and hero reads (`matchIcon` tries a narrow search first). Older text below about icon guesses describes the icon-based design.
+- The worker does no icon search on the cards any more (`squareReads` in `worker.ts`): the item is whatever the name lock says, and a slot whose name will not read becomes a grey `?` at 1.0 s. A changed name line under a lock is a hover (the hovered card grows and the game's tooltip, often with an item name in it, covers the next card's line): the lock and the advice stay. Only within 3 s of a re-roll (two name lines blank in one frame as the cards fade, or the re-roll count dropping; `rerollAt` in `worker.ts`) does a line that changes by more than 6 grid cells make the slot unsettled at once (`changed` on `GateFrame`) and a read of another item move the lock. Before the names land, the gate gets the set with a `?` per unread slot so the 100 ms settle runs alongside the OCR. The re-roll caption and the inventory grid are read on that provisional set too (the caption read carries over when the names fill it in), so the accept does not wait a frame for them; the same cards under new labels still wait the 600 ms from the first frame that names them all (`cand.full`), so the grid can show the pick first. Before the accept, a name read that matches another slot's lock is the hover tooltip's title (a draft never offers one item twice): both slots are read again. Two ids under one name (Silencer has a disabled twin) keep only the first in `nameList`. `readDraftScreen`/`matchIcon` remain for the CLI, fixtures, inventory and hero reads (`matchIcon` tries a narrow search first).
 - Cards sit at fixed screen positions and print their exact item name: the worker pins every card read to
   `cardSquares` (`recognise.ts`, anchors x 0.95 icon edge, matches the hand-labelled circles) so the overlay never follows
   the icon search's step/scale wobble, and each slot's item comes from a **name lock** (`applyNames` in `worker.ts`): the
@@ -304,7 +303,7 @@ in `win:e2e`/`win:demo` drives the actual game:
 - Main lowers its own and child priority below normal (skipped under `BRAWL_E2E`).
 - Not verified on real Windows: GDI probe with a real Deadlock (borderless and fullscreen). Check by hand.
 
-## State machine and Order term
+## State machine
 
 `src/brawl/brawlState.ts` is a pure Street Brawl state machine (round 1-5, choice 1-3, one re-roll, three card slots, owned
 list, pick source `read|assumed|grid`); each transition is a named event with a test in `__tests__/brawlState.test.ts`.
@@ -316,10 +315,6 @@ logs `round.start` itself in its `onRoundStart` handler (round banner probe in `
 `Resynced to round N choice M` is shown by `BrawlView`'s `resyncText` (5 s) ahead of `statusFor`; F8 forces it (`forceResync`).
 e2e hooks: `__brawlE2E.roundStart(n)`; checks `round-start-warms-first`, `slots-read-once`, `f8-resync`, `frame-switch-resync`;
 the advice limit is `ADVICE_LIMIT_MS` (1000) in `e2e-main.cjs`. `--slow 4` (processor affinity) does not yet meet it (about 2.7 s).
-The Order term (`Order` row, `BRAWL_WEIGHTS.order`, `item_stats_by_order` in each hero's brawl json from
-`npm run fetch-data -- --brawl-orders`) is **off by default**: set `BRAWL_ORDER_TERM=on` to use it (`npx tsx scripts/order-check.ts <hero id>`
-measures ranking changes; Infernus is id 1: 0 of 9 drafts change). An order outside the stored set is fetched once in the app
-(`electron/orderFetch.ts`, channel `orderStats`, cache `userData/order-stats/`, log `order.fetch`); offline gives no data.
 The editor's default row shows the best blended order's matches and win rate; `Reset to default order` returns to it.
 If `npm run check` fails with ENOTDIR on prettier, delete the stray file `node_modules/.cache/prettier`.
 
@@ -330,14 +325,13 @@ If `npm run check` fails with ENOTDIR on prettier, delete the stray file `node_m
 - `stepTip` closes the ability panel's draft after `CLOSE_FRAMES`, or after `CLOSE_MIN_FRAMES` (3) frames spread over `CLOSE_MS` (1500), so a slow PC still closes it.
 - `public/demo/_*.png` frames (e.g. `_choice1-two.png`, made by `scripts/make-landing-frame.ts`) are listed only under `BRAWL_E2E`; the harness uses them for the staged reveal.
 - Harness at `--slow 4`: advice time starts before `setFrame`, the overlay is polled once during the hold, limits and timeouts scale by SLOW, and the panel expiry is measured with `pollAt`/`goneAt`.
-- The ScoreTip shows `Order: no data` (no number) when the active ability order matches no stored order, whatever `BRAWL_ORDER_TERM` is.
 
 - A live set whose ENHANCED mark appears after the accept (the box fades in after the name) is advised again once the mark holds two frames (`up` in `draftGate.ts`); `pushOverlay` in `BrawlView.tsx` waits until the ranking matches the accepted cards' enhanced flags too, else it froze the plain set's plates under the new key (s2 d006 stayed on Ricochet; `BrawlView.enhanced.test.tsx`). Labels may carry `best` (the item a set must end on, its last complete advice); `win:latency` marks `wrong` with `expected take <X>, ended on <Y>` and `scoreStretch` R5 checks it on replay. Re-run `npx tsx scripts/video-truth.ts --truth-only` after any label edit: until 2026-10-14 the `expect` labels never reached `truth.json`, so R5 checked nothing on replay. In test-mode video runs each plate is prefixed with the item name the app read (`namesFromAdvice`, only when `msText` is set).
 
 ## Video truth set (real gameplay, 1280x720)
 
-`scripts/fixtures/video-truth/s0..s9/` are 10 stretches cut from one OBS recording (lossy webp crops, about 34 MB; frame time is `truth.video[0] + frameIndex/4`). Hand labels live in `scripts/video-truth/labels.json` (per set: items, `from`/`to` on screen, `readable` window, `covered` slots that a tooltip hides and may show `?`). `npx tsx scripts/video-truth.ts --truth-only` rewrites only the `truth.json` files from the labels; the full tool needs the source video. `npx tsx scripts/video-truth-report.ts` prints per-stretch violations and advice latency (about 3 min); `scripts/__tests__/video-truth.test.ts` fails on any. Rules in `scoreStretch` (`scripts/lib/videoTruth.ts`): R1 advised items equal a labelled set on screen; R2 a set readable 1 s or more is advised within 1.0 s (`ADVICE_BY`); R3 no advice drop-out while readable; R4 no advice when no set is on screen. Fix labels only when the video shows them wrong.
-Worker rules found with it: a card circle with no content counts as empty (`cardEmpty`), two empty circles mean cards leaving or sliding in (advice dropped, no fallback); the fallback is 1.0 s from the first card (`FALLBACK_MS`), held at most 200 ms for a read already on its way (`FALLBACK_READ_HOLD_MS`); a `?` set upgrades at once when the missing card reads.
+`scripts/fixtures/video-truth/s0..s13/` are 14 stretches cut from the two OBS recordings above (lossy webp crops, about 48 MB; frame time is `truth.video[0] + frameIndex/4`). `labels.json` names the recording per stretch (`file`, plus `video: [from, to]` in that recording); `npx tsx scripts/video-truth.ts "<dir or name.mkv=path>..." [--only s10,s11]` cuts the crops, and `npx tsx scripts/footage-latency.ts` takes the same arguments plus `--write-labels`. Hand labels live in `scripts/video-truth/labels.json` (per set: items, `from`/`to` on screen, `readable` window, `covered` slots that a tooltip hides and may show `?`). `npx tsx scripts/video-truth.ts --truth-only` rewrites only the `truth.json` files from the labels; the full tool needs the source video. `npx tsx scripts/video-truth-report.ts` prints per-stretch violations and advice latency (about 3 min); `scripts/__tests__/video-truth.test.ts` fails on any. Rules in `scoreStretch` (`scripts/lib/videoTruth.ts`): R1 advised items equal a labelled set on screen; R2 a set readable 1 s or more is advised within 1.0 s (`ADVICE_BY`); R3 no advice drop-out while readable; R4 no advice when no set is on screen; R5 a label's `expect`/`best` (only where `scripts/cli-calls.sh`-style `--explain` makes the call clear) matches the engine's call. Fix labels only when the video shows them wrong.
+Worker rules found with it: a card circle with no content counts as empty (`cardEmpty`), two empty circles mean cards leaving or sliding in (advice dropped, no fallback); the fallback is 1.0 s from the first card (`FALLBACK_MS`), held at most 200 ms for a read already on its way (`FALLBACK_READ_HOLD_MS`); a `?` set upgrades at once when the missing card reads; a name line whose lettering is still dim (`nameLineDim`, the game dims a card's text for up to a second after it lands, below the ink threshold) holds the fallback for at most `FALLBACK_DIM_MS` (2 s from the first card), found with s13 d040.
 
 Speed (advice at x4): a name read or caption read that lands before the set is accepted re-runs the last frame at once (`restep` in `worker.ts`, at most 3 per frame) instead of waiting for the next picture; the last card's clear icon stands on its first frame when the other two are name-confirmed. `replayDraft` waits for in-flight reads (`readsIdle`) each frame, so replays no longer depend on wall-clock OCR speed. `win:e2e -- --slow 4` is unusable as a measure while another job loads the host (load average above 10 gave 0.6 to 7 s for the same code).
 
@@ -393,7 +387,7 @@ Speed (advice at x4): a name read or caption read that lands before the set is a
 - Replay quantises frames to 250 ms (4 fps); the live app sees a picture about every 67 ms, so live numbers are the ones to quote.
 - Target: advice within 400 ms of the last card landing (`fromLast`), judged per draft on the median of 3 `win:latency` runs (the footage test checks 400 ms + one 250 ms replay frame from the last-card frame, and below the old app's time), from text reads alone (no icon guesses; see Fast draft read).
   The fallback is 1.0 s: read cards advised, the rest grey `?`, each upgrading the moment its read lands.
-- `npm run win:latency [-- --only s3,s7] [--runs N] [--video "<Windows path>"] [--relay page]` (`scripts/win/run-latency.sh`,
+- `npm run win:latency [-- --only s3,s7] [--runs N] [--video "<Windows dir or file>"] [--slow N] [--bar-ms N]` (`scripts/win/run-latency.sh`,
   `scripts/win/latency-main.cjs`): syncs like `win:dev`, starts the app under `BRAWL_E2E` in test mode with the user's recording,
   plays each labelled stretch padded 1 s, prints one row per labelled set (old ms, new ms from `appear`, capture/read/ocr/settle/draw,
   re-roll, `wrong`) and writes `logs/win-latency.json`; exit 1 on any row at 1000 ms or more, wrong, or never advised. Nothing is
@@ -406,8 +400,7 @@ Speed (advice at x4): a name read or caption read that lands before the set is a
   The `settle`, `read` and `ocr` columns start at the set's first card: frames that still show the accepted set (`live`) start no set
   in `TimingTracker`. The inventory grid hold runs at most 600 ms from the grid's first change, however often the job restarts.
 - The `ocr` column is the round trip of the set's last name read; `ocr.hops` logs split it (`toPage`, `main` with the helper, `helper`,
-  `back`). Text reads go worker -> main over a MessagePort (`CHANNELS.ocrPortGet`/`ocrPort`); `--relay page` switches back to the
-  page relay to compare. The helper answers one crop at a time, so crops sent back to back queue.
+  `back`). Text reads go worker -> main over a MessagePort (`CHANNELS.ocrPortGet`/`ocrPort`); The page relay (`brawlAPI.readText`) is the fallback until the port lands. The helper answers one crop at a time, so crops sent back to back queue.
 - The inventory grid is matched as a stepped job between frames (`GRID_HOLD_MS` 600: the longest an accept waits for a grid match
   already under way) and reused while its fingerprint (fade-aware `inventorySig`) is unchanged.
 - No re-roll veto: the engine's gain math alone decides (gain above 0 and above the hold value; a set with an unread card never calls one).

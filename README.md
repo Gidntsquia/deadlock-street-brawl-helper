@@ -4,7 +4,7 @@
   <img alt="One real Street Brawl draft at normal speed: it shows the Reading sign, then score plates on the cards with the advised one marked in teal" src="docs/brawl-overlay.gif">
 </p>
 
-A draft advisor for [Deadlock](https://store.steampowered.com/app/1422450/Deadlock/)'s Street Brawl mode. It reads the draft screen while you play, ranks the three cards you're offered, and says whether the set is worth a re-roll. The advice is drawn over the draft screen. Scores are built from 30 days of Street Brawl matches from [deadlock-api.com](https://deadlock-api.com).
+A draft advisor for [Deadlock](https://store.steampowered.com/app/1422450/Deadlock/)'s Street Brawl mode. It reads the draft screen while you play, ranks the three cards you're offered, and says whether the set is worth a re-roll. The advice is drawn over the draft screen. Scores are built from Street Brawl matches since the City Never Sleeps update (2026-09-29) from [deadlock-api.com](https://deadlock-api.com), for all 42 heroes.
 
 ## Quickstart 🚀
 
@@ -16,7 +16,7 @@ Requires Windows. Get the app from the [latest release](https://github.com/Gidnt
 
 IMPORTANT: the files aren't code-signed, so Windows SmartScreen will warn you. Click More info, then Run anyway.
 
-Press F8 to read the draft right away if the app hasn't picked it up. With no game running, press Ctrl+Shift+D and turn on Test mode to try the overlay on a real draft screenshot.
+Press F8 to read the draft right away if the app hasn't picked it up. With no game running, press Ctrl+Shift+D and turn on Test mode to try the overlay on a real draft screenshot. On a slow PC the advice comes later but still comes: cards that read are advised within a second of the first card landing, and a card that has not read yet shows a grey `?` that turns into its plate the moment its name is read.
 
 To work on it (needs [Node.js](https://nodejs.org) 20 or newer):
 
@@ -24,7 +24,7 @@ To work on it (needs [Node.js](https://nodejs.org) 20 or newer):
 npm install
 npm run dev                        # Browser version, for development only
 npm run brawl -- --hero 1 --round 2 --set "Improved Spirit,Enchanter's Emblem,Swift Striker"   # Advice without the screen reader
-npm run fetch-data                 # Refreshes the 30-day snapshot (~1400 requests, ~9 min)
+npm run fetch-data -- --since 2026-09-29   # Refreshes the Street Brawl snapshot (~1400 requests, ~9 min)
 npm run win:dev                    # From WSL: runs the Windows app from a synced copy
 npm run win:e2e -- --slow 4        # From WSL: end-to-end check with the CPU throttled 4x (advice must still land within 2.5 s)
 ```
@@ -52,7 +52,7 @@ More details in the
 - [Overlay](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Overlay) — screen capture and the always-on-top window
 - [Windows App](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Windows-App) — the packaged app, test mode, developing from WSL
 - [Tier List](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Tier-List) — how the S/A/B/C grades are worked out
-- [Data Pipeline](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Data-Pipeline) — what `fetch-data` downloads, and the 30-day window
+- [Data Pipeline](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Data-Pipeline) — what `fetch-data` downloads, and the data window since the City Never Sleeps update
 - [Development](https://github.com/Gidntsquia/deadlock-street-brawl-helper/wiki/Development) — code layout, scripts, checks
 
 ## License 📄
