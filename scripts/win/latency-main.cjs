@@ -14,7 +14,13 @@
 // 1.0 s fallback) and nothing wrong: the 400 ms budget does not apply to it. Records the Windows CPU load at the start
 // and end of each run. Writes logs/win-latency.json; exit 1 when any draft fails, any row is `wrong`, or has no advice.
 //
-// Flags: --only s7[,s3]  --runs N (default 3)  --video <Windows path>  --commit <sha> (passed by run-latency.sh)
+// Slow-PC mode (`--slow N`): the app's whole process tree is pinned to 1/N of the logical cores at below-normal
+// priority. The pass bar there (`--bar-ms`, default 1000): every labelled set (not only those the old app drew a plate
+// for) is advised, a `?` on a covered slot counts, the `?` fallback upgrades every other slot, nothing is `wrong`, and
+// every row's `from last` is under the bar. Exit 1 when any row misses it.
+//
+// Flags: --only s7[,s3]  --runs N (default 3)  --video <Windows dir or file>  --slow N (N = 2 or 4: processor affinity to cores/N, below-normal priority; the bar below) --bar-ms N
+//        --commit <sha> (passed by run-latency.sh)
 'use strict';
 process.env.BRAWL_E2E = '1';
 // The overlay is invisible here (opacity 0) and read through executeJavaScript: keep it out of the topmost band too.
@@ -48,8 +54,20 @@ const only = arg('--only')
 const runs = Math.max(1, Number(arg('--runs')) || 3);
 /** A full run takes about 4 min: 10 min per run, plus start-up. */
 const HARD_TIMEOUT_MS = (5 + 10 * runs) * 60_000;
-const video = arg('--video') || 'D:\\OBS Videos\\2026-10-09 00-46-30.mkv';
+// Each stretch of labels.json names its recording in `file`. `--video` is a Windows directory holding the recordings
+// (default `D:\OBS Videos`) or the path of one recording file, which then serves the stretches that name it.
+const videoArg = arg('--video') || 'D:\\OBS Videos';
+const videoFor = (file) =>
+  /\.(mkv|mp4)$/i.test(videoArg)
+    ? videoArg.split(/[\\/]/).pop() === file
+      ? videoArg
+      : null
+    : `${videoArg.replace(/[\\/]+$/, '')}\\${file}`;
 const commit = arg('--commit') || 'unknown';
+const SLOW = Math.max(1, Number(arg('--slow')) || 1);
+/** Normal runs: the 400 ms budget on each draft's median. Slow runs: the bar, on every row (`--bar-ms` tightens or loosens it). */
+const LIMIT_MS = Number(arg('--bar-ms')) || (SLOW > 1 ? 1000 : BUDGET_MS);
+const overLimit = (ms) => (SLOW > 1 ? ms >= LIMIT_MS : ms > LIMIT_MS);
 
 fs.mkdirSync(path.dirname(DEBUG_LOG), { recursive: true });
 fs.writeFileSync(DEBUG_LOG, `${new Date().toISOString()} --- latency run start ---\n`);
@@ -124,7 +142,7 @@ function rowsFor(run) {
     for (let k = 0; k < st.sets.length; k++) {
       const set = st.sets[k];
       const base = baseline.find((b) => b.stretch === st.id && b.draft === set.draft && b.appear === set.appear);
-      if (!base || base.oldMs == null) continue;
+      if (!base || (base.oldMs == null && SLOW === 1)) continue;
       const next = st.sets[k + 1];
       const until = next ? (next.appear ?? next.from) : st.video[1] + PAD_S;
       // Every plate drawn while this set was the newest on screen. A `video.advice` row matched to it by main carries
@@ -132,7 +150,7 @@ function rowsFor(run) {
       const drawn = mine.filter((a) =>
         a.stretch
           ? a.stretch === st.id && a.draft === set.draft && a.appearAt === set.appear
-          : a.videoAt >= set.appear && a.videoAt < until && a.videoAt <= st.video[1] + PAD_S,
+          : a.file === st.file && a.videoAt >= set.appear && a.videoAt < until && a.videoAt <= st.video[1] + PAD_S,
       );
       // A slot the labels mark `covered` (a hover tooltip hides its name line) may stay `?`, as in the video-truth
       // rules: the set counts as advised when every other card is advised and the covered ones are the `?`.
@@ -188,12 +206,14 @@ function rowsFor(run) {
         ? 'wrong'
         : row.newMs == null
           ? 'no advice'
-          : row.covered
+          : row.covered && SLOW === 1
             ? ''
             : row.fromLast == null
-              ? 'no landing'
-              : row.fromLast > BUDGET_MS
-                ? `> ${BUDGET_MS} ms`
+              ? row.covered
+                ? ''
+                : 'no landing'
+              : overLimit(row.fromLast)
+                ? `${SLOW > 1 ? '>=' : '>'} ${LIMIT_MS} ms`
                 : '';
       out.push(row);
     }
@@ -234,6 +254,22 @@ async function cpuLoad(ms = 1000) {
   const total = b.total - a.total;
   return total > 0 ? Math.round((100 * (total - (b.idle - a.idle))) / total) : null;
 }
+/** Slow-PC mode: pin the app's whole process tree to 1/SLOW of the logical cores, below-normal priority. */
+function throttle() {
+  if (SLOW <= 1) return;
+  const { execFileSync } = require('node:child_process');
+  const cores = os.cpus().length;
+  const n = Math.max(1, Math.floor(cores / SLOW));
+  const mask = (2n ** BigInt(n) - 1n).toString();
+  const ps =
+    `$r=@(${process.pid});$all=Get-CimInstance Win32_Process;$q=@(${process.pid});` +
+    `while($q.Count){$n=@();foreach($x in $q){$n+=$all|?{$_.ParentProcessId -eq $x}|%{$_.ProcessId}};$r+=$n;$q=$n};` +
+    `$c=0;foreach($i in $r){try{$p=Get-Process -Id $i -ErrorAction Stop;$p.ProcessorAffinity=[IntPtr]${mask};$p.PriorityClass='BelowNormal';$c++}catch{}};Write-Output $c`;
+  const out = execFileSync('powershell.exe', ['-NoProfile', '-Command', ps], { encoding: 'utf8' }).trim();
+  say(`slow x${SLOW}: ${out} processes pinned to ${n} of ${cores} logical cores, below-normal priority`);
+  slowNote = `x${SLOW}: ${n} of ${cores} logical cores, below-normal priority, ${out} processes`;
+}
+let slowNote = null;
 const median = (xs) => {
   const s = [...xs].sort((a, b) => a - b);
   return s.length ? s[Math.floor(s.length / 2)] : null;
@@ -256,13 +292,19 @@ function perDraftOf(perRun) {
       ? 'wrong'
       : none
         ? 'no advice'
-        : first.covered
+        : first.covered && SLOW === 1
           ? 'ok (covered slot ?)'
           : med == null
-            ? 'no landing'
-            : med <= BUDGET_MS
-              ? 'ok'
-              : `median > ${BUDGET_MS} ms`;
+            ? first.covered
+              ? 'ok (covered slot ?)'
+              : 'no landing'
+            : SLOW > 1
+              ? fl.some(overLimit)
+                ? `>= ${LIMIT_MS} ms`
+                : 'ok'
+              : med <= LIMIT_MS
+                ? 'ok'
+                : `median > ${LIMIT_MS} ms`;
     const mid = (k) => median(same.map((r) => r[k]).filter((x) => x != null));
     out.push({
       stretch: first.stretch,
@@ -315,9 +357,13 @@ async function main() {
     say('LATENCY RUN TIMEOUT (15 min)');
     finish(1, { date: new Date().toISOString(), error: 'timeout', rows: [] });
   }, HARD_TIMEOUT_MS).unref();
-  if (!fs.existsSync(video)) {
-    say(`ERROR: the recording is not there: ${video}`);
-    return finish(1, { date: new Date().toISOString(), error: `no video at ${video}`, rows: [] });
+  // Windows paths seen from this process: check every recording the chosen stretches name.
+  for (const file of new Set(stretches.map((st) => st.file))) {
+    const p = videoFor(file);
+    if (!p || !fs.existsSync(p)) {
+      say(`ERROR: the recording is not there: ${p ?? file}`);
+      return finish(1, { date: new Date().toISOString(), error: `no video at ${p ?? file}`, rows: [] });
+    }
   }
   await app.whenReady();
   await import(require('node:url').pathToFileURL(path.join(ROOT, 'electron-dist', 'main.js')).href);
@@ -341,19 +387,26 @@ async function main() {
     say('ERROR: test mode did not open the dummy');
     return finish(1, { date: new Date().toISOString(), error: 'no dummy', rows: [] });
   }
-  await e2e.playTestVideo(video);
   const v = (js) => e2e.videoControl(`(() => { const v = document.getElementById('vid'); ${js} })()`);
-  const err = await v('return v.error ? String(v.error.code) : null;');
-  if (err) {
-    say(`ERROR: the recording will not play (code ${err})`);
-    return finish(1, { date: new Date().toISOString(), error: `video error ${err}`, rows: [] });
-  }
-  await v('v.pause();');
+  let loadedFile = null;
+  /** Opens the recording a stretch names in the dummy (once per file); returns an error text or null. */
+  const openFile = async (file) => {
+    if (file === loadedFile) return null;
+    const p = videoFor(file);
+    if (!p) return `no path for ${file} (--video ${videoArg})`;
+    await e2e.playTestVideo(p);
+    const err = await v('return v.error ? String(v.error.code) : null;');
+    if (err) return `the recording ${file} will not play (code ${err})`;
+    await v('v.pause();');
+    loadedFile = file;
+    return null;
+  };
 
   const t0 = Date.now();
   const loads = [];
   for (let run = 1; run <= runs; run++) {
     currentRun = run;
+    throttle();
     const startLoad = await cpuLoad();
     if (startLoad != null && startLoad > LOAD_WARN_PCT)
       say(
@@ -361,6 +414,11 @@ async function main() {
       );
     loads.push({ run, start: startLoad, end: null });
     for (const st of stretches) {
+      const openErr = await openFile(st.file);
+      if (openErr) {
+        say(`ERROR: ${openErr}`);
+        return finish(1, { date: new Date().toISOString(), error: openErr, rows: [] });
+      }
       const from = Math.max(0, st.video[0] - PAD_S),
         to = st.video[1] + PAD_S;
       await e2e.videoControl(`new Promise((done) => { const v = document.getElementById('vid'); v.pause();
@@ -387,10 +445,11 @@ async function main() {
     date: new Date().toISOString(),
     machine: `${os.hostname()} (${os.cpus()[0]?.model?.trim() ?? 'cpu'}, ${os.cpus().length} threads)`,
     commit,
-    video,
+    video: videoArg,
+    slow: SLOW > 1 ? { n: SLOW, note: slowNote, limitMs: LIMIT_MS } : null,
     runs,
     only: only ?? null,
-    budgetMs: BUDGET_MS,
+    budgetMs: LIMIT_MS,
     load: loads,
     rows: [],
     perRun: [],
@@ -423,7 +482,7 @@ async function main() {
   const pd = report.perDraft;
   const summary =
     `win:latency ${report.date} ${commit}: ${runs} run(s), ${all.length} rows, ` +
-    `${all.filter((r) => r.fromLast != null && r.fromLast <= BUDGET_MS).length} rows <= ${BUDGET_MS} ms from last card, ` +
+    `${all.filter((r) => r.fromLast != null && (SLOW > 1 ? r.fromLast < LIMIT_MS : r.fromLast <= LIMIT_MS)).length} rows under ${LIMIT_MS} ms from last card, ` +
     `${pd.filter((d) => d.pass).length}/${pd.length} drafts pass (median), ` +
     `from last max ${fl.length ? Math.max(...fl) : '-'} ms, median ${median(fl) ?? '-'} ms, ` +
     `${all.filter((r) => r.wrong).length} wrong, load ${loads.map((l) => `${l.start}->${l.end} %`).join(' ')}` +
