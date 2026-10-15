@@ -261,6 +261,7 @@ async function fetchBrawl(heroes, manifest) {
     window_days: Math.round((MAX_TS - MIN_TS) / 86400),
     ...(SINCE ? { since: `City Never Sleeps ${SINCE}` } : {}),
     matches_per_hero: Object.fromEntries(heroes.map((h) => [h.id, matchesOf(h.id)])),
+    orders_fetched_at: new Date().toISOString(),
   };
   console.log('Street Brawl matches per hero:');
   for (const h of [...heroes].sort((a, b) => matchesOf(b.id) - matchesOf(a.id)))
