@@ -4,60 +4,36 @@
     {
       "id": "s0",
       "file": "2026-10-09 00-46-30.mkv",
-      "video": [
-        1,
-        15
-      ],
+      "video": [1, 15],
       "sets": [
         {
           "draft": "d001",
           "round": 3,
           "choice": 2,
-          "items": [
-            "Mercurial Magnum",
-            "Toxic Bullets",
-            "Spirit Rend"
-          ],
+          "items": ["Mercurial Magnum", "Toxic Bullets", "Spirit Rend"],
           "from": 2.75,
           "to": 5.5,
-          "readable": [
-            4.5,
-            5
-          ],
+          "readable": [4.5, 5],
           "appear": 3.5
         },
         {
           "draft": "d002",
           "round": 3,
           "choice": 3,
-          "items": [
-            "Lightning Scroll",
-            "Magic Carpet",
-            "Spellslinger"
-          ],
+          "items": ["Lightning Scroll", "Magic Carpet", "Spellslinger"],
           "from": 7,
           "to": 9,
-          "readable": [
-            7.75,
-            8.5
-          ],
+          "readable": [7.75, 8.5],
           "appear": 7
         },
         {
           "draft": "d002",
           "round": 3,
           "choice": 3,
-          "items": [
-            "Infuser",
-            "Cheat Death",
-            "Mystic Reverb"
-          ],
+          "items": ["Infuser", "Cheat Death", "Mystic Reverb"],
           "from": 9.5,
           "to": 14,
-          "readable": [
-            10.75,
-            13.25
-          ],
+          "readable": [10.75, 13.25],
           "appear": 10
         }
       ]
@@ -65,80 +41,47 @@
     {
       "id": "s1",
       "file": "2026-10-09 00-46-30.mkv",
-      "video": [
-        191.5,
-        216
-      ],
+      "video": [191.5, 216],
       "sets": [
         {
           "draft": "d003",
           "round": 4,
           "choice": 1,
-          "items": [
-            "Superior Cooldown",
-            "Warp Stone",
-            "Surge of Power"
-          ],
+          "items": ["Superior Cooldown", "Warp Stone", "Surge of Power"],
           "from": 192.5,
           "to": 196,
-          "readable": [
-            193.5,
-            195.75
-          ],
+          "readable": [193.5, 195.75],
           "appear": 192.5
         },
         {
           "draft": "d004",
           "round": 4,
           "choice": 2,
-          "items": [
-            "Counterspell",
-            "Tesla Bullets",
-            "Express Shot"
-          ],
+          "items": ["Counterspell", "Tesla Bullets", "Express Shot"],
           "from": 197.25,
           "to": 203.5,
-          "readable": [
-            198.5,
-            203.25
-          ],
+          "readable": [198.5, 203.25],
           "appear": 197.75
         },
         {
           "draft": "d005",
           "round": 4,
           "choice": 3,
-          "items": [
-            "Siphon Bullets",
-            "Juggernaut",
-            "Focus Lens"
-          ],
+          "items": ["Siphon Bullets", "Juggernaut", "Focus Lens"],
           "from": 204.25,
           "to": 211,
-          "readable": [
-            205.5,
-            210.25
-          ],
+          "readable": [205.5, 210.25],
           "appear": 205
         },
         {
           "draft": "d005",
           "round": 4,
           "choice": 3,
-          "items": [
-            "Boundless Spirit",
-            "Crushing Fists",
-            "Silencer"
-          ],
+          "items": ["Boundless Spirit", "Crushing Fists", "Silencer"],
           "from": 211.25,
           "to": 213.5,
-          "readable": [
-            212.5,
-            212.75
-          ],
-          "covered": [
-            1
-          ],
+          "readable": [212.5, 212.75],
+          "covered": [1],
           "appear": 212
         }
       ]
@@ -146,26 +89,16 @@
     {
       "id": "s2",
       "file": "2026-10-09 00-46-30.mkv",
-      "video": [
-        391,
-        439
-      ],
+      "video": [391, 439],
       "sets": [
         {
           "draft": "d006",
           "round": 5,
           "choice": 1,
-          "items": [
-            "Ricochet",
-            "Healing Tempo",
-            "Transcendent Cooldown"
-          ],
+          "items": ["Ricochet", "Healing Tempo", "Transcendent Cooldown"],
           "from": 392,
           "to": 400,
-          "readable": [
-            393,
-            400
-          ],
+          "readable": [393, 400],
           "appear": 392.25,
           "expect": "take",
           "best": "Transcendent Cooldown"
@@ -174,17 +107,10 @@
           "draft": "d007",
           "round": 5,
           "choice": 2,
-          "items": [
-            "Lightning Scroll",
-            "Ricochet",
-            "Runed Gauntlets"
-          ],
+          "items": ["Lightning Scroll", "Ricochet", "Runed Gauntlets"],
           "from": 402,
           "to": 427,
-          "readable": [
-            403.25,
-            426.25
-          ],
+          "readable": [403.25, 426.25],
           "appear": 401.75,
           "expect": "reroll"
         },
@@ -192,34 +118,20 @@
           "draft": "d007",
           "round": 5,
           "choice": 2,
-          "items": [
-            "Boundless Spirit",
-            "Crippling Headshot",
-            "Eternal Gift"
-          ],
+          "items": ["Boundless Spirit", "Crippling Headshot", "Eternal Gift"],
           "from": 427.5,
           "to": 430.5,
-          "readable": [
-            428.75,
-            430.5
-          ],
+          "readable": [428.75, 430.5],
           "appear": 428
         },
         {
           "draft": "d008",
           "round": 5,
           "choice": 3,
-          "items": [
-            "Colossus",
-            "Indomitable",
-            "Mystic Reverb"
-          ],
+          "items": ["Colossus", "Indomitable", "Mystic Reverb"],
           "from": 432,
           "to": 438.5,
-          "readable": [
-            433.25,
-            437.75
-          ],
+          "readable": [433.25, 437.75],
           "appear": 432.25
         }
       ]
@@ -227,77 +139,46 @@
     {
       "id": "s3",
       "file": "2026-10-09 00-46-30.mkv",
-      "video": [
-        1143.5,
-        1164.5
-      ],
+      "video": [1143.5, 1164.5],
       "sets": [
         {
           "draft": "d009",
           "round": 1,
           "choice": 1,
-          "items": [
-            "Extra Spirit",
-            "Mystic Burst",
-            "Mystic Regeneration"
-          ],
+          "items": ["Extra Spirit", "Mystic Burst", "Mystic Regeneration"],
           "from": 1145.25,
           "to": 1148.5,
-          "readable": [
-            1146.5,
-            1148.25
-          ],
+          "readable": [1146.5, 1148.25],
           "appear": 1145.5
         },
         {
           "draft": "d010",
           "round": 1,
           "choice": 2,
-          "items": [
-            "Arcane Surge",
-            "Slowing Bullets",
-            "Express Shot"
-          ],
+          "items": ["Arcane Surge", "Slowing Bullets", "Express Shot"],
           "from": 1150,
           "to": 1154.75,
-          "readable": [
-            1151.25,
-            1154
-          ],
+          "readable": [1151.25, 1154],
           "appear": 1150
         },
         {
           "draft": "d010",
           "round": 1,
           "choice": 2,
-          "items": [
-            "Active Reload",
-            "Bullet Lifesteal",
-            "Decay"
-          ],
+          "items": ["Active Reload", "Bullet Lifesteal", "Decay"],
           "from": 1155.75,
           "to": 1158.5,
-          "readable": [
-            1157,
-            1157.75
-          ],
+          "readable": [1157, 1157.75],
           "appear": 1155.75
         },
         {
           "draft": "d011",
           "round": 1,
           "choice": 3,
-          "items": [
-            "Spirit Snatch",
-            "Spirit Rend",
-            "Heroic Aura"
-          ],
+          "items": ["Spirit Snatch", "Spirit Rend", "Heroic Aura"],
           "from": 1159.75,
           "to": 1163.5,
-          "readable": [
-            1161,
-            1162.75
-          ],
+          "readable": [1161, 1162.75],
           "appear": 1159.75
         }
       ]
@@ -305,63 +186,37 @@
     {
       "id": "s4",
       "file": "2026-10-09 00-46-30.mkv",
-      "video": [
-        1336.5,
-        1359
-      ],
+      "video": [1336.5, 1359],
       "sets": [
         {
           "draft": "d012",
           "round": 2,
           "choice": 1,
-          "items": [
-            "Suppressor",
-            "Titanic Magazine",
-            "Opening Rounds"
-          ],
+          "items": ["Suppressor", "Titanic Magazine", "Opening Rounds"],
           "from": 1337.5,
           "to": 1346.5,
-          "readable": [
-            1338.5,
-            1346.25
-          ],
-          "covered": [
-            2
-          ],
+          "readable": [1338.5, 1346.25],
+          "covered": [2],
           "appear": 1337.75
         },
         {
           "draft": "d013",
           "round": 2,
           "choice": 2,
-          "items": [
-            "Lifestrike",
-            "Spirit Resilience",
-            "Metal Skin"
-          ],
+          "items": ["Lifestrike", "Spirit Resilience", "Metal Skin"],
           "from": 1347.75,
           "to": 1350,
-          "readable": [
-            1349,
-            1349.5
-          ],
+          "readable": [1349, 1349.5],
           "appear": 1348
         },
         {
           "draft": "d014",
           "round": 2,
           "choice": 3,
-          "items": [
-            "Toxic Bullets",
-            "Counterspell",
-            "Healing Nova"
-          ],
+          "items": ["Toxic Bullets", "Counterspell", "Healing Nova"],
           "from": 1351.25,
           "to": 1358.25,
-          "readable": [
-            1352.5,
-            1357.5
-          ],
+          "readable": [1352.5, 1357.5],
           "appear": 1351.5
         }
       ]
@@ -369,60 +224,36 @@
     {
       "id": "s5",
       "file": "2026-10-09 00-46-30.mkv",
-      "video": [
-        1549.5,
-        1571.5
-      ],
+      "video": [1549.5, 1571.5],
       "sets": [
         {
           "draft": "d015",
           "round": 3,
           "choice": 1,
-          "items": [
-            "Quicksilver Reload",
-            "Enchanter's Emblem",
-            "Return Fire"
-          ],
+          "items": ["Quicksilver Reload", "Enchanter's Emblem", "Return Fire"],
           "from": 1550.5,
           "to": 1554,
-          "readable": [
-            1551.25,
-            1553.75
-          ],
+          "readable": [1551.25, 1553.75],
           "appear": 1550.5
         },
         {
           "draft": "d016",
           "round": 3,
           "choice": 2,
-          "items": [
-            "Escalating Resilience",
-            "Dispel Magic",
-            "Tesla Bullets"
-          ],
+          "items": ["Escalating Resilience", "Dispel Magic", "Tesla Bullets"],
           "from": 1556.5,
           "to": 1562,
-          "readable": [
-            1558.75,
-            1561.25
-          ],
+          "readable": [1558.75, 1561.25],
           "appear": 1556.5
         },
         {
           "draft": "d017",
           "round": 3,
           "choice": 3,
-          "items": [
-            "Indomitable",
-            "Scourge",
-            "Juggernaut"
-          ],
+          "items": ["Indomitable", "Scourge", "Juggernaut"],
           "from": 1563,
           "to": 1569.5,
-          "readable": [
-            1564.25,
-            1568.75
-          ],
+          "readable": [1564.25, 1568.75],
           "appear": 1563.5
         }
       ]
@@ -430,60 +261,36 @@
     {
       "id": "s6",
       "file": "2026-10-09 00-46-30.mkv",
-      "video": [
-        2241.5,
-        2267
-      ],
+      "video": [2241.5, 2267],
       "sets": [
         {
           "draft": "d018",
           "round": 1,
           "choice": 1,
-          "items": [
-            "Rebuttal",
-            "Healing Rite",
-            "Extra Charge"
-          ],
+          "items": ["Rebuttal", "Healing Rite", "Extra Charge"],
           "from": 2243.5,
           "to": 2245.5,
-          "readable": [
-            2244.75,
-            2245
-          ],
+          "readable": [2244.75, 2245],
           "appear": 2243.5
         },
         {
           "draft": "d019",
           "round": 1,
           "choice": 2,
-          "items": [
-            "Escalating Resilience",
-            "Weapon Shielding",
-            "Healbane"
-          ],
+          "items": ["Escalating Resilience", "Weapon Shielding", "Healbane"],
           "from": 2246.75,
           "to": 2250,
-          "readable": [
-            2248,
-            2249.5
-          ],
+          "readable": [2248, 2249.5],
           "appear": 2247.25
         },
         {
           "draft": "d020",
           "round": 1,
           "choice": 3,
-          "items": [
-            "Inhibitor",
-            "Hollow Point",
-            "Healing Nova"
-          ],
+          "items": ["Inhibitor", "Hollow Point", "Healing Nova"],
           "from": 2251,
           "to": 2266.5,
-          "readable": [
-            2252.25,
-            2265.75
-          ],
+          "readable": [2252.25, 2265.75],
           "appear": 2251.75
         }
       ]
@@ -491,60 +298,36 @@
     {
       "id": "s7",
       "file": "2026-10-09 00-46-30.mkv",
-      "video": [
-        2490.5,
-        2511
-      ],
+      "video": [2490.5, 2511],
       "sets": [
         {
           "draft": "d021",
           "round": 2,
           "choice": 1,
-          "items": [
-            "Healing Booster",
-            "Trophy Collector",
-            "Bullet Resist Shredder"
-          ],
+          "items": ["Healing Booster", "Trophy Collector", "Bullet Resist Shredder"],
           "from": 2491.5,
           "to": 2495.5,
-          "readable": [
-            2491,
-            2494.75
-          ],
+          "readable": [2491, 2494.75],
           "appear": 2491.5
         },
         {
           "draft": "d022",
           "round": 2,
           "choice": 2,
-          "items": [
-            "Shadow Weave",
-            "Torment Pulse",
-            "Toxic Bullets"
-          ],
+          "items": ["Shadow Weave", "Torment Pulse", "Toxic Bullets"],
           "from": 2497.25,
           "to": 2501,
-          "readable": [
-            2498.5,
-            2500.5
-          ],
+          "readable": [2498.5, 2500.5],
           "appear": 2497.75
         },
         {
           "draft": "d023",
           "round": 2,
           "choice": 3,
-          "items": [
-            "Burst Fire",
-            "Alchemical Fire",
-            "Rapid Recharge"
-          ],
+          "items": ["Burst Fire", "Alchemical Fire", "Rapid Recharge"],
           "from": 2502,
           "to": 2510,
-          "readable": [
-            2503.25,
-            2509.25
-          ],
+          "readable": [2503.25, 2509.25],
           "appear": 2502.25,
           "expect": "take"
         }
@@ -553,80 +336,47 @@
     {
       "id": "s8",
       "file": "2026-10-09 00-46-30.mkv",
-      "video": [
-        2637.5,
-        2663
-      ],
+      "video": [2637.5, 2663],
       "sets": [
         {
           "draft": "d024",
           "round": 3,
           "choice": 1,
-          "items": [
-            "Spirit Shredder",
-            "Spirit Sap",
-            "Melee Charge"
-          ],
+          "items": ["Spirit Shredder", "Spirit Sap", "Melee Charge"],
           "from": 2639.25,
           "to": 2643,
-          "readable": [
-            2640.5,
-            2643
-          ],
-          "covered": [
-            2
-          ],
+          "readable": [2640.5, 2643],
+          "covered": [2],
           "appear": 2639.25
         },
         {
           "draft": "d025",
           "round": 3,
           "choice": 2,
-          "items": [
-            "Heroic Aura",
-            "Spirit Resilience",
-            "Superior Duration"
-          ],
+          "items": ["Heroic Aura", "Spirit Resilience", "Superior Duration"],
           "from": 2644.25,
           "to": 2650.5,
-          "readable": [
-            2645.5,
-            2649.75
-          ],
+          "readable": [2645.5, 2649.75],
           "appear": 2644.75
         },
         {
           "draft": "d026",
           "round": 3,
           "choice": 3,
-          "items": [
-            "Colossus",
-            "Armor Piercer",
-            "Lightning Scroll"
-          ],
+          "items": ["Colossus", "Armor Piercer", "Lightning Scroll"],
           "from": 2652.5,
           "to": 2657.5,
-          "readable": [
-            2653.75,
-            2656.75
-          ],
+          "readable": [2653.75, 2656.75],
           "appear": 2653
         },
         {
           "draft": "d026",
           "round": 3,
           "choice": 3,
-          "items": [
-            "Spiritual Overflow",
-            "Witchmail",
-            "Crippling Headshot"
-          ],
+          "items": ["Spiritual Overflow", "Witchmail", "Crippling Headshot"],
           "from": 2658.25,
           "to": 2662.25,
-          "readable": [
-            2659.5,
-            2661.5
-          ],
+          "readable": [2659.5, 2661.5],
           "appear": 2658.75
         }
       ]
@@ -634,20 +384,13 @@
     {
       "id": "s9",
       "file": "2026-10-09 00-46-30.mkv",
-      "video": [
-        2809.5,
-        2820.5
-      ],
+      "video": [2809.5, 2820.5],
       "sets": [
         {
           "draft": "d026x",
           "round": 4,
           "choice": 1,
-          "items": [
-            "Hollow Point",
-            "Spirit Resilience",
-            "Rescue Beam"
-          ],
+          "items": ["Hollow Point", "Spirit Resilience", "Rescue Beam"],
           "from": 2809.5,
           "to": 2810.5,
           "appear": 2809.5
@@ -656,34 +399,20 @@
           "draft": "d027",
           "round": 4,
           "choice": 2,
-          "items": [
-            "Heroic Aura",
-            "Spirit Rend",
-            "Superior Cooldown"
-          ],
+          "items": ["Heroic Aura", "Spirit Rend", "Superior Cooldown"],
           "from": 2811.75,
           "to": 2815,
-          "readable": [
-            2813,
-            2814.75
-          ],
+          "readable": [2813, 2814.75],
           "appear": 2811.5
         },
         {
           "draft": "d028",
           "round": 4,
           "choice": 3,
-          "items": [
-            "Escalating Exposure",
-            "Juggernaut",
-            "Frenzy"
-          ],
+          "items": ["Escalating Exposure", "Juggernaut", "Frenzy"],
           "from": 2816.25,
           "to": 2819.5,
-          "readable": [
-            2817.5,
-            2818.75
-          ],
+          "readable": [2817.5, 2818.75],
           "appear": 2816.75
         }
       ]
@@ -691,80 +420,47 @@
     {
       "id": "s10",
       "file": "2026-10-15 15-04-37.mkv",
-      "video": [
-        82,
-        109
-      ],
+      "video": [82, 109],
       "sets": [
         {
           "draft": "d029",
           "round": 1,
           "choice": 1,
-          "items": [
-            "Extra Charge",
-            "Guardian Ward",
-            "Rapid Rounds"
-          ],
+          "items": ["Extra Charge", "Guardian Ward", "Rapid Rounds"],
           "from": 83.25,
           "to": 95,
-          "readable": [
-            84.5,
-            94.75
-          ],
+          "readable": [84.5, 94.75],
           "appear": 83
         },
         {
           "draft": "d030",
           "round": 1,
           "choice": 2,
-          "items": [
-            "Melee Charge",
-            "Enduring Speed",
-            "Opening Rounds"
-          ],
+          "items": ["Melee Charge", "Enduring Speed", "Opening Rounds"],
           "from": 97,
           "to": 99.75,
-          "readable": [
-            98,
-            98.75
-          ],
-          "covered": [
-            0
-          ],
+          "readable": [98, 98.75],
+          "covered": [0],
           "appear": 97
         },
         {
           "draft": "d031",
           "round": 1,
           "choice": 3,
-          "items": [
-            "Hollow Point",
-            "Shadow Weave",
-            "Decay"
-          ],
+          "items": ["Hollow Point", "Shadow Weave", "Decay"],
           "from": 101,
           "to": 104,
-          "readable": [
-            102,
-            103.75
-          ],
+          "readable": [102, 103.75],
           "appear": 101.25
         },
         {
           "draft": "d031",
           "round": 1,
           "choice": 3,
-          "items": [
-            "Escalating Resilience",
-            "Spirit Resilience",
-            "Superior Duration"
-          ],
+          "items": ["Escalating Resilience", "Spirit Resilience", "Superior Duration"],
           "from": 105,
           "to": 108,
-          "readable": [
-            106,
-            107.5
-          ],
+          "readable": [106, 107.5],
           "appear": 105.25
         }
       ]
@@ -772,60 +468,36 @@
     {
       "id": "s11",
       "file": "2026-10-15 15-04-37.mkv",
-      "video": [
-        381,
-        398
-      ],
+      "video": [381, 398],
       "sets": [
         {
           "draft": "d032",
           "round": 2,
           "choice": 1,
-          "items": [
-            "Enchanter's Emblem",
-            "Quicksilver Reload",
-            "Fleetfoot"
-          ],
+          "items": ["Enchanter's Emblem", "Quicksilver Reload", "Fleetfoot"],
           "from": 382.25,
           "to": 385.25,
-          "readable": [
-            383.25,
-            384.75
-          ],
+          "readable": [383.25, 384.75],
           "appear": 382.5
         },
         {
           "draft": "d033",
           "round": 2,
           "choice": 2,
-          "items": [
-            "Point Blank",
-            "Torment Pulse",
-            "Warp Stone"
-          ],
+          "items": ["Point Blank", "Torment Pulse", "Warp Stone"],
           "from": 386.25,
           "to": 389,
-          "readable": [
-            387,
-            388.75
-          ],
+          "readable": [387, 388.75],
           "appear": 386.5
         },
         {
           "draft": "d034",
           "round": 2,
           "choice": 3,
-          "items": [
-            "Ballistic Enchantment",
-            "Headhunter",
-            "Hollow Point"
-          ],
+          "items": ["Ballistic Enchantment", "Headhunter", "Hollow Point"],
           "from": 390.25,
           "to": 392.75,
-          "readable": [
-            391,
-            392.75
-          ],
+          "readable": [391, 392.75],
           "expect": "reroll",
           "appear": 390.5
         },
@@ -833,17 +505,10 @@
           "draft": "d034",
           "round": 2,
           "choice": 3,
-          "items": [
-            "Cultist Sacrifice",
-            "Fortitude",
-            "Radiant Regeneration"
-          ],
+          "items": ["Cultist Sacrifice", "Fortitude", "Radiant Regeneration"],
           "from": 394,
           "to": 396.75,
-          "readable": [
-            395,
-            396.75
-          ],
+          "readable": [395, 396.75],
           "appear": 394.25
         }
       ]
@@ -851,26 +516,16 @@
     {
       "id": "s12",
       "file": "2026-10-15 15-04-37.mkv",
-      "video": [
-        691,
-        711
-      ],
+      "video": [691, 711],
       "sets": [
         {
           "draft": "d035",
           "round": 3,
           "choice": 1,
-          "items": [
-            "Split Shot",
-            "Improved Spirit",
-            "Recharging Rush"
-          ],
+          "items": ["Split Shot", "Improved Spirit", "Recharging Rush"],
           "from": 692.25,
           "to": 694.75,
-          "readable": [
-            693.25,
-            694.75
-          ],
+          "readable": [693.25, 694.75],
           "expect": "take",
           "best": "Improved Spirit",
           "appear": 692.5
@@ -879,34 +534,20 @@
           "draft": "d036",
           "round": 3,
           "choice": 2,
-          "items": [
-            "Toxic Bullets",
-            "Vortex Web",
-            "Spirit Snatch"
-          ],
+          "items": ["Toxic Bullets", "Vortex Web", "Spirit Snatch"],
           "from": 696.25,
           "to": 698.75,
-          "readable": [
-            697,
-            698.75
-          ],
+          "readable": [697, 698.75],
           "appear": 696.25
         },
         {
           "draft": "d036",
           "round": 3,
           "choice": 2,
-          "items": [
-            "Spirit Resilience",
-            "Spellbreaker",
-            "Torment Pulse"
-          ],
+          "items": ["Spirit Resilience", "Spellbreaker", "Torment Pulse"],
           "from": 700.25,
           "to": 702.75,
-          "readable": [
-            701,
-            702.5
-          ],
+          "readable": [701, 702.5],
           "expect": "take",
           "best": "Spellbreaker",
           "appear": 700.25
@@ -915,20 +556,11 @@
           "draft": "d037",
           "round": 3,
           "choice": 3,
-          "items": [
-            "Glass Cannon",
-            "Silencer",
-            "Refresher"
-          ],
+          "items": ["Glass Cannon", "Silencer", "Refresher"],
           "from": 703.75,
           "to": 709.75,
-          "readable": [
-            705,
-            706.75
-          ],
-          "covered": [
-            1
-          ],
+          "readable": [705, 706.75],
+          "covered": [1],
           "appear": 704
         }
       ]
@@ -936,26 +568,16 @@
     {
       "id": "s13",
       "file": "2026-10-15 15-04-37.mkv",
-      "video": [
-        910,
-        956
-      ],
+      "video": [910, 956],
       "sets": [
         {
           "draft": "d038",
           "round": 4,
           "choice": 1,
-          "items": [
-            "Silence Wave",
-            "Toxic Bullets",
-            "Tankbuster"
-          ],
+          "items": ["Silence Wave", "Toxic Bullets", "Tankbuster"],
           "from": 911.75,
           "to": 929.75,
-          "readable": [
-            912.5,
-            918.75
-          ],
+          "readable": [912.5, 918.75],
           "expect": "take",
           "best": "Toxic Bullets",
           "appear": 911.75
@@ -964,17 +586,10 @@
           "draft": "d039",
           "round": 4,
           "choice": 2,
-          "items": [
-            "Weighted Shots",
-            "Knockdown",
-            "Burst Fire"
-          ],
+          "items": ["Weighted Shots", "Knockdown", "Burst Fire"],
           "from": 930.75,
           "to": 940.75,
-          "readable": [
-            932.5,
-            939.75
-          ],
+          "readable": [932.5, 939.75],
           "expect": "take",
           "best": "Burst Fire",
           "appear": 931
@@ -983,34 +598,20 @@
           "draft": "d040",
           "round": 4,
           "choice": 3,
-          "items": [
-            "Transcendent Cooldown",
-            "Healing Tempo",
-            "Indomitable"
-          ],
+          "items": ["Transcendent Cooldown", "Healing Tempo", "Indomitable"],
           "from": 942.75,
           "to": 947.75,
-          "readable": [
-            944,
-            947.5
-          ],
+          "readable": [944, 947.5],
           "appear": 943
         },
         {
           "draft": "d040",
           "round": 4,
           "choice": 3,
-          "items": [
-            "Juggernaut",
-            "Plated Armor",
-            "Arctic Blast"
-          ],
+          "items": ["Juggernaut", "Plated Armor", "Arctic Blast"],
           "from": 949.25,
           "to": 954.75,
-          "readable": [
-            950.25,
-            953.75
-          ],
+          "readable": [950.25, 953.75],
           "appear": 949.5
         }
       ]
