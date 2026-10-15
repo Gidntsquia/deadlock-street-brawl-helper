@@ -20,7 +20,7 @@ Repo constitution for planner / worker / evaluator agents. Overrides generic sta
 
 ## Commands
 
-- `npm run check` — lint + typecheck + prettier --check + vitest; CI runs this before deploy.
+- `npm run check` — lint + typecheck + prettier --check + vitest; the Release workflow runs it before building.
 - `npm run brawl:see -- --fixtures` — recogniser accuracy on `scripts/fixtures/` (must stay 27/27).
 - `npm run brawl -- --hero 1 --round 2 --set "…"` — engine CLI without the screen reader.
 - `npm run fetch-data` — full brawl refresh (~1400 requests, ~9 min), run by hand before a release; there is no
