@@ -493,6 +493,8 @@ const EMPTY_SPREAD = 12;
 export function cardNameCrop(
   img: RGBImage,
   m: IconMatch,
+  /** Cut dim lettering at a lower brightness (only for a slot that has no name lock yet). */
+  dimOk = false,
 ): { data: Uint8Array; width: number; height: number; line: number } | null {
   const fw = img.origin?.fullWidth ?? img.width,
     fh = img.origin?.fullHeight ?? img.height;
@@ -508,16 +510,29 @@ export function cardNameCrop(
     ow = w + 2 * pad,
     oh = h + 2 * pad;
   const data = new Uint8Array(ow * oh * 4).fill(255);
+  // Lettering the game is still dimming (see `nameLineDim`) is cut at a lower brightness, and only then: a line with
+  // normal lettering gets the same crop as ever.
+  const floor = dimOk && nameLineDim(img, m) && !hasBrightInk(img, x0, x1, y0, y1) ? 105 : 170;
   for (let y = 0; y < h; y++)
     for (let x = 0; x < w; x++) {
       const [r, g, b] = rgb(img, x0 + x, y0 + y);
       const hi = Math.max(r, g, b);
-      if (hi > 170 && hi - Math.min(r, g, b) < 60) {
+      if (hi > floor && hi - Math.min(r, g, b) < 60) {
         const i = ((y + pad) * ow + x + pad) * 4;
         data[i] = data[i + 1] = data[i + 2] = 0;
       }
     }
   return { data, width: ow, height: oh, line: h };
+}
+
+function hasBrightInk(img: RGBImage, x0: number, x1: number, y0: number, y1: number): boolean {
+  let n = 0;
+  for (let y = y0; y < y1; y++)
+    for (let x = x0; x < x1; x++) {
+      const [r, g, b] = rgb(img, x, y);
+      if (Math.max(r, g, b) > 170 && Math.max(r, g, b) - Math.min(r, g, b) < 60 && ++n >= 40) return true;
+    }
+  return false;
 }
 
 /** A name line whose text is there but still dim: the game dims a card's lettering for a moment after it lands, below the

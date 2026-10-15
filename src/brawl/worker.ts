@@ -282,7 +282,7 @@ const applyNames = (
     inked = true;
   // A slot is sure when its name is locked. The fallback shows the rest as `?`.
   const slotSure = [false, false, false];
-  const crops = pinned.map((r) => cardNameCrop(img, r.match));
+  const crops = pinned.map((r, i) => cardNameCrop(img, r.match, !locks[i]));
   const sigs = crops.map((c) => (c ? nameSig(c) : null));
   // A hovered card grows and tilts its name line, and its tooltip panel covers a neighbour's: those lines show what the
   // cursor is on, not the card. A covered slot is not read and keeps whatever lock it has.
