@@ -51,7 +51,6 @@ export const CHANNELS = {
   // Round banner: the probe read a new ROUND number, main pushes it to the control window (OCR warm-up, state machine).
   roundStart: 'round-start',
   // Item stats for a custom ability order the stored data lacks: page asks, main fetches once and caches under userData.
-  orderStats: 'order-stats',
   // The name reader (Windows OCR helper, electron/nameReader.ts): the page asks main to read a prepared text crop, and
   // main pushes the reader's state (starting / ready / failed) whenever it changes.
   readText: 'read-text',

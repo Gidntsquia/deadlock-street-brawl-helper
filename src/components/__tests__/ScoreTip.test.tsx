@@ -12,7 +12,6 @@ const parts: ScoreParts = {
   kit: 0.1,
   tier: 0.5,
   counter: -0.0733,
-  order: 0,
   synergy: 0,
   active: 0,
   upgrade: 0,

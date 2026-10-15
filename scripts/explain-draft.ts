@@ -7,14 +7,7 @@
 // Without BRAWL_OCR the recorded answers are used (a crop never recorded reads as a down reader).
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import {
-  adviseDraft,
-  brawlAbilityOrder,
-  enemiesFrom,
-  orderAbilityIds,
-  type BrawlInput,
-  type Offer,
-} from '../src/brawl';
+import { adviseDraft, enemiesFrom, type BrawlInput, type Offer } from '../src/brawl';
 import type { BrawlAnalytics, BrawlConfig } from '../src/brawl/types';
 import type { WorkerOut } from '../src/brawl/worker';
 import type { Ability, Hero, Item } from '../src/types';
@@ -109,8 +102,7 @@ const enemies = res.meta ? enemiesFrom(res.meta.bar, self) : [];
 const owned = res.inventory ?? inventory ?? [];
 const sets: Offer[][] = [[], [], []];
 sets[choice - 1] = cards;
-const order = orderAbilityIds(brawlAbilityOrder(input), hero, abilities);
-const advice = adviseDraft(input, { round: res.round || round, owned, enemies, order, sets });
+const advice = adviseDraft(input, { round: res.round || round, owned, enemies, sets });
 console.log(
   `\n## engine (${hero.name}, round ${res.round || round}, vs ${enemies.map(heroName).join(', ') || 'none'}, owned ${owned.map(itemName).join(', ') || 'none'})`,
 );

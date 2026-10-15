@@ -6,7 +6,6 @@ import type { Ability, Hero, Item } from '../types';
 import { j, img } from '../data/load';
 import {
   adviseDraft,
-  orderCovered,
   enemiesFrom,
   roundTiers,
   topItemsByTier,
@@ -22,7 +21,6 @@ import {
   abilityStepIndex,
   abilityPanelFor,
   evidenceLine,
-  orderAbilityIds,
   standardCustom,
   type CustomOrder,
   initialTip,
@@ -337,27 +335,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
   }, [hero.id]);
   // tagged with the hero it was fetched for, so switching hero shows the loader again instead of the old hero's numbers
   const baseAnalytics = loaded?.heroId === hero.id ? loaded.analytics : null;
-  // Stats fetched for a saved custom order the stored data lacks (once per order, cached by main under userData).
-  const [fetchedOrders, setFetchedOrders] = useState<
-    Record<
-      string,
-      {
-        heroId: number;
-        order: number[];
-        matches: number;
-        item_stats: { item_id: number; wins: number; matches: number }[];
-      }
-    >
-  >({});
-  const analytics = useMemo(() => {
-    if (!baseAnalytics) return null;
-    const extra = Object.values(fetchedOrders)
-      .filter((o) => o.heroId === hero.id)
-      .map(({ order, matches, item_stats }) => ({ order, matches, item_stats }));
-    return extra.length
-      ? { ...baseAnalytics, item_stats_by_order: [...(baseAnalytics.item_stats_by_order ?? []), ...extra] }
-      : baseAnalytics;
-  }, [baseAnalytics, fetchedOrders, hero.id]);
+  const analytics = baseAnalytics;
   const rerolls = rerollUsed ? 0 : (rerollsLeft ?? config?.item_draft_rerolls_per_round[round - 1] ?? 1);
 
   const input: BrawlInput | null = useMemo(
@@ -376,30 +354,15 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
   const heroId = hero.id;
   const abilityOrder = useMemo(() => (input ? brawlAbilityOrder(input) : null), [input]);
   const customOrder = customOrders[String(hero.id)] ?? null;
-  const activeOrder = useMemo(
-    () => (input && abilityOrder ? orderAbilityIds(abilityOrder, hero, input.abilities, customOrder) : undefined),
-    [input, abilityOrder, hero, customOrder],
-  );
-  const orderAsked = useRef(new Set<string>());
-  useEffect(() => {
-    const api = window.brawlAPI;
-    if (!customOrder || !activeOrder || !analytics || !api?.orderStats || orderCovered(analytics, activeOrder)) return;
-    const key = `${hero.id}:${activeOrder.join(',')}`;
-    if (orderAsked.current.has(key)) return; // one fetch per saved order; offline it stays `Order: no data`
-    orderAsked.current.add(key);
-    void api.orderStats(hero.id, activeOrder).then((o) => {
-      if (o) setFetchedOrders((m) => ({ ...m, [key]: { heroId: hero.id, ...o } }));
-    });
-  }, [customOrder, activeOrder, analytics, hero.id]);
   const advice = useMemo(() => {
     // advise only once all 3 cards are read, or (fallback) the sure ones with the others shown as `?`
     if (!input || cards.length === 0 || cards.length + unsure < 3) return null;
     const sets: Offer[][] = [[], [], []];
     sets[choice - 1] = cards;
-    const a = adviseDraft(input, { round, owned, enemies: enemyIds, order: activeOrder, sets });
+    const a = adviseDraft(input, { round, owned, enemies: enemyIds, sets });
     // no re-roll call on a set with an unread card; otherwise the engine's gain math alone decides
     return unsure ? { ...a, reroll: null } : a;
-  }, [input, cards, unsure, round, owned, choice, enemyIds, activeOrder]);
+  }, [input, cards, unsure, round, owned, choice, enemyIds]);
   /** With an unread card the best sure card is only taken when it beats anything that card could be. */
   const takeOk = useMemo(() => {
     if (!unsure || !input || !advice) return true;
@@ -407,7 +370,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
     sets[choice - 1] = cards;
     const top = advice.sets[choice - 1]?.[0]?.score ?? -Infinity;
     return top > unknownCeiling(input, { round, owned, enemies: enemyIds, sets }, choice - 1);
-  }, [unsure, input, advice, cards, round, owned, choice, enemyIds, activeOrder]);
+  }, [unsure, input, advice, cards, round, owned, choice, enemyIds]);
   const unsureRef = useRef(0);
   unsureRef.current = unsure;
   const takeOkRef = useRef(true);
@@ -520,7 +483,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
             winRate: r.winRate,
             grade: gradeById.get(r.item.id) ?? '-',
             enhancedBonus: r.enhancedBonus,
-            rows: breakdownRows(r.parts, r.score, r.known, r.enhancedBonus, r.orderNoData, r.enhancedNote),
+            rows: breakdownRows(r.parts, r.score, r.known, r.enhancedBonus, r.enhancedNote),
           })),
         }
       : null;

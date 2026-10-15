@@ -4,15 +4,7 @@
 //   Items by name (case-insensitive) or id; a trailing "+" marks an enhanced card. Up to three --set arguments.
 //   npm run brawl -- --hero 1 --pool           top items per tier for the hero (sanity check of the base scores)
 import { readFileSync } from 'node:fs';
-import {
-  adviseDraft,
-  baseScores,
-  brawlAbilityOrder,
-  orderAbilityIds,
-  roundTiers,
-  type BrawlInput,
-  type Offer,
-} from '../src/brawl';
+import { adviseDraft, baseScores, roundTiers, type BrawlInput, type Offer } from '../src/brawl';
 import type { Ability, Hero, Item } from '../src/types';
 import type { BrawlAnalytics, BrawlConfig } from '../src/brawl/types';
 
@@ -85,11 +77,7 @@ const enemies = list(opt('enemies')).map((e) => {
 });
 const sets = opts('set').map((s) => list(s).map(parseOffer));
 if (!sets.length) throw new Error('give at least one --set "A,B,C" (or --pool)');
-const orderOpt = opt('order');
-const order = orderOpt
-  ? orderOpt.split(',').map(Number)
-  : orderAbilityIds(brawlAbilityOrder(input), input.hero, input.abilities);
-const advice = adviseDraft(input, { round, owned, enemies, order, sets });
+const advice = adviseDraft(input, { round, owned, enemies, sets });
 if (asJson) {
   console.log(
     JSON.stringify({

@@ -1,7 +1,7 @@
 // The engine's call on a read set, for the replay tests: the same inputs the page uses (own hero, enemies, owned items).
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { adviseDraft, brawlAbilityOrder, orderAbilityIds, type BrawlInput, type Offer } from '../../src/brawl';
+import { adviseDraft, type BrawlInput, type Offer } from '../../src/brawl';
 import type { BrawlAnalytics, BrawlConfig } from '../../src/brawl/types';
 import type { Ability, Hero, Item } from '../../src/types';
 
@@ -33,7 +33,6 @@ export function engineCall(
   };
   const sets: Offer[][] = [[], [], []];
   sets[choice - 1] = offers;
-  const order = orderAbilityIds(brawlAbilityOrder(input), hero, cache.abilities);
-  const advice = adviseDraft(input, { round, owned, enemies, order, sets });
+  const advice = adviseDraft(input, { round, owned, enemies, sets });
   return { reroll: advice.reroll !== null, best: advice.sets[choice - 1]?.[0]?.item.name ?? '' };
 }

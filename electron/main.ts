@@ -49,7 +49,6 @@ const BLANK_OVERLAY = {
   panel: null,
 };
 import { log } from '../src/log';
-import { fetchOrderStats } from './orderFetch';
 import { startNameReader, type NameReader, type ReaderState } from './nameReader';
 import { createPerf } from '../src/perf';
 import {
@@ -1190,7 +1189,6 @@ function setupIpc() {
     }
   });
   ipcMain.on(CHANNELS.ocrPortGet, (e) => {
-    if (process.env.BRAWL_OCR_RELAY === 'page') return; // win:latency --relay page: keep the old path, to compare
     const { port1, port2 } = new MessageChannelMain();
     port1.on('message', (m) => {
       const q = m.data as { id: number; width: number; height: number; data: Uint8Array; sentWall: number };
@@ -1250,9 +1248,6 @@ function setupIpc() {
       .finishDraft(rec)
       .catch((e) => log('electron-main', 'warn', 'session.write.failed', { message: String(e) }));
   });
-  ipcMain.handle(CHANNELS.orderStats, (_e, heroId: number, order: number[]) =>
-    fetchOrderStats(path.join(app.getPath('userData'), 'order-stats'), heroId, order),
-  );
   ipcMain.handle(CHANNELS.sessionList, () => sessions().list());
   ipcMain.handle(CHANNELS.sessionMark, (_e, matchId: string, n: number, wrong: boolean) =>
     sessions().mark(matchId, n, wrong),

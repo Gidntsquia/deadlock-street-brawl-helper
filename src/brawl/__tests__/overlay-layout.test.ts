@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { drawReads, drawReading, type DrawnRect, type FrameRect, type OverlayTheme } from '../draw';
 import { cardSquares, type CardRead } from '../recognise';
-import { svgCtx } from '../../../scripts/lib/svgCtx';
+import { recordingCtx } from './recordingCtx';
 import { BRAWL_WEIGHTS, baseScores, pairLifts, scoreOffer } from '../engine';
 import { breakdownRows } from '../breakdown';
 import { heroByName, inputFor, itemByName } from './testData';
@@ -44,7 +44,7 @@ describe.each(SIZES)('overlay layout at %ix%i', (cw, ch) => {
   for (const enhanced of [false, true]) {
     for (const reroll of [false, true]) {
       it(`plates stay apart, inside the canvas and clear of the Reading sign (enhanced ${enhanced}, reroll ${reroll})`, () => {
-        const { ctx } = svgCtx(cw, ch);
+        const { ctx } = recordingCtx(cw, ch);
         const drawn: DrawnRect[] = drawReads(
           ctx,
           reads(enhanced),
@@ -64,7 +64,7 @@ describe.each(SIZES)('overlay layout at %ix%i', (cw, ch) => {
         expect(plates).toHaveLength(3);
         for (let i = 0; i < 3; i++) for (let j = i + 1; j < 3; j++) expect(hit(plates[i]!, plates[j]!)).toBe(false);
         if (enhanced) expect(drawn.filter((d) => d.kind !== 'reroll').every((d) => d.chip)).toBe(true);
-        const { ctx: c2 } = svgCtx(cw, ch);
+        const { ctx: c2 } = recordingCtx(cw, ch);
         const sign = drawReading(c2, cardSquares(FRAME.w, FRAME.h)[1]!, sx, sy, THEME);
         for (const p of plates) expect(hit(sign, p)).toBe(false);
         const inside = (r: FrameRect) => r.x0 >= 0 && r.y0 >= 0 && r.x1 <= FRAME.w && r.y1 <= FRAME.h;
@@ -76,7 +76,7 @@ describe.each(SIZES)('overlay layout at %ix%i', (cw, ch) => {
     }
   }
   it('puts the Reading sign above the middle plate by at least 0.35 plate heights', () => {
-    const { ctx } = svgCtx(cw, ch);
+    const { ctx } = recordingCtx(cw, ch);
     const drawn = drawReads(
       ctx,
       reads(false),
@@ -92,7 +92,7 @@ describe.each(SIZES)('overlay layout at %ix%i', (cw, ch) => {
       THEME,
     );
     const plate = drawn[1]!.plate!;
-    const sign = drawReading(svgCtx(cw, ch).ctx, cardSquares(FRAME.w, FRAME.h)[1]!, sx, sy, THEME);
+    const sign = drawReading(recordingCtx(cw, ch).ctx, cardSquares(FRAME.w, FRAME.h)[1]!, sx, sy, THEME);
     const h = (plate.y1 - plate.y0) * sy;
     expect((plate.y0 - sign.y1) * sy).toBeGreaterThanOrEqual(Math.max(6, Math.round(h * 0.35)) - 1);
   });

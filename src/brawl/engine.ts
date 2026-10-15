@@ -27,7 +27,6 @@ export const BRAWL_WEIGHTS = {
   kit: 0.3,
   tier: 1.0,
   counter: 0.5,
-  order: 0.5,
   synergy: 0.5,
   active: 0.1,
   upgrade: 0.15,
@@ -45,14 +44,6 @@ export const BRAWL_WEIGHTS = {
 const WIN_SHRINK_FRAC = 0.05; // K = max(200, 5 % of the tier's most-picked item)
 const MIN_PAIR_MATCHES = 20;
 const MIN_VS_MATCHES = 50;
-/** Item rows under the matched ability order need this many matches; below it the Order term is zero. */
-export const MIN_ORDER_ITEM_MATCHES = 200;
-const ORDER_SHRINK_K = 50;
-/** Shortest shared ability-order prefix that counts as the same order. */
-const MIN_ORDER_PREFIX = 3;
-/** The Order term is off by default: the data gave no useful signal (plans/WORKER_NOTES.md). Set `BRAWL_ORDER_TERM=on`
- *  in the environment (CLI, tests) to turn it on. */
-export const orderTermOn = () => (typeof process !== 'undefined' ? process.env?.BRAWL_ORDER_TERM : undefined) === 'on'; // enemy-filtered rows below this are ignored
 const ENHANCED_STAT_MULT = 1.25; // UNVERIFIED: the API does not publish enhanced numbers; measure from tooltips
 const MAX_ACTIVES = 4; // Brawl keeps the 4-active cap (no per-slot caps); a 5th active gets a penalty, not a veto
 export const ACTIVE_OVERFLOW_PENALTY = 0.5;
@@ -73,10 +64,6 @@ export interface Base {
   kit: number;
   base: number;
   counter: number;
-  /** Win-rate shift from the player's ability order, in the same units as `winLift`. */
-  order: number;
-  /** The Order row has no data: the active order matches no stored order. */
-  orderNoData?: boolean;
   /** Enhancement carry: tiers gained times sqrt(popularity) of the best item this one upgrades into, 0 if none. */
   carry: number;
   /** The upgrade `carry` was measured on. */
@@ -114,31 +101,8 @@ const shrink = (wins: number, matches: number, K: number, mean: number) => (wins
  * 2x. The per-tier bonus (BRAWL_WEIGHTS.tier) is what compares a rare (tier-bumped) card with the normal cards of
  * its set: the within-tier terms only say how good a card is among its own tier.
  */
-/** The stored order sharing the longest prefix with `active` (at least MIN_ORDER_PREFIX long), or null. */
-export function matchStoredOrder(analytics: BrawlInput['analytics'], active: number[]) {
-  let best: NonNullable<BrawlInput['analytics']['item_stats_by_order']>[number] | null = null;
-  let bestLen = 0;
-  for (const o of analytics.item_stats_by_order ?? []) {
-    let n = 0;
-    while (n < o.order.length && n < active.length && o.order[n] === active[n]) n++;
-    if (n > bestLen) ((best = o), (bestLen = n));
-  }
-  return bestLen >= MIN_ORDER_PREFIX ? best : null;
-}
-
-/** Whether a stored order is the active one or one it extends (so no fetch is needed). */
-export const orderCovered = (analytics: BrawlInput['analytics'], active: number[]) =>
-  (analytics.item_stats_by_order ?? []).some((o) => {
-    const n = Math.min(o.order.length, active.length);
-    return n > 0 && o.order.slice(0, n).every((x, i) => x === active[i]);
-  });
-
-export function baseScores(input: BrawlInput, enemies: number[] = [], order?: number[]): Map<number, Base> {
+export function baseScores(input: BrawlInput, enemies: number[] = []): Map<number, Base> {
   const { hero, abilities, items, analytics } = input;
-  const stored = order && order.length ? matchStoredOrder(analytics, order) : null;
-  const orderRows = stored && orderTermOn() ? new Map(stored.item_stats.map((r) => [r.item_id, r])) : null;
-  // shown whether or not the term is on: the active order matches no stored order and nothing was fetched for it
-  const orderNoData = !!(order && order.length && !stored?.item_stats.length);
   const catalog = new Map(items.filter(draftable).map((i) => [i.id, i]));
   const kit = kitProfile(hero, abilities);
   const stats = new Map(
@@ -204,13 +168,6 @@ export function baseScores(input: BrawlInput, enemies: number[] = [], order?: nu
         n++;
       }
     counter = n ? counter / n : 0;
-    // order: the item's win rate under the player's ability order against its all-orders rate, shrunk toward it
-    let orderShift = 0;
-    const orow = orderRows?.get(it.id);
-    if (stat && orow && orow.matches >= MIN_ORDER_ITEM_MATCHES) {
-      const all = stat.wins / stat.matches;
-      orderShift = ((orow.wins + ORDER_SHRINK_K * all) / (orow.matches + ORDER_SHRINK_K) - all) * 10 * pop;
-    }
     const k = kitNorm(it);
     const base =
       BRAWL_WEIGHTS.popularity * Math.sqrt(pop) +
@@ -227,8 +184,6 @@ export function baseScores(input: BrawlInput, enemies: number[] = [], order?: nu
       kit: k,
       base,
       counter,
-      order: orderShift,
-      orderNoData,
       carry: 0,
       enhFactor: ef.factor,
       enhNote: ef.note,
@@ -326,7 +281,6 @@ export function scoreOffer(
     kit: b ? BRAWL_WEIGHTS.kit * b.kit * (enhanced ? 1 + (ENHANCED_STAT_MULT - 1) * b.enhFactor : 1) : 0,
     tier: BRAWL_WEIGHTS.tier * (item.item_tier - 1),
     counter: b ? BRAWL_WEIGHTS.counter * b.counter : 0,
-    order: b ? BRAWL_WEIGHTS.order * b.order : 0,
     synergy: BRAWL_WEIGHTS.synergy * synergy,
     active: (item.is_active_item ? BRAWL_WEIGHTS.active : 0) + activePenalty,
     upgrade: upgradesOwned ? BRAWL_WEIGHTS.upgrade : 0,
@@ -371,7 +325,6 @@ export function scoreOffer(
     usage: b?.pop ?? 0,
     winRate: b?.stat ? b.stat.wins / b.stat.matches : null,
     known: !!b?.stat,
-    orderNoData: !!b?.orderNoData,
   };
 }
 
@@ -537,7 +490,7 @@ function expectedBestOfSet(
 /** The highest score any single card could have in set `setIndex` of this round (normal or rare tier, enhanced or not).
  *  When a card could not be read, a sure card is only worth taking over it if it beats this. */
 export function unknownCeiling(input: BrawlInput, state: DraftState, setIndex: number): number {
-  const bases = baseScores(input, state.enemies, state.order);
+  const bases = baseScores(input, state.enemies);
   const pair = pairLifts(input);
   const lay = roundTiers(input, state.round)[setIndex];
   const tiers = new Set<number>(lay ? [lay.normal, lay.rare] : []);
@@ -552,7 +505,7 @@ export function unknownCeiling(input: BrawlInput, state: DraftState, setIndex: n
 
 /** Ranks every card, chooses the jointly best pick per set, and says whether a reroll is worth it. */
 export function adviseDraft(input: BrawlInput, state: DraftState): DraftAdvice {
-  const bases = baseScores(input, state.enemies, state.order);
+  const bases = baseScores(input, state.enemies);
   const pair = pairLifts(input);
   const layout = roundTiers(input, state.round);
   const sets = state.sets.map((set, i) =>
@@ -622,9 +575,7 @@ export function adviseDraft(input: BrawlInput, state: DraftState): DraftAdvice {
       while (rares.length < CARDS_PER_SET) rares.push(false);
       const e = expectedBestOfSet(input, bases, state.round, i, flags, actives, rares);
       if (!e) return null;
-      const currentBest = Math.max(
-        ...set.map((r) => r.score - r.parts.synergy - r.parts.counter - r.parts.upgrade - r.parts.order),
-      );
+      const currentBest = Math.max(...set.map((r) => r.score - r.parts.synergy - r.parts.counter - r.parts.upgrade));
       return {
         currentBest,
         expected: e.expected,

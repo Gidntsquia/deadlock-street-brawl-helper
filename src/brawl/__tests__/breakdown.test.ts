@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { breakdownRows, NO_DATA_LABEL, ORDER_NO_DATA_LABEL } from '../breakdown';
+import { breakdownRows, NO_DATA_LABEL } from '../breakdown';
 import type { ScoreParts } from '../types';
 
 const zero: ScoreParts = {
@@ -8,7 +8,6 @@ const zero: ScoreParts = {
   kit: 0,
   tier: 0,
   counter: 0,
-  order: 0,
   synergy: 0,
   active: 0,
   upgrade: 0,
@@ -28,12 +27,7 @@ describe('breakdownRows', () => {
     expect(breakdownRows(zero, 1, false)).toEqual([{ label: NO_DATA_LABEL, cents: 0 }]);
   });
   it('uses only fixed labels', () => {
-    const rows = breakdownRows({ ...zero, pop: 1, counter: -1, order: 0, synergy: 0.5 }, 0.5, true);
+    const rows = breakdownRows({ ...zero, pop: 1, counter: -1, synergy: 0.5 }, 0.5, true);
     expect(rows.map((r) => r.label)).toEqual(['Pick rate', 'Vs enemy team', 'With your items']);
-  });
-  it('adds an Order: no data row, with no number, when the order has no stored match', () => {
-    const rows = breakdownRows({ ...zero, pop: 1 }, 1, true, undefined, true);
-    expect(rows[0]).toEqual({ label: ORDER_NO_DATA_LABEL, cents: 0 });
-    expect(rows.reduce((a, r) => a + r.cents, 0)).toBe(100);
   });
 });

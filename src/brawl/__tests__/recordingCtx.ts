@@ -1,6 +1,6 @@
-// A small CanvasRenderingContext2D stand-in that records what `draw.ts` paints as SVG, so the overlay can be rendered to
-// a PNG (via sharp) without a browser. Text widths are approximated, which is fine for pictures and layout checks.
-export function svgCtx(width: number, height: number) {
+// A small CanvasRenderingContext2D stand-in that records what `draw.ts` paints as SVG, for the overlay layout test.
+// Text widths are approximated, which is fine for layout checks.
+export function recordingCtx(width: number, height: number) {
   const out: string[] = [];
   let path = '';
   const st = {

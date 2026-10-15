@@ -2,7 +2,7 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { adviseDraft, brawlAbilityOrder, orderAbilityIds, type BrawlInput, type Offer } from '../../src/brawl';
+import { adviseDraft, type BrawlInput, type Offer } from '../../src/brawl';
 import type { BrawlAnalytics, BrawlConfig } from '../../src/brawl/types';
 import type { Ability, Hero, Item } from '../../src/types';
 import type { FixtureExpect } from '../session-fixture';
@@ -40,12 +40,10 @@ describe('session fixtures', () => {
       };
       const sets: Offer[][] = [[], [], []];
       sets[got.choice - 1] = got.stats.items.map((itemId, i) => ({ itemId, enhanced: got.enhanced[i] ?? false }));
-      const order = orderAbilityIds(brawlAbilityOrder(input), hero, abilities);
       const advice = adviseDraft(input, {
         round: got.round,
         owned: got.inventory ?? [],
         enemies: got.enemies,
-        order,
         sets,
       });
       if (want.best !== undefined) expect(advice.sets[got.choice - 1]?.[0]?.item.name).toBe(want.best);
