@@ -68,7 +68,7 @@ works without it), test mode, round/choice/re-rolls, enemies, owned, advice list
 (one row per draft with its crops, items, shown plates, advice ms, and `Mark wrong`). The main view has only the status
 sentence, a one-sentence problem (`src/brawl/problems.ts`, also drawn on the overlay for 5 s), `Hero not read. Using <name>` and
 the collapsed per-hero ability order editor (`AbilityOrderEditor.tsx`): a clickable copy of the overlay's `AbilityPanel` (same
-`.ap` classes, 4 abilities in bar order, pills 5/2/1 top to bottom). Round buttons 1-5 above it (`Round N: X points, Y left`); a
+`.ap` classes, 4 abilities in bar order labelled 1-4 by `ABILITY_KEYS`, never the player's keybinds, pills 5/2/1 top to bottom). Round buttons 1-5 above it (`Round N: X points, Y left`); a
 click on an unbought pill buys it in the selected round (tag `R<n>`), on a bought one sells it and the pills above it; a pill
 needs the one below bought in the same or an earlier round, and overspending is refused with the `customPartialProblem` text
 (same wording as `customOrderProblem`). Buttons are labelled `<ability> <cost> point upgrade, round N|not bought`. Storage is
@@ -90,7 +90,10 @@ While the game is foreground and capture is off, the probe tick also grabs the "
 the pixels over `loadingName` (every 2.5 s, at most `LOADING_SEND_MAX` 12 times per screen, so a 30 s loading screen) to `BrawlView`,
 which reads them with the name reader (`readHeroName`; `prepareHero` turns the cream capitals into dark-on-white letters 60 px tall:
 the raw colour crop read as nothing at 1920x1080), matches the text to a hero name (`matchHeroName`, score >= 0.85: one wrong
-letter in "SHIP" once read as Shiv) and logs `hero.loading` (text, hero, score).
+letter in "SHIP" once read as Shiv) and logs `hero.loading` (text, hero, score). The first sure read per loading screen (`LOADING_WARM_GAP_MS` 45 s)
+warms the draft reader like a round start: the page logs `draft.warm` (`from: loading`) and posts `roundStart` round 1 to the
+worker (new match, fresh line fingerprints); main also resets `probedRound` on a loading hit so the new match's round 1 banner
+counts. e2e check `loading-warms-draft` (`_loading` then `choice1`: `hero.loading`, `draft.warm`, then `card.name`).
 
 Precedence per match (`src/brawl/heroChoice.ts`, `HeroTracker`/`chooseHero`): a hand-picked hero (`pinned`) > the loading read >
 the scoreboard portrait. A loading read sets the hero for the whole match; no portrait read changes it. A match starts at a

@@ -89,7 +89,7 @@ describe('abilityPanelFor', () => {
       expect(s.name).toBe(input.abilities.find((a) => a.class_name === hero.abilities[i])!.name);
       expect(s.icon).toMatch(/^img\//);
     });
-    expect(p.slots.map((s) => s.key)).toEqual(['Q', 'E', 'R', 'F']);
+    expect(p.slots.map((s) => s.key)).toEqual(['1', '2', '3', '4']);
   });
 
   it('spends 6/6/5/5/10 points a round without overspending, and all 32 by round 5', () => {

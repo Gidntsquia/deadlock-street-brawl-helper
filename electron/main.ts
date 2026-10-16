@@ -417,6 +417,7 @@ function sendLoadingName(found: Rect, grab: GrabRegion) {
     return;
   }
   clearBlack('loading'); // the loading screen's probe region is black, but the screen is readable: not fullscreen
+  probedRound = 0; // a new match: its round 1 banner is new even if the last match ended in round 1
   if (loadingSent >= LOADING_SEND_MAX || Date.now() - loadingSentAt < LOADING_SEND_MS) return;
   loadingSent++;
   loadingSentAt = Date.now();

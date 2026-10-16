@@ -48,8 +48,11 @@ let readTextAnswer = 'INFERNUS';
 };
 
 const listeners: ((e: MessageEvent) => void)[] = [];
+const posted: { type: string; round?: number }[] = [];
 (globalThis as unknown as { Worker: unknown }).Worker = class {
-  postMessage() {}
+  postMessage(m: { type: string; round?: number }) {
+    posted.push(m);
+  }
   terminate() {}
   addEventListener(_t: string, cb: (e: MessageEvent) => void) {
     listeners.push(cb);
@@ -174,6 +177,26 @@ describe('BrawlView hero guess', () => {
     expect(status()).not.toMatch(/guessed/);
     expect(onGuessed).not.toHaveBeenCalledWith(true);
     expect(lastNote()).toBeNull();
+  });
+
+  it('a loading read warms the draft reader once per loading screen, as a round 1 start', async () => {
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, 'info').mockImplementation((l: unknown) => void logs.push(String(l)));
+    await start();
+    await waitFor(() => expect(onLoadingCb).toBeTypeOf('function'));
+    posted.length = 0;
+    act(() => onLoadingCb!(loadingCrop()));
+    await waitFor(() => expect(posted.filter((m) => m.type === 'roundStart')).toHaveLength(1));
+    expect(posted.find((m) => m.type === 'roundStart')!.round).toBe(1);
+    const iLoad = logs.findIndex((l) => l.includes('"hero.loading"'));
+    const iWarm = logs.findIndex((l) => l.includes('"draft.warm"'));
+    expect(iLoad).toBeGreaterThanOrEqual(0);
+    expect(iWarm).toBeGreaterThan(iLoad);
+    await new Promise((r) => setTimeout(r, 20));
+    act(() => onLoadingCb!(loadingCrop())); // the same screen sent again: no second warm-up
+    await new Promise((r) => setTimeout(r, 50));
+    expect(posted.filter((m) => m.type === 'roundStart')).toHaveLength(1);
+    spy.mockRestore();
   });
 
   it('a hand-picked hero clears the guess', async () => {

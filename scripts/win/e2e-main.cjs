@@ -203,6 +203,7 @@ async function main() {
     if (/"msg":"card\.name","slot":\d,"itemId":\d+\}/.test(message)) trackEvents.push('card.name');
     if (/"msg":"hero\.loading","text":"[^"]+","hero":\d+,"score":[\d.]+/.test(message))
       trackEvents.push('hero.loading');
+    if (/"msg":"draft\.warm","from":"loading"/.test(message)) trackEvents.push('draft.warm');
   });
   overlay?.webContents.on('console-message', (_e, _level, message) => dbg('overlay console: ' + message));
   let preloadError = false;
@@ -828,6 +829,7 @@ async function main() {
     }
 
     // --- loading screen: the hero name box is sent more than 3 times on one screen and read with text and score ---
+    const loadingEv0 = trackEvents.length;
     {
       const sent0 = mainEvents.filter((e) => e === 'loading.name.sent').length;
       const reads0 = trackEvents.filter((e) => e === 'hero.loading').length;
@@ -847,6 +849,22 @@ async function main() {
         'loading-name-resent',
         !!many && !!read,
         `sent=${mainEvents.filter((e) => e === 'loading.name.sent').length - sent0} heroLoadingReads=${trackEvents.filter((e) => e === 'hero.loading').length - reads0}`,
+      );
+    }
+    // --- the loading read warms the draft reader: draft.warm after hero.loading and before the next draft's card.name ---
+    {
+      const warmed = await waitFor(() => trackEvents.indexOf('draft.warm', loadingEv0) >= 0, 2_000 * SLOW, 50);
+      const t0 = trackEvents.length;
+      await setFrame('choice1');
+      const named = await waitFor(() => trackEvents.indexOf('card.name', t0) >= 0, 4_000 * SLOW, 50);
+      const seq = trackEvents.slice(loadingEv0);
+      const iLoad = seq.indexOf('hero.loading');
+      const iWarm = seq.indexOf('draft.warm');
+      const iName = seq.indexOf('card.name', Math.max(iWarm, 0));
+      check(
+        'loading-warms-draft',
+        !!warmed && !!named && iLoad >= 0 && iWarm > iLoad && iName > iWarm,
+        `events=${seq.filter((e) => e !== 'two-up').join(',')}`,
       );
     }
     // --- black capture: a short black screen gives no hint, BLACK_MS of black does, the next draft clears it ---

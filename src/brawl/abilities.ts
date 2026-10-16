@@ -116,8 +116,8 @@ export const evidenceLine = (support: BrawlAbilityOrder['support']): string =>
     ? `${support.matches} matches, ${Math.round(support.winRate * 100)}% win rate`
     : 'No reliable order';
 
-/** Key caps under the four abilities, left to right (the third is a guess: the reference shot hides it). */
-export const ABILITY_KEYS = ['Q', 'E', 'R', 'F'] as const;
+/** Labels under the four abilities, left to right: their bar position, not the player's own keybinds. */
+export const ABILITY_KEYS = ['1', '2', '3', '4'] as const;
 
 /** Which round (1-5) buys each pill, keyed `<class_name>:<tier 1-3>`. Follows the standard order strictly; a pill
  *  that does not fit waits and the unspent points carry to the next round. If the order ends early, the rest are

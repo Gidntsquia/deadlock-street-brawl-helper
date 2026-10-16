@@ -26,7 +26,7 @@ vi.mock('../../data/load', () => ({
 const ABILITIES = ['Catalyst', 'Flame Dash', 'Afterburn', 'Concussive Combustion'].map((name, i) => ({
   name,
   icon: '',
-  key: 'QERF'[i]!,
+  key: String(i + 1),
 }));
 const EMPTY: CustomOrder = Array(12).fill(NOT_BOUGHT);
 const STANDARD: CustomOrder = [1, 2, 3, 1, 2, 4, 1, 3, 5, 2, 4, 5];

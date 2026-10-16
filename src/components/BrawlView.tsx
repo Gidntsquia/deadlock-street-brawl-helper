@@ -78,6 +78,8 @@ const NO_DRAFT_STATUS = 'No draft found';
 const DETECT_MISSES = 3; // non-draft results in a row before Detect now says "No draft found" (the first frame is often blank)
 const DETECT_TIMEOUT_MS = 4000; // a try that gets no frame at all in this long counts as failed
 const CAPTURE_IDLE_MS = 4000; // no draft screen or tip for this long: stop capturing (real game only)
+/** One loading screen sends its name box for up to 30 s: a read this long after the last warm-up is a new screen. */
+const LOADING_WARM_GAP_MS = 45_000;
 const IDLE_FPS = 4;
 const SLOW_DRAFT_FPS = 8; // when the worker reports slow reads
 const PREVIEW_MS = 200; // the debug preview redraws at most 5 times a second
@@ -155,6 +157,7 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, onGuessed, p
   const heroNotReadRef = useRef(false);
   // Which hero the advice uses, per match (heroChoice.ts): hand pick > loading-screen name > scoreboard portrait.
   const heroTrackerRef = useRef(new HeroTracker());
+  const loadingWarmAtRef = useRef(-Infinity);
   /** The hero comes from the portraits only this match: status line, hero tag and a 5 s overlay note say so. */
   const [heroGuessed, setHeroGuessed] = useState(false);
   const heroGuessedRef = useRef(false);
@@ -843,6 +846,14 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, onGuessed, p
           });
           if (m) {
             heroTrackerRef.current.onLoading(m.itemId, Date.now());
+            // The name plate is followed at once by round 1's draft: warm the draft reader as a round start does
+            // (new match, round 1, fresh line fingerprints), once per loading screen.
+            const now = Date.now();
+            if (now - loadingWarmAtRef.current > LOADING_WARM_GAP_MS) {
+              loadingWarmAtRef.current = now;
+              log('brawl-view', 'info', 'draft.warm', { from: 'loading', hero: m.itemId, round: 1 });
+              workerRef.current?.postMessage({ type: 'roundStart', round: 1 } satisfies WorkerIn);
+            }
             setGuessed(false);
             if (!pinnedRef.current && m.itemId !== loopCtxRef.current.heroId)
               loopCtxRef.current.onHero(m.itemId, 'detected');
