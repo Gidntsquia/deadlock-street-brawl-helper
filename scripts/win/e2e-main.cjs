@@ -626,6 +626,53 @@ async function main() {
       // next real state replaces the forced one (advice re-sent on change only): switch frame below re-syncs
     }
 
+    // --- the ability order editor drives the panel: build an order by clicking its pills (Start from empty, then
+    // round button + pill for each of the 12), and the panel shown after this draft must highlight that order's pills ---
+    const nowOf = `(sel) => [...document.querySelectorAll(sel + ' .ap-col')].flatMap((c) =>
+        [...c.querySelectorAll('.ap-pill[data-state="now"]')].map(
+          (p) => c.dataset.ability + '|' + ({ 5: 'tier3', 2: 'tier2', 1: 'tier1' })[p.dataset.cost],
+        )).sort()`;
+    const standardNow = await js(control, `(${nowOf})('.ap-control')`);
+    const editor = await js(
+      control,
+      `(async () => {
+        const plan = [1, 1, 3, 1, 2, 4, 1, 2, 5, 1, 2, 5]; // round per pill, bar order, tier 1/2/3
+        const btn = (t) => [...document.querySelectorAll('.brawl-my-order button')].find((b) => b.textContent === t);
+        // one click per task, like a person: React renders the new order before the next click reads it
+        const tick = () => new Promise((r) => setTimeout(r, 0));
+        btn('Start from empty')?.click();
+        await tick();
+        for (const r of [1, 2, 3, 4, 5])
+          for (let k = 0; k < 12; k++) {
+            if (plan[k] !== r) continue;
+            btn('Round ' + r).click();
+            await tick();
+            const col = document.querySelectorAll('.ap-editor .ap-col')[Math.floor(k / 3)];
+            col.querySelector('.ap-pill[data-cost="' + [1, 2, 5][k % 3] + '"]').click();
+            await tick();
+          }
+        return {
+          summary: document.querySelector('.brawl-my-order summary')?.textContent ?? '',
+          round: Number(document.querySelector('.ap-control')?.dataset.round ?? 0),
+          plan,
+        };
+      })()`,
+    );
+    await sleep(100);
+    const customNow = await js(control, `(${nowOf})('.ap-control')`);
+    const planNow = await js(
+      control,
+      `(() => {
+        const cols = [...document.querySelectorAll('.ap-editor .ap-col')].map((c) => c.dataset.ability);
+        return ${JSON.stringify(editor.plan)}.flatMap((at, k) => at === ${editor.round} ? [cols[Math.floor(k / 3)] + '|tier' + (k % 3 + 1)] : []).sort();
+      })()`,
+    );
+    check(
+      'editor-drives-panel',
+      / yours$/.test(editor.summary) && customNow.length > 0 && JSON.stringify(customNow) === JSON.stringify(planNow),
+      `summary=${JSON.stringify(editor.summary)} round=${editor.round} panel=${JSON.stringify(customNow)} order=${JSON.stringify(planNow)} standard=${JSON.stringify(standardNow)}`,
+    );
+
     // --- leave the draft: gameplay frame -> ability panel with this round's points highlighted, then gone ---
     const expectedNow = await js(
       control,
@@ -662,6 +709,22 @@ async function main() {
       JSON.stringify(tipSeen?.drawn.map((r) => r.kind)),
     );
     check('ability-panel-overlay-visible', overlay.isVisible(), `visible=${overlay.isVisible()}`);
+    // pictures for the by-eye check that the editor has the panel's layout (logs/e2e-editor.png, logs/e2e-panel.png)
+    try {
+      await js(
+        control,
+        `(() => { const d = document.querySelector('details.brawl-my-order'); d.open = true; d.scrollIntoView(); })()`,
+      );
+      // let the opened editor paint before the grab (an immediate capturePage still showed it closed)
+      await js(control, `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))`);
+      await sleep(100);
+      const [ed, pn] = await Promise.all([control.webContents.capturePage(), overlay.webContents.capturePage()]);
+      fs.writeFileSync(path.join(ROOT, 'logs', 'e2e-editor.png'), ed.toPNG());
+      fs.writeFileSync(path.join(ROOT, 'logs', 'e2e-panel.png'), pn.toPNG());
+      await js(control, `document.querySelector('details.brawl-my-order').open = false`);
+    } catch (e) {
+      dbg(`editor picture failed: ${e.message}`);
+    }
     let goneAt = 0;
     const gone = await waitFor(
       async () => {
@@ -679,6 +742,10 @@ async function main() {
     );
     await sleep(400);
     const after = await readOverlay();
+    await js(
+      control,
+      `[...document.querySelectorAll('.brawl-my-order button')].find((b) => b.textContent === 'Reset to default order')?.click()`,
+    );
     check(
       'blank-after-panel',
       after.drawn.length === 0 && !after.panel && !after.ap && !overlay.isVisible(),

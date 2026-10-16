@@ -22,6 +22,7 @@ import {
   abilityPanelFor,
   evidenceLine,
   standardCustom,
+  ABILITY_KEYS,
   type CustomOrder,
   initialTip,
   stepTip,
@@ -1606,7 +1607,11 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, onGuessed, p
       {abilityOrder && (
         <AbilityOrderEditor
           heroName={hero.name}
-          names={hero.abilities.slice(0, 4).map((cls) => abilities.find((a) => a.class_name === cls)?.name ?? cls)}
+          abilities={hero.abilities.slice(0, 4).map((cls, i) => {
+            const ab = abilities.find((a) => a.class_name === cls);
+            return { name: ab?.name ?? cls, icon: ab?.image_webp ?? '', key: ABILITY_KEYS[i]! };
+          })}
+          round={round}
           standard={standardCustom(abilityOrder, hero)}
           defaultEvidence={evidenceLine(abilityOrder.support)}
           value={customOrder}

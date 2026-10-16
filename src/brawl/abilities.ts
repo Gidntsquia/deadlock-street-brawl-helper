@@ -117,7 +117,7 @@ export const evidenceLine = (support: BrawlAbilityOrder['support']): string =>
     : 'No reliable order';
 
 /** Key caps under the four abilities, left to right (the third is a guess: the reference shot hides it). */
-const ABILITY_KEYS = ['Q', 'E', 'R', 'F'] as const;
+export const ABILITY_KEYS = ['Q', 'E', 'R', 'F'] as const;
 
 /** Which round (1-5) buys each pill, keyed `<class_name>:<tier 1-3>`. Follows the standard order strictly; a pill
  *  that does not fit waits and the unspent points carry to the next round. If the order ends early, the rest are
@@ -149,8 +149,14 @@ function pillRounds(order: BrawlAbilityOrder, hero: Hero): Map<string, number> {
 }
 
 /** A player's own order for one hero: the round (1-5) that buys each pill, 12 numbers in bar order, tier 1/2/3 per
- *  ability (index `ability * 3 + tier - 1`). */
+ *  ability (index `ability * 3 + tier - 1`). `NOT_BOUGHT` (0) marks a pill the editor has not placed yet; an order with
+ *  one is not valid (the panel then uses the standard order). Orders saved before 0 existed load unchanged. */
 export type CustomOrder = number[];
+
+export const NOT_BOUGHT = 0;
+
+/** Cost of the pill at `index` of a `CustomOrder`. */
+export const pillCost = (index: number): number => PILL_COST[index % 3]!;
 
 /** The standard order as a `CustomOrder`, the starting point of the editor. */
 export function standardCustom(order: BrawlAbilityOrder, hero: Hero): CustomOrder {
@@ -158,29 +164,41 @@ export function standardCustom(order: BrawlAbilityOrder, hero: Hero): CustomOrde
   return hero.abilities.slice(0, 4).flatMap((cls) => [1, 2, 3].map((t) => rounds.get(`${cls}:${t}`) ?? 5));
 }
 
-/** Why a custom order cannot be followed, or null when it can: a tier bought before the one under it, or a round
- *  that spends more points than it and the earlier rounds hand out. */
-export function customOrderProblem(custom: CustomOrder): string | null {
-  if (custom.length !== 12 || custom.some((r) => !Number.isInteger(r) || r < 1 || r > 5))
+/** Why the pills placed so far cannot be followed, or null: a tier bought (or bought earlier) than the one under it,
+ *  or a round that spends more points than it and the earlier rounds hand out. Unplaced pills are ignored. */
+export function customPartialProblem(custom: CustomOrder): string | null {
+  if (custom.length !== 12 || custom.some((r) => !Number.isInteger(r) || r < NOT_BOUGHT || r > 5))
     return 'Pick a round for every point.';
   for (let a = 0; a < 4; a++) {
     const [t1, t2, t3] = custom.slice(a * 3, a * 3 + 3) as [number, number, number];
-    if (t2 < t1 || t3 < t2)
-      return `Ability ${a + 1}: a ${t3 < t2 ? 5 : 2} point upgrade comes before the one under it.`;
+    const early = (lo: number, hi: number) => hi !== NOT_BOUGHT && (lo === NOT_BOUGHT || hi < lo);
+    if (early(t1, t2) || early(t2, t3))
+      return `Ability ${a + 1}: a ${early(t2, t3) ? 5 : 2} point upgrade comes before the one under it.`;
   }
   let cap = 0;
   let spent = 0;
   for (let r = 1; r <= 5; r++) {
     cap += AP_PER_ROUND[r - 1]!;
-    spent += custom.reduce((n, at, k) => n + (at === r ? PILL_COST[k % 3]! : 0), 0);
+    spent += custom.reduce((n, at, k) => n + (at === r ? pillCost(k) : 0), 0);
     if (spent > cap) return `Round ${r}: ${spent} points spent by now, only ${cap} handed out.`;
   }
   return null;
 }
 
+/** Why a custom order cannot be followed, or null when it can: a pill with no round, a tier bought before the one
+ *  under it, or a round that spends more points than it and the earlier rounds hand out. */
+export function customOrderProblem(custom: CustomOrder): string | null {
+  return customPartialProblem(custom) ?? (custom.includes(NOT_BOUGHT) ? 'Pick a round for every point.' : null);
+}
+
+/** Points left to spend by the end of `round` (they carry over): handed out in rounds 1..round minus spent in them. */
+export const customPointsLeft = (custom: CustomOrder, round: number): number =>
+  AP_PER_ROUND.slice(0, round).reduce((n, p) => n + p, 0) -
+  custom.reduce((n, at, k) => n + (at !== NOT_BOUGHT && at <= round ? pillCost(k) : 0), 0);
+
 /** Points the custom order spends in each round 1-5. */
 export const customRoundPoints = (custom: CustomOrder): number[] =>
-  [1, 2, 3, 4, 5].map((r) => custom.reduce((n, at, k) => n + (at === r ? PILL_COST[k % 3]! : 0), 0));
+  [1, 2, 3, 4, 5].map((r) => custom.reduce((n, at, k) => n + (at === r ? pillCost(k) : 0), 0));
 
 /** The standard order's points as the panel shows them for `round`: pills bought with this round's points are
  *  `now`, those bought earlier `done`, the rest `later`. A valid `custom` order replaces the standard one. */

@@ -1701,10 +1701,53 @@ body:not(.overlay-window) #root {
 .brawl-my-order summary {
   cursor: pointer;
 }
-.brawl-my-order-table td,
-.brawl-my-order-table th {
-  padding: 2px 6px;
-  text-align: left;
+/* Ability order editor (AbilityOrderEditor.tsx): the ability panel (.ap) with clickable pills. */
+.ape-rounds {
+  display: flex;
+  gap: 4px;
+  margin: 8px 0 6px;
+}
+.ape-round.active {
+  border-color: var(--teal);
+  color: var(--teal);
+}
+.ap.ap-editor {
+  --u: 0.8px;
+  pointer-events: auto;
+  margin: 0 0 8px;
+}
+.ap-editor .ap-pill {
+  border: calc(2 * var(--u)) solid transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+.ap-editor .ap-later {
+  color: rgb(120, 112, 100);
+}
+.ap-editor .ap-now {
+  color: rgb(20, 14, 24);
+}
+.ap-editor .ap-done {
+  color: rgb(190, 150, 205);
+}
+/* bought in a later round than the one selected */
+.ap-editor .ap-booked {
+  background: rgb(35, 35, 30);
+  border-color: var(--ap-lilac);
+}
+.ap-editor .ap-pill:hover {
+  filter: brightness(1.25);
+}
+.ap-editor .ap-pill:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 1px;
+}
+.ape-at {
+  margin-left: calc(6 * var(--u));
+  font-size: 0.75em;
+  opacity: 0.85;
 }
 
 /* Test mode video controls (TestVideoControls.tsx) */
