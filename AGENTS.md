@@ -67,8 +67,16 @@ Ctrl+Shift+D (or the tray entry, channel `debugToggle`) toggles the Debug panel:
 works without it), test mode, round/choice/re-rolls, enemies, owned, advice list, ability order, and the **session report**
 (one row per draft with its crops, items, shown plates, advice ms, and `Mark wrong`). The main view has only the status
 sentence, a one-sentence problem (`src/brawl/problems.ts`, also drawn on the overlay for 5 s), `Hero not read. Using <name>` and
-the collapsed per-hero ability order editor (`AbilityOrderEditor.tsx`; `brawl.customOrders`, 12 rounds per hero, one per pill;
-a valid one replaces the standard order in the ability panel, `abilityPanelFor`'s `custom`, evidence line `Your order`).
+the collapsed per-hero ability order editor (`AbilityOrderEditor.tsx`): a clickable copy of the overlay's `AbilityPanel` (same
+`.ap` classes, 4 abilities in bar order, pills 5/2/1 top to bottom). Round buttons 1-5 above it (`Round N: X points, Y left`); a
+click on an unbought pill buys it in the selected round (tag `R<n>`), on a bought one sells it and the pills above it; a pill
+needs the one below bought in the same or an earlier round, and overspending is refused with the `customPartialProblem` text
+(same wording as `customOrderProblem`). Buttons are labelled `<ability> <cost> point upgrade, round N|not bought`. Storage is
+unchanged: `brawl.customOrders`, 12 rounds per hero, `0` (`NOT_BOUGHT`) for a pill not bought yet; only a complete valid order
+replaces the standard order in the ability panel (`abilityPanelFor`'s `custom`, evidence line `Your order`). `Reset to default
+order` and `Start from empty` sit under it. Tests: `src/components/__tests__/AbilityOrderEditor.test.tsx`; e2e check
+`editor-drives-panel` builds an order by clicking (one click per task: React must render between clicks) and `ability-panel-appears`
+then compares the overlay panel to it; the run saves `logs/e2e-editor.png` and `logs/e2e-panel.png` in the Windows copy for a by-eye look.
 With debug on, `electron/sessionStore.ts` records the last 3 matches under `userData/sessions/m-<id>/dNNN/` (crops only, 300 MB
 cap, oldest deleted first; never commit them). `npm run brawl:replay -- <session folder>` re-runs each draft through the real
 worker and gate on a virtual clock and prints items, `?` count, changes, drop-outs, advice ms and `same as live` or `differs
@@ -79,25 +87,43 @@ from live`. `npm run brawl:fixture -- <session folder>` copies every marked-wron
 
 While the game is foreground and capture is off, the probe tick also grabs the "Joining the fight as..." name box
 (`loadingNameRect`, `probeLoadingName` in `electron/shopProbe.ts`; cream-on-dark test `looksLikeLoadingName`). A hit sends
-the pixels over `loadingName` (at most 3 times per screen) to `BrawlView`, which reads them with the name reader (`readHeroName`), matches the
-text to a hero name (`matchHeroName`, score >= 0.85: one wrong letter in "SHIP" once read as Shiv) and uses it only
-when the portrait read fails, for that match (valid 60 min). A hand-picked hero (`pinned`)
-beats both. Not verified on real Windows: only the one frame in `scripts/fixtures/loading/` is tested.
+the pixels over `loadingName` (every 2.5 s, at most `LOADING_SEND_MAX` 12 times per screen, so a 30 s loading screen) to `BrawlView`,
+which reads them with the name reader (`readHeroName`; `prepareHero` turns the cream capitals into dark-on-white letters 60 px tall:
+the raw colour crop read as nothing at 1920x1080), matches the text to a hero name (`matchHeroName`, score >= 0.85: one wrong
+letter in "SHIP" once read as Shiv) and logs `hero.loading` (text, hero, score).
+
+Precedence per match (`src/brawl/heroChoice.ts`, `HeroTracker`/`chooseHero`): a hand-picked hero (`pinned`) > the loading read >
+the scoreboard portrait. A loading read sets the hero for the whole match; no portrait read changes it. A match starts at a
+loading read, or at round 1 choice 1 (or a lower round than seen) with no loading read in the last 5 min (`LOADING_FRESH_MS`);
+a loading read is never used past 60 min. Portrait only (app started mid-match, read missed): the status line says
+`Hero guessed from portraits: <name>. Pick the hero to correct.`, the hero pill has a `guessed` tag and the overlay draws
+`Hero guessed: <name>` for 5 s on the first draft (`OverlayState.heroNote`); all clear on a loading read or a hand pick.
+Proof: `scripts/__tests__/hero-replay.test.ts` replays the hero reads of every labelled stretch of both recordings
+(`labels.json` per stretch: `hero`, `match`, `loading` time; s12 also `heroMisread`). Recording 1 starts mid-match, so match A
+(s0-s2) is a portrait guess; matches B-D read the loading screen. Loading crops are cut by `npx tsx scripts/video-truth.ts
+--hero-frames` into `scripts/fixtures/loading/s3,s6,s10.webp` (+ `expect.json`) and the portrait misread frame (s12 t=691 s,
+enemy McGinnis read as the player) into `scripts/fixtures/hero-misread/`. e2e check `loading-name-resent` (frame
+`public/demo/_loading.png`, send period shortened by `BRAWL_LOADING_SEND_MS` under `BRAWL_E2E`). Not verified with a real
+Deadlock on Windows; the frames from the recordings are.
 
 ## Reading sign and the fallback
 
 While the draft screen is up and no plates are drawn the overlay shows `Reading` (`OverlayState.reading`). Plates, take mark and
 re-roll call appear together once every sure card has advice (`pushOverlay` waits for it) and are then frozen for the set. After
 `FALLBACK_MS` (1.0 s from the first frame any card appeared) the sure cards are advised and the rest get grey `?` plates; take and re-roll only if the best sure card
-beats `unknownCeiling`. The hero is used only when the read is sure (`chooseHero`): else the last sure hero of the match, else
+beats `unknownCeiling`. The hero comes from `HeroTracker` (see Loading-screen hero); with nothing read it is
 the window's hero with the `Hero not read` line and no ability panel. Round 1 choice 1 empties the owned list.
 
 ## First run and problems
 
 `FirstRun.tsx` shows three ticks (Borderless, window size, capture) with `Show me` (test mode); dismissal is remembered
 (`brawl.firstRunDone`) and the tray entry `First-run check` reopens it. Borderless is read from the missing WS_CAPTION style;
-exclusive fullscreen is told apart by the GDI probe region reading black 3 polls in a row. If the style cannot be read the line
-is an instruction with no tick. Strings: no `!`, emoji, em dashes, arrows or middle dots in `src/`, `electron/` or README
+borderless and exclusive fullscreen both lack it, so the capture line shows the hint `Capture reads black. If Deadlock is in
+Fullscreen, switch to Borderless Windowed` only when the GDI probe region reads black for 10 s without a break while the game is
+foreground and covers its monitor (`src/brawl/blackProbe.ts`, `BLACK_MS`; the old 3-poll rule fired on borderless loading
+screens, whose probe region is black). Any non-black read, draft or round read, loading-name hit or started capture clears it.
+Changes are logged `probe.black`. e2e check `black-hint` (frame `public/demo/_black.png`, `BRAWL_BLACK_MS` shortens the 10 s under
+`BRAWL_E2E`); `scripts/make-probe-frames.ts` makes both `_` frames. If the style cannot be read the line is an instruction with no tick. Strings: no `!`, emoji, em dashes, arrows or middle dots in `src/`, `electron/` or README
 (`scripts/__tests__/strings.test.ts`; the wiki is checked by hand).
 
 ## Overlay look (clearer overlay)
@@ -344,7 +370,7 @@ Speed (advice at x4): a name read or caption read that lands before the set is a
   (`reader.exit`, `reader.restart`); a second exit or a failed start logs `reader.failed` and the reader stays down. No tesseract.js
   anywhere (`grep -ri tesseract package.json src electron` must stay empty).
 - Path of a read: `ocr.ts` prepares the crop (pure JS: `prepareName` trims the line to its text run, pads 20 px and scales to
-  > = 90 px tall; `prepareHero` as is; `prepareCaption` 4x) and hands it to the installed `TextReader`. In the app the worker
+  > = 90 px tall; `prepareHero` dark-on-white, 60 px letters; `prepareCaption` 4x) and hands it to the installed `TextReader`. In the app the worker
   > posts `ocr` to the page, the page calls `brawlAPI.readText` (channel `readText`), main asks the helper. Main pushes the reader's
   > state over `readerState` (`readerStateGet` on load); while it is failed (or off Windows) every read rejects with
   > `ReaderDownError`, the status line says `Name reader not running`, unread cards go grey `?`, the hero falls back to the
