@@ -30,7 +30,7 @@ const only = onlyArg
 const slowArg = process.argv.indexOf('--slow');
 const SLOW = slowArg >= 0 ? Math.max(1, Number(process.argv[slowArg + 1]) || 4) : 1;
 // 40 s at full speed; a throttled run does the same work on a quarter of a core, so its bound grows with the throttle
-const HARD_TIMEOUT_MS = SLOW > 1 ? 40_000 + 10_000 * SLOW : 40_000;
+const HARD_TIMEOUT_MS = SLOW > 1 ? 40_000 + 25_000 * SLOW : 40_000;
 const throttle = { cpuThrottle: SLOW, cpuThrottleMethod: SLOW > 1 ? 'pending' : 'none' };
 
 const checks = [];
@@ -661,7 +661,7 @@ async function main() {
     const shown = goneAt - tipStart;
     check(
       'ability-panel-expires',
-      !!gone && shown >= TIP_MS - 800 && shown <= TIP_MS + 2_500,
+      !!gone && shown >= TIP_MS - 800 && shown <= TIP_MS + 2_500 * SLOW,
       `shown ~${shown}ms (harness duration ${TIP_MS}ms)`,
     );
     await sleep(400);
@@ -754,11 +754,11 @@ async function main() {
       if (pid1) process.kill(pid1);
       const pid2 = await waitFor(
         () => e2e.readerState() === 'ready' && e2e.readerPid() !== pid1 && e2e.readerPid(),
-        8_000,
+        8_000 * SLOW,
         50,
       );
       if (pid2) process.kill(pid2);
-      const failed = await waitFor(() => e2e.readerState() === 'failed', 4_000, 50);
+      const failed = await waitFor(() => e2e.readerState() === 'failed', 4_000 * SLOW, 50);
       const said = await waitFor(
         () => js(control, `document.body.innerText.includes('Name reader not running')`),
         3_000,
