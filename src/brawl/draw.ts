@@ -49,6 +49,9 @@ export interface OverlayState {
   dot?: DotState | null;
   /** A one-sentence problem the overlay shows for a few seconds. */
   notice?: string | null;
+  /** `Hero guessed: <name>` for 5 s on the first draft of a match whose hero comes from the portraits only (control
+   *  window); drawn in the notice slot when no problem notice is up. */
+  heroNote?: string | null;
   /** Test-mode video only: how long this set took (control window's breakdown); main turns it into `msText`. */
   timing?: SetTiming | null;
   /** Test-mode video only (set by main): `<n> ms` printed after every item plate's score, `~` when estimated. */

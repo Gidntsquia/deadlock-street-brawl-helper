@@ -38,4 +38,11 @@ describe('problems', () => {
     expect(firstRunLines({ ...ok, borderless: null })[1]!.ok).toBeNull();
     expect(firstRunLines({ ...ok, found: false }).map((l) => l.ok)).toEqual([false, false, false]);
   });
+  it('a black capture is a hint on the borderless line, not a fullscreen verdict', () => {
+    expect(firstRunLines({ ...ok, black: true })[1]).toEqual({
+      label: 'Capture reads black. If Deadlock is in Fullscreen, switch to Borderless Windowed',
+      ok: false,
+    });
+    for (const l of firstRunLines(ok)) expect(l.label).not.toMatch(/fullscreen/i);
+  });
 });

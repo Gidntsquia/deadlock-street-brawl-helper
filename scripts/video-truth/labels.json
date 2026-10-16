@@ -5,6 +5,8 @@
       "id": "s0",
       "file": "2026-10-09 00-46-30.mkv",
       "video": [1, 15],
+      "hero": "Infernus",
+      "match": "A",
       "sets": [
         {
           "draft": "d001",
@@ -42,6 +44,8 @@
       "id": "s1",
       "file": "2026-10-09 00-46-30.mkv",
       "video": [191.5, 216],
+      "hero": "Infernus",
+      "match": "A",
       "sets": [
         {
           "draft": "d003",
@@ -90,6 +94,8 @@
       "id": "s2",
       "file": "2026-10-09 00-46-30.mkv",
       "video": [391, 439],
+      "hero": "Infernus",
+      "match": "A",
       "sets": [
         {
           "draft": "d006",
@@ -140,6 +146,12 @@
       "id": "s3",
       "file": "2026-10-09 00-46-30.mkv",
       "video": [1143.5, 1164.5],
+      "hero": "Infernus",
+      "match": "B",
+      "loading": {
+        "t": 1135,
+        "hero": "Infernus"
+      },
       "sets": [
         {
           "draft": "d009",
@@ -187,6 +199,8 @@
       "id": "s4",
       "file": "2026-10-09 00-46-30.mkv",
       "video": [1336.5, 1359],
+      "hero": "Infernus",
+      "match": "B",
       "sets": [
         {
           "draft": "d012",
@@ -225,6 +239,8 @@
       "id": "s5",
       "file": "2026-10-09 00-46-30.mkv",
       "video": [1549.5, 1571.5],
+      "hero": "Infernus",
+      "match": "B",
       "sets": [
         {
           "draft": "d015",
@@ -262,6 +278,12 @@
       "id": "s6",
       "file": "2026-10-09 00-46-30.mkv",
       "video": [2241.5, 2267],
+      "hero": "Infernus",
+      "match": "C",
+      "loading": {
+        "t": 2232,
+        "hero": "Infernus"
+      },
       "sets": [
         {
           "draft": "d018",
@@ -299,6 +321,8 @@
       "id": "s7",
       "file": "2026-10-09 00-46-30.mkv",
       "video": [2490.5, 2511],
+      "hero": "Infernus",
+      "match": "C",
       "sets": [
         {
           "draft": "d021",
@@ -337,6 +361,8 @@
       "id": "s8",
       "file": "2026-10-09 00-46-30.mkv",
       "video": [2637.5, 2663],
+      "hero": "Infernus",
+      "match": "C",
       "sets": [
         {
           "draft": "d024",
@@ -385,6 +411,8 @@
       "id": "s9",
       "file": "2026-10-09 00-46-30.mkv",
       "video": [2809.5, 2820.5],
+      "hero": "Infernus",
+      "match": "C",
       "sets": [
         {
           "draft": "d026x",
@@ -421,6 +449,12 @@
       "id": "s10",
       "file": "2026-10-15 15-04-37.mkv",
       "video": [82, 109],
+      "hero": "Infernus",
+      "match": "D",
+      "loading": {
+        "t": 76,
+        "hero": "Infernus"
+      },
       "sets": [
         {
           "draft": "d029",
@@ -469,6 +503,8 @@
       "id": "s11",
       "file": "2026-10-15 15-04-37.mkv",
       "video": [381, 398],
+      "hero": "Infernus",
+      "match": "D",
       "sets": [
         {
           "draft": "d032",
@@ -517,6 +553,14 @@
       "id": "s12",
       "file": "2026-10-15 15-04-37.mkv",
       "video": [691, 711],
+      "hero": "Infernus",
+      "match": "D",
+      "heroMisread": {
+        "name": "viscous-class-s12",
+        "t": 691,
+        "read": "McGinnis",
+        "hero": "Infernus"
+      },
       "sets": [
         {
           "draft": "d035",
@@ -569,6 +613,8 @@
       "id": "s13",
       "file": "2026-10-15 15-04-37.mkv",
       "video": [910, 956],
+      "hero": "Infernus",
+      "match": "D",
       "sets": [
         {
           "draft": "d038",

@@ -1,0 +1,23 @@
+{
+  "s3": {
+    "file": "s3.webp",
+    "recording": "2026-10-09 00-46-30.mkv",
+    "t": 1135,
+    "hero": "Infernus",
+    "match": "B"
+  },
+  "s6": {
+    "file": "s6.webp",
+    "recording": "2026-10-09 00-46-30.mkv",
+    "t": 2232,
+    "hero": "Infernus",
+    "match": "C"
+  },
+  "s10": {
+    "file": "s10.webp",
+    "recording": "2026-10-15 15-04-37.mkv",
+    "t": 76,
+    "hero": "Infernus",
+    "match": "D"
+  }
+}

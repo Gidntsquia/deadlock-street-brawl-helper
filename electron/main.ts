@@ -26,7 +26,8 @@ import {
   sendWindowToBottom,
   type Rect,
 } from './gameWindow';
-import { probeIsBlack, probeLoadingName, probeRound, probeShopScreen } from './shopProbe';
+import { probeIsBlack, probeLoadingName, probeRound, probeShopScreen, type GrabRegion } from './shopProbe';
+import { initialBlack, stepBlack, BLACK_MS } from '../src/brawl/blackProbe';
 import { PROBLEM_TEXT, problemFor, type Env, type Problem } from '../src/brawl/problems';
 import { CHANNELS } from './channels';
 import { SessionStore, type DraftRecord, type FrameShot, type RegionShot } from './sessionStore';
@@ -120,9 +121,13 @@ let captureFailed = false;
 /** When the renderer last stopped an idle capture; until a probe miss (or PROBE_REARM_MS) a probe hit is ignored. */
 let idleAt = 0;
 const PROBE_REARM_MS = 30_000;
-/** The loading screen's hero name is sent to the page at most this often, and this many times per screen. */
-const LOADING_SEND_MS = 2_500;
-const LOADING_SEND_MAX = 3;
+/** The loading screen's hero name is sent to the page at most this often, and this many times per screen: 12 sends at
+ *  2.5 s cover a 30 s loading screen (the recordings show about 15 to 20 s), so one bad OCR read is not the last try. */
+const LOADING_SEND_MS =
+  process.env.BRAWL_E2E && Number(process.env.BRAWL_LOADING_SEND_MS) > 0
+    ? Number(process.env.BRAWL_LOADING_SEND_MS)
+    : 2_500;
+const LOADING_SEND_MAX = 12;
 let loadingSentAt = 0;
 let loadingSent = 0;
 /** The ROUND number the banner probe last read (0: none yet this game window). A new, different number is a round start. */
@@ -135,7 +140,17 @@ let f8InUse = false;
 let problem: Problem | null = null;
 let noticeText: string | null = null;
 let noticeTimer: ReturnType<typeof setTimeout> | null = null;
-let blackTicks = 0;
+/** The black-capture hint (src/brawl/blackProbe.ts): 10 s unbroken, shorter only for the harness (`BRAWL_BLACK_MS`). */
+let black = initialBlack();
+let lastProbeBlack: boolean | null = null;
+const blackMs =
+  process.env.BRAWL_E2E && Number(process.env.BRAWL_BLACK_MS) > 0 ? Number(process.env.BRAWL_BLACK_MS) : BLACK_MS;
+function clearBlack(why: string) {
+  if (black.since === null && !black.black) return;
+  const was = black.black;
+  black = stepBlack(black, { type: 'clear' });
+  if (was) log('electron-main', 'info', 'probe.black', { read: lastProbeBlack, hint: false, cleared: why });
+}
 let lastEnv: Env | null = null;
 const NOTICE_MS = 5000;
 const DETECT_KEY = 'F8';
@@ -394,6 +409,71 @@ function createOverlayWindow() {
   });
 }
 
+/** Sends the loading screen's hero name box to the page when it shows (every LOADING_SEND_MS, LOADING_SEND_MAX times). */
+function sendLoadingName(found: Rect, grab: GrabRegion) {
+  const crop = probeLoadingName(found, grab);
+  if (!crop) {
+    loadingSent = 0;
+    return;
+  }
+  clearBlack('loading'); // the loading screen's probe region is black, but the screen is readable: not fullscreen
+  if (loadingSent >= LOADING_SEND_MAX || Date.now() - loadingSentAt < LOADING_SEND_MS) return;
+  loadingSent++;
+  loadingSentAt = Date.now();
+  sendControl(CHANNELS.loadingName, crop);
+  log('electron-main', 'info', 'loading.name.sent', { n: loadingSent });
+}
+
+/** True when the game window fills its monitor (physical px): exclusive fullscreen always does. */
+function coversMonitor(found: Rect): boolean {
+  const d = screen.getDisplayMatching(toDipBounds(found));
+  const b = process.platform === 'win32' ? screen.dipToScreenRect(null, d.bounds) : d.bounds;
+  return (
+    Math.abs(b.x - found.x) <= 2 &&
+    Math.abs(b.y - found.y) <= 2 &&
+    Math.abs(b.width - found.width) <= 2 &&
+    Math.abs(b.height - found.height) <= 2
+  );
+}
+
+/** One poll of the black-capture rule. The screen is read only while the game is foreground (pixels of another window
+ *  covering it are never read); test mode reads the dummy's picture and counts as foreground and full-monitor. */
+function stepBlackProbe(found: Rect | null, testShot: GrabRegion | null) {
+  const foreground = !!found && (!!testShot || isGameForeground());
+  const read = !!found && foreground && probeIsBlack(found, testShot ?? grabScreenRegion);
+  const fullMonitor = !!found && (!!testShot || coversMonitor(found));
+  const was = black.black;
+  black = stepBlack(black, { type: 'probe', now: Date.now(), black: read, foreground, fullMonitor }, blackMs);
+  if (read !== lastProbeBlack || black.black !== was) {
+    lastProbeBlack = read;
+    log('electron-main', 'info', 'probe.black', { read, hint: black.black, foreground, fullMonitor });
+  }
+}
+
+/** Test mode: a GrabRegion over the dummy's current screenshot, scaled to the dummy's size (BGRA like GDI). */
+let testShotCache: { key: string; bgra: Buffer; width: number } | null = null;
+function testGrab(found: Rect): GrabRegion | null {
+  const key = `${testFrame} ${found.width}x${found.height}`;
+  if (testShotCache?.key !== key) {
+    const img = nativeImage.createFromPath(demoImagePath(testFrame));
+    if (img.isEmpty()) return null;
+    const scaled = img.resize({ width: found.width, height: found.height, quality: 'good' });
+    testShotCache = { key, bgra: scaled.toBitmap(), width: found.width };
+  }
+  const { bgra, width } = testShotCache;
+  return (x, y, w, h) => {
+    const out = new Uint8Array(w * h * 4);
+    const x0 = x - found.x,
+      y0 = y - found.y;
+    for (let j = 0; j < h; j++) {
+      const from = ((y0 + j) * width + x0) * 4;
+      if (from < 0 || from + w * 4 > bgra.length) return null;
+      out.set(bgra.subarray(from, from + w * 4), j * w * 4);
+    }
+    return out;
+  };
+}
+
 /** Snaps a physical-pixel screen rect to the DIPs `setBounds` expects on the display it's on. */
 function toDipBounds(rect: Rect) {
   const display = screen.getDisplayMatching({ x: rect.x, y: rect.y, width: rect.width, height: rect.height });
@@ -462,7 +542,7 @@ function refreshProblem(found: Rect | null) {
     width: found?.width ?? 0,
     height: found?.height ?? 0,
     borderless: found ? gameWindowIsBorderless() : null,
-    black: blackTicks >= 3,
+    black: black.black,
     denied: captureFailed,
     f8InUse,
   };
@@ -592,8 +672,10 @@ function startRectPolling() {
       captureHeld = false;
     }
     syncDetectKey(!!found);
-    blackTicks =
-      found && !alive(testWindow) && isGameForeground() && probeIsBlack(found, grabScreenRegion) ? blackTicks + 1 : 0;
+    // Test mode reads the dummy's own picture, never the screen: the same probes, run on the frame it shows.
+    const testShot = found && alive(testWindow) && !testVideo ? testGrab(found) : null;
+    stepBlackProbe(found, testShot);
+    if (found && testShot) sendLoadingName(found, testShot);
     refreshProblem(found);
     lobby = stepLobby(lobby, { type: 'tick', found: !!found, now: Date.now() });
     refreshDot();
@@ -617,14 +699,8 @@ function startRectPolling() {
           sendControl(CHANNELS.roundStart, round);
           log('electron-main', 'info', 'round.probe', { round });
         }
-        const crop = probeLoadingName(found, grabScreenRegion);
-        if (!crop) loadingSent = 0;
-        else if (loadingSent < LOADING_SEND_MAX && Date.now() - loadingSentAt >= LOADING_SEND_MS) {
-          loadingSent++;
-          loadingSentAt = Date.now();
-          sendControl(CHANNELS.loadingName, crop);
-          log('electron-main', 'info', 'loading.name.sent', { n: loadingSent });
-        }
+        if (round > 0) clearBlack('round');
+        sendLoadingName(found, grabScreenRegion);
       }
       if (!hit) idleAt = 0;
       else if (idleAt && Date.now() - idleAt < PROBE_REARM_MS) {
@@ -1254,6 +1330,7 @@ function setupIpc() {
   );
   ipcMain.on(CHANNELS.captureResult, (_e, ok: boolean) => {
     captureFailed = !ok;
+    if (ok) clearBlack('capture');
     refreshDot();
   });
   ipcMain.on(CHANNELS.windowMinimize, () => alive(control) && control.minimize());
@@ -1272,7 +1349,10 @@ function setupIpc() {
   // Relay: the control window computes advice from its capture and forwards state for the overlay to draw.
   ipcMain.on(CHANNELS.overlayState, async (_event, incoming: import('../src/brawl/draw').OverlayState) => {
     lastOverlayState = incoming;
-    if (incoming.draft) lobby = stepLobby(lobby, { type: 'draft', now: Date.now() });
+    if (incoming.draft) {
+      lobby = stepLobby(lobby, { type: 'draft', now: Date.now() });
+      clearBlack('draft');
+    }
     lastDot = currentDot();
     relayOverlay();
     // test-mode video: print the ms on every plate (the start mark is the labelled `appear`, or the worker's first sight).
@@ -1414,6 +1494,7 @@ app.whenReady().then(() => {
       captureTestComposite,
       // The name reader's helper: its process id and state, for the reader-down check.
       readerPid: () => nameReader?.pid(),
+      getEnv: () => lastEnv,
       readerState,
     };
   }

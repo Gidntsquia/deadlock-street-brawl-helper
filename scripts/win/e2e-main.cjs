@@ -6,6 +6,12 @@
 process.env.BRAWL_E2E = '1';
 const TIP_MS = 1200;
 process.env.BRAWL_TIP_MS = String(TIP_MS);
+// The loading-name probe resends every LOADING_SEND_MS (real 2.5 s) and the black-capture hint needs BLACK_MS of unbroken
+// black (real 10 s): both scaled down here so the run stays under 30 s; the ratios match the real ones.
+const LOADING_SEND_MS = 250;
+process.env.BRAWL_LOADING_SEND_MS = String(LOADING_SEND_MS);
+const BLACK_MS = 2000;
+process.env.BRAWL_BLACK_MS = String(BLACK_MS);
 // Advice on choice 1 must land within this (the wait itself runs longer so a miss reports its real time).
 const ADVICE_LIMIT_MS = 1_000;
 
@@ -83,10 +89,15 @@ console.error = (...args) => {
   dbg('main-process stderr: ' + args.map(String).join(' '));
   realConsoleError(...args);
 };
+// main's own log lines the testmode pass counts (the loading-name sends and the black-capture probe)
+const mainEvents = [];
 for (const level of ['info', 'warn']) {
   const real = console[level].bind(console);
   console[level] = (...args) => {
-    dbg(`main-process ${level}: ` + args.map(String).join(' '));
+    const line = args.map(String).join(' ');
+    if (/"msg":"loading\.name\.sent"/.test(line)) mainEvents.push('loading.name.sent');
+    if (/"msg":"probe\.black"/.test(line)) mainEvents.push(line);
+    dbg(`main-process ${level}: ` + line);
     real(...args);
   };
 }
@@ -190,6 +201,8 @@ async function main() {
     if (/"msg":"round\.start"/.test(message)) trackEvents.push('round.start');
     if (/"msg":"draft\.read","shop":true,"seen":2/.test(message)) trackEvents.push('two-up');
     if (/"msg":"card\.name","slot":\d,"itemId":\d+\}/.test(message)) trackEvents.push('card.name');
+    if (/"msg":"hero\.loading","text":"[^"]+","hero":\d+,"score":[\d.]+/.test(message))
+      trackEvents.push('hero.loading');
   });
   overlay?.webContents.on('console-message', (_e, _level, message) => dbg('overlay console: ' + message));
   let preloadError = false;
@@ -744,6 +757,59 @@ async function main() {
         'window-bounds-stable',
         same && stable,
         `set=${JSON.stringify(spots)} read=${JSON.stringify(reads)} after3s=${JSON.stringify(last)} scale=${require('electron').screen.getPrimaryDisplay().scaleFactor}`,
+      );
+    }
+
+    // --- loading screen: the hero name box is sent more than 3 times on one screen and read with text and score ---
+    {
+      const sent0 = mainEvents.filter((e) => e === 'loading.name.sent').length;
+      const reads0 = trackEvents.filter((e) => e === 'hero.loading').length;
+      await setFrame('_loading');
+      // real timing 2.5 s per send, 12 sends; here LOADING_SEND_MS: 4 sends inside 8 send periods
+      const many = await waitFor(
+        () => mainEvents.filter((e) => e === 'loading.name.sent').length - sent0 > 3,
+        LOADING_SEND_MS * 8 + 1_000,
+        50,
+      );
+      const read = await waitFor(
+        () => trackEvents.filter((e) => e === 'hero.loading').length > reads0,
+        3_000 * SLOW,
+        50,
+      );
+      check(
+        'loading-name-resent',
+        !!many && !!read,
+        `sent=${mainEvents.filter((e) => e === 'loading.name.sent').length - sent0} heroLoadingReads=${trackEvents.filter((e) => e === 'hero.loading').length - reads0}`,
+      );
+    }
+    // --- black capture: a short black screen gives no hint, BLACK_MS of black does, the next draft clears it ---
+    {
+      const black0 = mainEvents.length;
+      const hintShown = () => !!e2e.getEnv()?.black;
+      const firstRunHint = () =>
+        js(control, `document.querySelector('.brawl-firstrun')?.innerText.includes('Capture reads black') ?? null`);
+      await setFrame('_black');
+      let early = false;
+      const tEnd = Date.now() + BLACK_MS / 2;
+      while (Date.now() < tEnd) {
+        if (hintShown()) early = true;
+        await sleep(100);
+      }
+      await setFrame('choice1');
+      await sleep(400);
+      const afterShort = hintShown();
+      await setFrame('_black');
+      const t0 = Date.now();
+      const on = await waitFor(() => hintShown(), BLACK_MS + 2_000, 50);
+      const onMs = Date.now() - t0;
+      const domOn = await firstRunHint();
+      await setFrame('choice1');
+      const off = await waitFor(() => !hintShown(), 3_000 * SLOW, 50);
+      const logged = mainEvents.slice(black0).filter((e) => e.includes('probe.black')).length;
+      check(
+        'black-hint',
+        !early && !afterShort && !!on && onMs >= BLACK_MS - 300 && domOn !== false && !!off && logged >= 2,
+        `shortRun=${early || afterShort ? 'hint' : 'none'} longRun=${on ? onMs + 'ms' : 'none'} (BLACK_MS ${BLACK_MS}) firstRunLine=${domOn} clearedByDraft=${!!off} probe.black lines=${logged}`,
       );
     }
 

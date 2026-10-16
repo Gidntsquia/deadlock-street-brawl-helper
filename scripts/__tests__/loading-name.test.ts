@@ -21,9 +21,15 @@ describe('loading screen name box', () => {
   it('is recognised on the Joining the fight as frame', async () => {
     expect(looksLikeLoadingName(await nameBox('scripts/fixtures/loading/infernus.png'))).toBe(true);
   });
-  it.each(readdirSync('public/demo').filter((f) => f.endsWith('.png')))('not on %s', async (f) => {
-    expect(looksLikeLoadingName(await nameBox(`public/demo/${f}`))).toBe(false);
+  it('is recognised on the harness frame _loading.png (the same screen at the demo size)', async () => {
+    expect(looksLikeLoadingName(await nameBox('public/demo/_loading.png'))).toBe(true);
   });
+  it.each(readdirSync('public/demo').filter((f) => f.endsWith('.png') && f !== '_loading.png'))(
+    'not on %s',
+    async (f) => {
+      expect(looksLikeLoadingName(await nameBox(`public/demo/${f}`))).toBe(false);
+    },
+  );
 });
 
 describe('loading screen hero name', () => {

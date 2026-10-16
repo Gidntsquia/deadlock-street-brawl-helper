@@ -29,6 +29,7 @@ export default function App() {
   const [changeHero, setChangeHero] = useState(false);
   const [heroPinned, setHeroPinned] = useState(false); // the user chose a hero: the scoreboard read no longer overrides it
   const [heroSource, setHeroSource] = useState<'detected' | 'manual'>('manual');
+  const [heroGuessed, setHeroGuessed] = useState(false); // no loading-screen name this match: the hero is a portrait guess
   const handleHero = (id: number, source: 'detected' | 'manual' = 'manual') => {
     setHeroId(id);
     setHeroSource(source);
@@ -91,10 +92,17 @@ export default function App() {
         <div>
           <h1>
             {tab === 'advisor' ? hero.name : 'Street Brawl Tier List'}
-            {tab === 'advisor' && heroSource === 'detected' && (
-              <span className="hero-auto-badge" title="Auto-detected from the scoreboard">
-                auto
+            {tab === 'advisor' && heroGuessed && !heroPinned ? (
+              <span className="hero-auto-badge hero-guessed-badge" title="Guessed from the scoreboard portraits">
+                guessed
               </span>
+            ) : (
+              tab === 'advisor' &&
+              heroSource === 'detected' && (
+                <span className="hero-auto-badge" title="Read from the loading screen">
+                  auto
+                </span>
+              )
             )}
           </h1>
           {tab === 'advisor' ? (
@@ -167,6 +175,7 @@ export default function App() {
           items={items}
           abilities={abilities}
           onHero={handleHero}
+          onGuessed={setHeroGuessed}
           debug={debug}
         />
       </div>

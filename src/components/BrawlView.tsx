@@ -50,7 +50,7 @@ import { FirstRun } from './FirstRun';
 import { SessionReport } from './SessionReport';
 import { PROBLEM_TEXT, statusFor, type Env, type Problem } from '../brawl/problems';
 import { breakdownRows } from '../brawl/breakdown';
-import { chooseHero } from '../brawl/heroChoice';
+import { HeroTracker } from '../brawl/heroChoice';
 import { DraftLog } from '../brawl/draftLog';
 import type { DraftRecord, RegionShot } from '../../electron/sessionStore';
 import { unknownCeiling } from '../brawl/engine';
@@ -98,6 +98,8 @@ interface Props {
   items: Item[];
   abilities: Ability[];
   onHero: (id: number, source?: 'detected' | 'manual') => void;
+  /** The hero in use is a guess from the scoreboard portraits (no loading-screen name this match): the hero tag says so. */
+  onGuessed?: (guessed: boolean) => void;
   /** The user picked the hero by hand: the scoreboard read does not override it. */
   pinned?: boolean;
   /** The hidden Debug panel (Ctrl+Shift+D) is open: shows the manual controls and the full advice list. */
@@ -120,8 +122,12 @@ function trackFieldsFor(t: TrackSummary | null, round: number, choice: number) {
 
 /** How long `Resynced to round N choice M` stays in the status line. */
 const RESYNC_NOTE_MS = 5000;
+/** How long the overlay shows `Hero guessed: <name>` on the first draft of a guessed match. */
+export const HERO_NOTE_MS = 5000;
+export const heroGuessText = (name: string) => `Hero guessed from portraits: ${name}. Pick the hero to correct.`;
+export const heroNoteText = (name: string) => `Hero guessed: ${name}`;
 
-export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = false, debug = false }: Props) {
+export function BrawlView({ hero, heroes, items, abilities, onHero, onGuessed, pinned = false, debug = false }: Props) {
   const [loaded, setLoaded] = useState<{ heroId: number; analytics: BrawlAnalytics } | null>(null);
   const [config, setConfig] = useState<BrawlConfig | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -146,9 +152,41 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
   /** No sure hero read this match and none kept: the window's own hero is used and the panel stays away. */
   const [heroNotRead, setHeroNotRead] = useState(false);
   const heroNotReadRef = useRef(false);
-  const lastSureHeroRef = useRef(0);
-  // The hero the loading screen named ("Joining the fight as..."): used only when the portrait read fails.
-  const loadedHeroRef = useRef<{ id: number; at: number } | null>(null);
+  // Which hero the advice uses, per match (heroChoice.ts): hand pick > loading-screen name > scoreboard portrait.
+  const heroTrackerRef = useRef(new HeroTracker());
+  /** The hero comes from the portraits only this match: status line, hero tag and a 5 s overlay note say so. */
+  const [heroGuessed, setHeroGuessed] = useState(false);
+  const heroGuessedRef = useRef(false);
+  /** The overlay's `Hero guessed: <name>` line, shown for `HERO_NOTE_MS` on the first draft of a guessed match. */
+  const heroNoteRef = useRef<string | null>(null);
+  const heroNoteTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const onGuessedRef = useRef(onGuessed);
+  onGuessedRef.current = onGuessed;
+  /** Sets the guess sign; `noteName` (first draft of a guessed match) also starts the overlay's 5 s note. */
+  const setGuessed = (guessed: boolean, noteName: string | null = null) => {
+    if (guessed !== heroGuessedRef.current) {
+      heroGuessedRef.current = guessed;
+      setHeroGuessed(guessed);
+      onGuessedRef.current?.(guessed);
+      if (guessed) log('brawl-view', 'info', 'hero.guessed', { name: noteName });
+    }
+    const note = guessed && noteName ? heroNoteText(noteName) : guessed ? heroNoteRef.current : null;
+    if (note === heroNoteRef.current) return;
+    clearTimeout(heroNoteTimer.current);
+    heroNoteRef.current = note;
+    if (note && noteName)
+      heroNoteTimer.current = setTimeout(() => {
+        heroNoteRef.current = null;
+        pushOverlayRef.current();
+      }, HERO_NOTE_MS);
+    pushOverlayRef.current();
+  };
+  const pushOverlayRef = useRef<() => void>(() => {});
+  // A hand pick ends the guess at once.
+  useEffect(() => {
+    if (pinned) setGuessed(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setGuessed only touches refs and state setters
+  }, [pinned]);
   /** The overlay state of the set on screen, held unchanged until that set is no longer live. */
   const frozenRef = useRef<{ key: string; state: OverlayState } | null>(null);
   /** Where each set's time went (test-mode video logs it); fed by the frame loop, the OCR relay and the results. */
@@ -458,11 +496,13 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
         };
       }
     } else frozenRef.current = null;
+    if (state.draft && heroNoteRef.current) state = { ...state, heroNote: heroNoteRef.current };
     const json = JSON.stringify(state);
     if (json === lastOverlayJsonRef.current) return;
     lastOverlayJsonRef.current = json;
     api.sendOverlayState(state);
   };
+  pushOverlayRef.current = pushOverlay;
   useEffect(() => {
     draftRef.current = draftOpen;
     tipRef.current = tip;
@@ -776,11 +816,11 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
     if (!isElectron) return;
     let busy = false;
     return window.brawlAPI!.onLoadingName((crop) => {
-      if (busy || pinnedRef.current) return;
+      if (busy) return;
       busy = true;
       void (async () => {
         try {
-          const { matchHeroName, nameList } = await import('../brawl/names');
+          const { matchHeroName, matchItemName, nameList } = await import('../brawl/names');
           const text = await readHeroName({
             width: crop.width,
             height: crop.height,
@@ -788,18 +828,23 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
             channels: 4,
           });
           const hs = loopCtxRef.current.heroes;
-          const m = matchHeroName(
-            text,
-            nameList(
-              hs.map((h) => h.id),
-              Object.fromEntries(hs.map((h) => [h.id, h.name])),
-            ),
+          const list = nameList(
+            hs.map((h) => h.id),
+            Object.fromEntries(hs.map((h) => [h.id, h.name])),
           );
-          log('brawl-view', 'info', 'hero.loading', { text, hero: m?.itemId ?? 0 });
-          if (m && !pinnedRef.current) {
-            loadedHeroRef.current = { id: m.itemId, at: Date.now() };
-            lastSureHeroRef.current = m.itemId;
-            if (m.itemId !== loopCtxRef.current.heroId) loopCtxRef.current.onHero(m.itemId, 'detected');
+          const m = matchHeroName(text, list);
+          // matchHeroName returns roster names only, and only at score >= 0.85 (HERO_MIN_SCORE); the raw score is logged
+          const best = matchItemName(text, list);
+          log('brawl-view', 'info', 'hero.loading', {
+            text,
+            hero: m?.itemId ?? 0,
+            score: best ? Math.round(best.score * 100) / 100 : 0,
+          });
+          if (m) {
+            heroTrackerRef.current.onLoading(m.itemId, Date.now());
+            setGuessed(false);
+            if (!pinnedRef.current && m.itemId !== loopCtxRef.current.heroId)
+              loopCtxRef.current.onHero(m.itemId, 'detected');
           }
         } catch (e) {
           log('brawl-view', 'warn', 'hero.loading.failed', { error: String(e) });
@@ -1291,21 +1336,21 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
         if (!meta.self) {
           log('brawl-view', 'debug', 'hero.detect.miss', { bar: meta.bar });
         }
-        const loaded = loadedHeroRef.current;
-        const loadedFresh = loaded && Date.now() - loaded.at < 60 * 60_000 ? loaded.id : 0;
-        if (meta.round === 1 && meta.choice === 1 && !loadedFresh) lastSureHeroRef.current = 0; // a new match: last match's hero is not kept
         const portrait = meta.self && heroes.some((h) => h.id === meta.self) ? meta.self : 0;
-        // A sure portrait read wins: the loading-screen OCR fills in only when the portrait does not read (a misread
-        // name there once held a hero who was not in the match for the whole game).
-        const read = portrait || loadedFresh;
-        const pick = pinned
-          ? { heroId, source: 'selected' as const }
-          : chooseHero(read, lastSureHeroRef.current, heroId);
-        if (read) lastSureHeroRef.current = read;
+        // The loading screen's name holds for the whole match; the portrait is used only when no loading name was read
+        // this match (started mid-match), and then the app says it is a guess. A hand pick beats both.
+        const tracker = heroTrackerRef.current;
+        const pick = tracker.onDraft(
+          { round: meta.round, choice: meta.choice, portrait, pinned, selected: heroId },
+          Date.now(),
+        );
+        const newMatch = tracker.takeNewMatch();
         heroUsedRef.current = { id: pick.heroId, source: pick.source };
-        const notRead = !pinned && pick.source === 'selected';
+        const notRead = pick.source === 'selected';
         heroNotReadRef.current = notRead;
         setHeroNotRead(notRead);
+        const guessName = heroes.find((h) => h.id === pick.heroId)?.name ?? '';
+        setGuessed(pick.guessed, pick.guessed && newMatch ? guessName : null);
         const me = pick.heroId;
         if (me !== heroId) {
           const score = [...meta.bar.left, ...meta.bar.right].find((m) => m.heroId === me)?.score;
@@ -1500,7 +1545,9 @@ export function BrawlView({ hero, heroes, items, abilities, onHero, pinned = fal
     ? platformWarning
     : resyncText
       ? resyncText
-      : statusFor({ found: gameFound || testMode.on, draft: draftOpen, advising: draftOpen && ranked.length > 0 });
+      : heroGuessed && !pinned
+        ? heroGuessText(hero.name)
+        : statusFor({ found: gameFound || testMode.on, draft: draftOpen, advising: draftOpen && ranked.length > 0 });
   const advicePanel = (
     <AdvicePanel
       input={input}

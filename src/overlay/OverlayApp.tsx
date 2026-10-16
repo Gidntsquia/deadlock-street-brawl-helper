@@ -253,7 +253,9 @@ export default function OverlayApp() {
           {DOT_TEXT[dotTip]}
         </div>
       )}
-      {panelState?.notice && <div className="overlay-notice">{panelState.notice}</div>}
+      {(panelState?.notice || panelState?.heroNote) && (
+        <div className="overlay-notice">{panelState.notice || panelState.heroNote}</div>
+      )}
       {abilityPanel && <AbilityPanel panel={abilityPanel} className="overlay-ap" />}
     </>
   );

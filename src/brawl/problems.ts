@@ -4,7 +4,8 @@
 export type Problem = 'fullscreen' | 'small' | 'denied' | 'f8';
 
 export const PROBLEM_TEXT: Record<Problem, string> = {
-  fullscreen: 'Deadlock is in exclusive fullscreen. Set Display Mode to Borderless Windowed in Video settings.',
+  // A hint, not a verdict: a borderless game can read black too (see blackProbe.ts for when this shows).
+  fullscreen: 'Capture reads black. If Deadlock is in Fullscreen, switch to Borderless Windowed',
   small: 'The Deadlock window is too small to read. Make it at least 1280 by 720.',
   denied: 'Windows blocked the screen capture. Restart this app, then open the draft again.',
   f8: 'F8 is taken by another program. Close that program, or read from the tray menu.',
@@ -21,7 +22,8 @@ export interface Env {
   height: number;
   /** The window has no title bar and its capture shows the game; null when this cannot be told. */
   borderless: boolean | null;
-  /** The window is found but its capture is all black for a while: what exclusive fullscreen looks like to capture. */
+  /** The probe region read black for 10 s without a break while the game was foreground and filled its monitor: what
+   *  exclusive fullscreen looks like to a screen read (`stepBlack` in blackProbe.ts). */
   black: boolean;
   denied: boolean;
   f8InUse: boolean;
@@ -54,10 +56,12 @@ export function statusFor(s: { found: boolean; draft: boolean; advising: boolean
 export function firstRunLines(e: Env): { label: string; ok: boolean | null }[] {
   return [
     { label: 'Deadlock found', ok: e.found },
-    {
-      label: 'Borderless Windowed',
-      ok: e.found && e.borderless === true && !e.black ? true : e.borderless === null ? null : false,
-    },
+    e.found && e.black
+      ? { label: PROBLEM_TEXT.fullscreen, ok: false }
+      : {
+          label: 'Borderless Windowed',
+          ok: e.found && e.borderless === true ? true : e.borderless === null ? null : false,
+        },
     { label: 'Resolution readable', ok: e.found ? readableSize(e.width, e.height) : false },
   ];
 }

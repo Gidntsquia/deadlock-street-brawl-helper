@@ -1554,6 +1554,10 @@ body:not(.overlay-window) #root {
   color: var(--teal-ink);
   background: var(--teal);
 }
+.hero-guessed-badge {
+  color: #1b1408;
+  background: var(--warn);
+}
 .hero-search,
 .hero-select,
 .hero-chip,

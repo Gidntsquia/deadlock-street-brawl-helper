@@ -32,7 +32,7 @@ export interface DraftRecord {
   frameH: number;
   items: number[]; // item ids read at the first plates, 0 for `?`
   unsure: number;
-  hero: { id: number; source: 'read' | 'kept' | 'selected' | 'none' };
+  hero: { id: number; source: 'read' | 'kept' | 'selected' | 'none' | 'pinned' | 'loading' | 'portrait' };
   shown: { plates: ShownPlate[]; takeId: number | null; reroll: boolean };
   adviceMs: number | null;
   changes: number;
