@@ -84,19 +84,47 @@ export function prepareName(crop: {
   return toRGBA(scaleGrey(grey, w, h, Math.max(1, 90 / h)));
 }
 
-/** The loading screen's hero name box as it is (RGBA, its own colours): Windows OCR reads the light capitals on the dark
- *  ground at full size; a scaled-down copy read as nothing. */
-export function prepareHero(crop: RGBImage): TextImage {
-  const ch = crop.channels,
-    n = crop.width * crop.height;
-  const out = new Uint8Array(n * 4);
-  for (let i = 0; i < n; i++) {
-    out[i * 4] = crop.data[i * ch]!;
-    out[i * 4 + 1] = crop.data[i * ch + 1]!;
-    out[i * 4 + 2] = crop.data[i * ch + 2]!;
-    out[i * 4 + 3] = 255;
-  }
-  return { width: crop.width, height: crop.height, data: out };
+/** Letter height (px) the loading-screen name is scaled to. Windows OCR read the raw colour box as nothing at some
+ *  sizes (1920x1080 among them); this clean copy read every one of 5 frames at 7 widths (1280 to 3840). */
+const HERO_TEXT_PX = 60;
+
+/** The loading screen's hero name box (`loadingNameRect` crop, cream capitals on dark) as dark lettering on white:
+ *  trimmed to its ink, scaled to `HERO_TEXT_PX` tall (nearest pixel) and padded 20 px. Null when no lettering. */
+export function prepareHero(crop: RGBImage): TextImage | null {
+  const { width: w, height: h, channels: ch, data } = crop;
+  const g = new Uint8Array(w * h);
+  let x0 = w,
+    x1 = -1,
+    y0 = h,
+    y1 = -1;
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * ch;
+      const m = Math.min(data[i]!, data[i + 1]!, data[i + 2]!);
+      const v = 255 - Math.max(0, Math.min(255, (m - 60) * 2));
+      g[y * w + x] = v;
+      if (v < 128) {
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+      }
+    }
+  if (x1 < 0) return null;
+  const s = HERO_TEXT_PX / (y1 - y0 + 1),
+    pad = 20;
+  const iw = Math.round((x1 - x0 + 1) * s),
+    ih = Math.round((y1 - y0 + 1) * s);
+  const W = iw + 2 * pad,
+    H = ih + 2 * pad;
+  const out = new Uint8Array(W * H * 4).fill(255);
+  for (let y = 0; y < ih; y++)
+    for (let x = 0; x < iw; x++) {
+      const v = g[(y0 + Math.min(y1 - y0, Math.floor(y / s))) * w + x0 + Math.min(x1 - x0, Math.floor(x / s))]!;
+      const o = ((y + pad) * W + x + pad) * 4;
+      out[o] = out[o + 1] = out[o + 2] = v;
+    }
+  return { width: W, height: H, data: out };
 }
 
 /** The re-roll caption's "N Re-Roll" crop (extractRerollLabelCrop: dark text, contrast stretched) scaled 4x. */
@@ -165,7 +193,9 @@ export async function readCardNameTimed(crop: NameCrop): Promise<TextRead> {
 
 /** The loading screen's big hero name (loadingNameRect crop); the raw text, '' when nothing reads. */
 export async function readHeroName(crop: RGBImage): Promise<string> {
-  const r = await read(prepareHero(crop), 'hero');
+  const img = prepareHero(crop);
+  if (!img) return '';
+  const r = await read(img, 'hero');
   return r.text.trim();
 }
 

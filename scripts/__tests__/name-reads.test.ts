@@ -83,22 +83,29 @@ describe('card name lines', () => {
 });
 
 describe('loading screen hero name', () => {
-  it('reads INFERNUS and matches Infernus', async (ctx) => {
-    const { data, info } = await sharp('scripts/fixtures/loading/infernus.png')
+  // the fixture, the harness frame and the three loading screens cut from the recordings, at the game sizes players use
+  // (the raw colour crop once read as nothing at 1920x1080, the size of test mode's dummy)
+  const FILES = [
+    'scripts/fixtures/loading/infernus.png',
+    'public/demo/_loading.png',
+    'scripts/fixtures/loading/s3.webp',
+    'scripts/fixtures/loading/s6.webp',
+    'scripts/fixtures/loading/s10.webp',
+  ];
+  const cases = FILES.flatMap((f) => [1280, 1600, 1920, 2560].map((w) => [f, w] as const));
+  it.for(cases)('%s at %i wide reads INFERNUS and matches Infernus', async ([file, w], ctx) => {
+    const h = Math.round((w * 9) / 16);
+    const r = loadingNameRect(w, h);
+    const { data } = await sharp(file)
+      .resize(w, h, { fit: 'fill' })
+      .extract({ left: r.x, top: r.y, width: r.width, height: r.height })
       .removeAlpha()
       .raw()
       .toBuffer({ resolveWithObject: true });
-    const r = loadingNameRect(info.width, info.height);
-    const crop = Buffer.alloc(r.width * r.height * 3);
-    for (let y = 0; y < r.height; y++)
-      data.copy(
-        crop,
-        y * r.width * 3,
-        ((r.y + y) * info.width + r.x) * 3,
-        ((r.y + y) * info.width + r.x + r.width) * 3,
-      );
-    const img: RGBImage = { width: r.width, height: r.height, data: crop, channels: 3 };
-    const text = await pinned(prepareHero(img), 'hero', (n) => ctx.skip(n));
+    const img: RGBImage = { width: r.width, height: r.height, data, channels: 3 };
+    const prepared = prepareHero(img);
+    expect(prepared).not.toBeNull();
+    const text = await pinned(prepared!, 'hero', (n) => ctx.skip(n));
     expect(text).toBe('INFERNUS');
     expect(
       matchHeroName(
@@ -109,6 +116,10 @@ describe('loading screen hero name', () => {
         ),
       )?.itemId,
     ).toBe(1);
+  });
+  it('a crop with no lettering is not read', () => {
+    const blank: RGBImage = { width: 100, height: 40, data: new Uint8Array(100 * 40 * 3).fill(10), channels: 3 };
+    expect(prepareHero(blank)).toBeNull();
   });
 });
 
