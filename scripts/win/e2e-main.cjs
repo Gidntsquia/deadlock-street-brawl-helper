@@ -719,9 +719,12 @@ async function main() {
       // let the opened editor paint before the grab (an immediate capturePage still showed it closed)
       await js(control, `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))`);
       await sleep(100);
-      const [ed, pn] = await Promise.all([control.webContents.capturePage(), overlay.webContents.capturePage()]);
-      fs.writeFileSync(path.join(ROOT, 'logs', 'e2e-editor.png'), ed.toPNG());
-      fs.writeFileSync(path.join(ROOT, 'logs', 'e2e-panel.png'), pn.toPNG());
+      // a hidden window's capturePage never resolves (the panel can expire first on a slow core): bound each grab
+      const grab = (w) => Promise.race([w.webContents.capturePage(), sleep(1500).then(() => null)]);
+      const [ed, pn] = await Promise.all([grab(control), overlay.isVisible() ? grab(overlay) : null]);
+      if (ed) fs.writeFileSync(path.join(ROOT, 'logs', 'e2e-editor.png'), ed.toPNG());
+      if (pn) fs.writeFileSync(path.join(ROOT, 'logs', 'e2e-panel.png'), pn.toPNG());
+      if (!ed || !pn) dbg(`editor picture skipped: editor=${!!ed} panel=${!!pn}`);
       await js(control, `document.querySelector('details.brawl-my-order').open = false`);
     } catch (e) {
       dbg(`editor picture failed: ${e.message}`);
