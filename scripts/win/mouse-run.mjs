@@ -13,14 +13,28 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const read = (phase) => {
   const r = spawnSync(
     'powershell.exe',
-    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(here, 'mouse.ps1'), '-Phase', phase, '-NamesCsv', exeName],
+    [
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      path.join(here, 'mouse.ps1'),
+      '-Phase',
+      phase,
+      '-NamesCsv',
+      exeName,
+    ],
     { encoding: 'utf8' },
   );
   return JSON.parse(r.stdout.trim());
 };
 
 const readings = [read('closed')];
-const child = spawn(exe, ['--remote-debugging-port=9333', `--user-data-dir=${path.join(path.dirname(exe), '..', 'mouse-userdata')}`], { stdio: 'ignore' });
+const child = spawn(
+  exe,
+  ['--remote-debugging-port=9333', `--user-data-dir=${path.join(path.dirname(exe), '..', 'mouse-userdata')}`],
+  { stdio: 'ignore' },
+);
 let targets = [];
 for (let i = 0; i < 60 && !targets.length; i++) {
   await sleep(500);
@@ -36,7 +50,13 @@ async function evalIn(target, expression) {
   await new Promise((r) => (ws.onopen = r));
   const res = await new Promise((resolve) => {
     ws.onmessage = (m) => resolve(JSON.parse(m.data));
-    ws.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression, awaitPromise: true, returnByValue: true } }));
+    ws.send(
+      JSON.stringify({
+        id: 1,
+        method: 'Runtime.evaluate',
+        params: { expression, awaitPromise: true, returnByValue: true },
+      }),
+    );
   });
   ws.close();
   return res.result?.result?.value;

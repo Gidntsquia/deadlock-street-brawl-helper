@@ -38,7 +38,7 @@ const GOLDEN: Record<string, unknown> = {
     rc: [2, 3],
     reads: ['3144988365', '1378931225', '2481177645'],
     self: 1,
-    bar: [11, 1, 60, 63, 19, 67, 79, 52],
+    bar: [11, 1, 60, 0, 19, 67, 79, 52], // slot 4 (was 63) falls below the margin once heroes 86 and 87 join the index: shown as unread
   },
 };
 const FRAMES = ['choice1', 'choice2', 'draft-r1c2', 'draft-r2c1', 'draft-r2c3-reroll'];

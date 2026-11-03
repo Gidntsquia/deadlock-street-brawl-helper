@@ -39,9 +39,23 @@ writeFileSync(
   `try { require('electron').webFrame.executeJavaScript(${JSON.stringify(PATCH)}); } catch (e) {}\n`,
 );
 
-const dummy = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(here, 'perf-dummy.ps1'), '-Seconds', String(Number(settleS) + Number(windowS) + 50)], { stdio: 'ignore' });
+const dummy = spawn(
+  'powershell.exe',
+  [
+    '-NoProfile',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    path.join(here, 'perf-dummy.ps1'),
+    '-Seconds',
+    String(Number(settleS) + Number(windowS) + 50),
+  ],
+  { stdio: 'ignore' },
+);
 await sleep(3000);
-const child = spawn(exe, ['--inspect-brk=9230', '--remote-debugging-port=9333', `--user-data-dir=${ud}`], { stdio: 'ignore' });
+const child = spawn(exe, ['--inspect-brk=9230', '--remote-debugging-port=9333', `--user-data-dir=${ud}`], {
+  stdio: 'ignore',
+});
 
 async function connect(url) {
   const ws = new WebSocket(url);
@@ -114,17 +128,28 @@ const group = (arms) => {
     const k = `${a.kind}:${a.delay}`;
     g.set(k, (g.get(k) ?? 0) + 1);
   }
-  return [...g.entries()].map(([k, count]) => ({ timer: k, count })).sort((a, b) => Number(a.timer.split(':')[1]) - Number(b.timer.split(':')[1]));
+  return [...g.entries()]
+    .map(([k, count]) => ({ timer: k, count }))
+    .sort((a, b) => Number(a.timer.split(':')[1]) - Number(b.timer.split(':')[1]));
 };
 const res = { label, exe, settle_s: Number(settleS), window_s: Number(windowS), main_patched: patched, processes: {} };
-const ma = await main.send('Runtime.evaluate', { expression: `JSON.stringify(globalThis.__arms.slice(${mainFrom}))`, returnByValue: true });
+const ma = await main.send('Runtime.evaluate', {
+  expression: `JSON.stringify(globalThis.__arms.slice(${mainFrom}))`,
+  returnByValue: true,
+});
 res.main_total_arms = JSON.parse(ma.result?.result?.value ?? '[]').length;
-res.main_from = mainFrom; res.main_raw = JSON.stringify(ma.result).slice(0, 300);
+res.main_from = mainFrom;
+res.main_raw = JSON.stringify(ma.result).slice(0, 300);
 res.processes.main = group(JSON.parse(ma.result?.result?.value ?? '[]'));
 let i = 0;
 for (const pc of pageConns) {
-  const pa = await pc.c.send('Runtime.evaluate', { expression: `JSON.stringify((window.__arms||[]).slice(${pc.from}))`, returnByValue: true });
-  res.processes[`page${i++}:${pc.url.split('/').pop().split('?')[0]}`] = group(JSON.parse(pa.result?.result?.value ?? '[]'));
+  const pa = await pc.c.send('Runtime.evaluate', {
+    expression: `JSON.stringify((window.__arms||[]).slice(${pc.from}))`,
+    returnByValue: true,
+  });
+  res.processes[`page${i++}:${pc.url.split('/').pop().split('?')[0]}`] = group(
+    JSON.parse(pa.result?.result?.value ?? '[]'),
+  );
 }
 const liveOf = async (conn, expr) => {
   const r = await conn.send('Runtime.evaluate', { expression: expr, returnByValue: true });
@@ -140,7 +165,8 @@ for (const [proc, rows] of Object.entries(res.processes)) {
   for (const r of rows) {
     const delay = Number(r.timer.split(':')[1]);
     const rate = r.count / Number(windowS);
-    if (delay < 5000 && r.count > 1) fast.push({ proc, timer: r.timer, armed: r.count, per_s: Math.round(rate * 100) / 100 });
+    if (delay < 5000 && r.count > 1)
+      fast.push({ proc, timer: r.timer, armed: r.count, per_s: Math.round(rate * 100) / 100 });
   }
 }
 res.armed_faster_than_5s_more_than_once = fast;
