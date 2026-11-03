@@ -1,7 +1,7 @@
 {
   "name": "deadlock-street-brawl-helper",
   "private": true,
-  "version": "0.5.1",
+  "version": "0.6.0",
   "type": "module",
   "main": "electron-dist/main.js",
   "scripts": {
@@ -30,6 +30,7 @@
     "win:dev": "bash scripts/win/run-dev.sh",
     "win:demo": "bash scripts/win/run-demo.sh",
     "win:latency": "bash scripts/win/run-latency.sh",
+    "win:release-build": "bash scripts/win/release-build.sh",
     "win:perf": "bash scripts/win/perf.sh",
     "win:mouse": "bash scripts/win/mouse.sh",
     "win:timers": "bash scripts/win/timers.sh"

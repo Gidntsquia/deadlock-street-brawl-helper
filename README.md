@@ -4,7 +4,7 @@
   <img alt="One real Street Brawl draft at normal speed: it shows the Reading sign, then score plates on the cards with the advised one marked in teal" src="docs/brawl-overlay.gif">
 </p>
 
-A draft advisor for [Deadlock](https://store.steampowered.com/app/1422450/Deadlock/)'s Street Brawl mode. It reads the draft screen while you play, ranks the three cards you're offered, and says whether the set is worth a re-roll. The advice is drawn over the draft screen. Scores are built from Street Brawl matches since the City Never Sleeps update (2026-09-29) from [deadlock-api.com](https://deadlock-api.com), for all 42 heroes.
+A draft advisor for [Deadlock](https://store.steampowered.com/app/1422450/Deadlock/)'s Street Brawl mode. It reads the draft screen while you play, ranks the three cards you're offered, and says whether the set is worth a re-roll. The advice is drawn over the draft screen. Scores are built from Street Brawl matches since the 2026-10-30 patch from [deadlock-api.com](https://deadlock-api.com), for all 44 heroes.
 
 ## Quickstart 🚀
 
@@ -16,7 +16,7 @@ Requires Windows. Get the app from the [latest release](https://github.com/Gidnt
 
 IMPORTANT: the files aren't code-signed, so Windows SmartScreen will warn you. Click More info, then Run anyway.
 
-Press F8 to read the draft right away if the app hasn't picked it up. With no game running, press Ctrl+Shift+D and turn on Test mode to try the overlay on a real draft screenshot.
+Press F8 to read the draft right away if the app hasn't picked it up. With no game running, pick First-run check in the tray menu and press Show me to try the overlay on a real draft screenshot. The debug panel (Ctrl+Shift+D) is in development and release-candidate builds only.
 
 To work on it (needs [Node.js](https://nodejs.org) 20 or newer):
 
@@ -24,7 +24,7 @@ To work on it (needs [Node.js](https://nodejs.org) 20 or newer):
 npm install
 npm run dev                                # Browser version, for development only
 npm run brawl -- --hero 1 --round 2 --set "Improved Spirit,Enchanter's Emblem,Swift Striker"   # Advice without the screen reader
-npm run fetch-data -- --since 2026-09-29   # Refreshes the Street Brawl snapshot (~1400 requests, ~9 min)
+npm run fetch-data -- --since 2026-10-30   # Refreshes the Street Brawl snapshot (~1400 requests, ~9 min)
 npm run win:dev                            # From WSL: runs the Windows app from a synced copy
 npm run check                              # Lint, typecheck, formatting and tests
 ```
