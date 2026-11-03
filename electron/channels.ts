@@ -4,7 +4,6 @@ export const CHANNELS = {
   gameRect: 'game-rect',
   overlayState: 'overlay-state',
   // Test-mode video only: the overlay tells main a set's plates are drawn (main logs `video.advice`).
-  overlayDrawn: 'overlay-drawn',
   captureDenied: 'capture-denied',
   // Test mode (dummy "Deadlock" window): invoke to read/toggle/switch frame, and a push of the state to the
   // control window whenever it changes (including the dummy being closed or a real game taking over).
@@ -13,7 +12,6 @@ export const CHANNELS = {
   testModeFrame: 'test-mode-frame',
   testModeState: 'test-mode-state',
   // Test mode video (manual check only): open a picked video in the dummy, play, pause, seek, close.
-  testModeVideo: 'test-mode-video',
   // Whether the control window should be capturing the game right now: main.ts probes for the draft screen with a
   // tiny screen-region read and only turns capture on while it is up. The control window reports back when it is done.
   captureStateGet: 'capture-state-get',
@@ -26,7 +24,6 @@ export const CHANNELS = {
   detectMiss: 'detect-miss',
   captureResult: 'capture-result',
   // Debug: the frame capture sees at a Detect now press, saved as a PNG next to the app's data.
-  saveDebugFrame: 'save-debug-frame',
   detectKeyState: 'detect-key-state',
   // The one problem that stops the app (exclusive fullscreen, window too small, capture denied, F8 taken), or null.
   problem: 'problem',
@@ -38,14 +35,8 @@ export const CHANNELS = {
   detectKeyGet: 'detect-key-get',
   platformWarning: 'platform-warning',
   // Tray menu "Debug panel" entry: main -> control window, toggles the hidden Debug panel.
-  debugToggle: 'debug-toggle',
   // Debug-mode recording and the session report. The page says whether debug mode is on, hands over the crops of the
   // draft on screen and then its record; the report lists the sessions and marks drafts wrong.
-  debugState: 'debug-state',
-  sessionFrame: 'session-frame',
-  sessionDraft: 'session-draft',
-  sessionList: 'session-list',
-  sessionMark: 'session-mark',
   // Loading screen ("Joining the fight as..."): main grabs the hero name box and pushes its pixels to the control window.
   loadingName: 'loading-name',
   // Round banner: the probe read a new ROUND number, main pushes it to the control window (OCR warm-up, state machine).
@@ -64,3 +55,18 @@ export const CHANNELS = {
   windowMinimize: 'window-minimize',
   windowClose: 'window-close',
 } as const;
+
+// Dev tooling only (debug panel, session recorder, test-mode video, the F8 frame dump, the overlay draw ack). A production
+// build defines `__DEV_TOOLS__` false, so these names and values are not in it; code that uses them sits behind the flag.
+const DEV_CHANNEL_NAMES = {
+  overlayDrawn: 'overlay-drawn',
+  testModeVideo: 'test-mode-video',
+  debugToggle: 'debug-toggle',
+  debugState: 'debug-state',
+  sessionFrame: 'session-frame',
+  sessionDraft: 'session-draft',
+  sessionList: 'session-list',
+  sessionMark: 'session-mark',
+  saveDebugFrame: 'save-debug-frame',
+} as const;
+export const DEV_CHANNELS = (__DEV_TOOLS__ ? DEV_CHANNEL_NAMES : {}) as typeof DEV_CHANNEL_NAMES;

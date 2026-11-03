@@ -48,6 +48,7 @@ export default function App() {
 
   // Ctrl+Shift+D (and the tray's "Debug panel" entry) toggles the Debug panel.
   useEffect(() => {
+    if (!__DEV_TOOLS__) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'd') {
         e.preventDefault();
@@ -55,7 +56,7 @@ export default function App() {
       }
     };
     window.addEventListener('keydown', onKey);
-    const off = window.brawlAPI?.onDebugToggle(() => setDebug((d) => !d));
+    const off = window.brawlAPI?.onDebugToggle?.(() => setDebug((d) => !d));
     return () => {
       window.removeEventListener('keydown', onKey);
       off?.();

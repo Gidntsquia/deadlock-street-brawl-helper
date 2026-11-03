@@ -51,7 +51,7 @@ if [ "$BUILD_HASH" = "$(cat "$WIN_COPY/.build.hash" 2>/dev/null || echo)" ] && [
   echo "sources unchanged — skipping electron build"
 else
   echo "building electron bundle on Windows…"
-  powershell.exe -NoProfile -Command "$PREFIX & 'C:\Program Files\nodejs\npm.cmd' exec -- vite build --mode electron" || exit 1
+  powershell.exe -NoProfile -Command "$PREFIX \$env:BRAWL_DEVTOOLS='1'; & 'C:\Program Files\nodejs\npm.cmd' exec -- vite build --mode electron" || exit 1
   echo "$BUILD_HASH" > "$WIN_COPY/.build.hash"
 fi
 

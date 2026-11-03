@@ -42,7 +42,10 @@ if (SINCE && !Number.isFinite(SINCE_TS)) {
   process.exit(1);
 }
 // Heroes that must be present after a full pull; the fetch stops before writing if the hero filter drops one.
-const REQUIRED_HEROES = [78, 84, 85, 88];
+const REQUIRED_HEROES = [78, 84, 85, 86, 87, 88];
+// A hero under this many Street Brawl matches in the window stops the run before anything is written.
+const mmArg = process.argv.indexOf('--min-matches');
+const MIN_HERO_MATCHES = mmArg > 0 ? Number(process.argv[mmArg + 1]) : 2000;
 // The API still flags Baba (88) in_development although he is playable, so that flag is not used: every other
 // in_development hero is also disabled or not player_selectable (checked 2026-10-15).
 const keepHero = (h) => h.player_selectable && !h.disabled;
@@ -207,6 +210,11 @@ async function fetchBrawl(heroes, manifest) {
   console.log(`brawl 2/2 per-hero Street Brawl analytics (${heroes.length} heroes x ${heroes.length} enemies)`);
   const heroRows = await getJson(`${API}/v1/analytics/hero-stats?game_mode=${BRAWL_GAME_MODE}&${windowQ()}`);
   const matchesOf = (id) => heroRows.find((r) => r.hero_id === id)?.matches ?? 0;
+  const thin = heroes.filter((h) => matchesOf(h.id) < MIN_HERO_MATCHES);
+  if (thin.length) {
+    for (const h of thin) console.error(`Too few matches: ${h.id} ${h.name} ${matchesOf(h.id)} < ${MIN_HERO_MATCHES}`);
+    process.exit(1);
+  }
   for (const h of heroes) {
     const q = `hero_id=${h.id}&game_mode=${BRAWL_GAME_MODE}&${windowQ()}`;
     const item_stats = await getJson(`${API}/v1/analytics/item-stats?${q}`);
@@ -243,7 +251,7 @@ async function fetchBrawl(heroes, manifest) {
     min_unix_timestamp: MIN_TS,
     max_unix_timestamp: MAX_TS,
     window_days: Math.round((MAX_TS - MIN_TS) / 86400),
-    ...(SINCE ? { since: `City Never Sleeps ${SINCE}` } : {}),
+    ...(SINCE ? { since: `Patch ${SINCE}` } : {}),
     matches_per_hero: Object.fromEntries(heroes.map((h) => [h.id, matchesOf(h.id)])),
   };
   console.log('Street Brawl matches per hero:');

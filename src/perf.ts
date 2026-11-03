@@ -21,7 +21,7 @@ const NOOP: Perf = {
 };
 
 export function createPerf(enabled: boolean, tag: string, everyMs = 10_000): Perf {
-  if (!enabled) return NOOP;
+  if (!__DEV_TOOLS__ || !enabled) return NOOP;
   const stats = new Map<string, { n: number; total: number; max: number }>();
   let since = Date.now();
   const flush = () => {

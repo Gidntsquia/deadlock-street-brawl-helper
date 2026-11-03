@@ -130,7 +130,17 @@ export const HERO_NOTE_MS = 5000;
 export const heroGuessText = (name: string) => `Hero guessed from portraits: ${name}. Pick the hero to correct.`;
 export const heroNoteText = (name: string) => `Hero guessed: ${name}`;
 
-export function BrawlView({ hero, heroes, items, abilities, onHero, onGuessed, pinned = false, debug = false }: Props) {
+export function BrawlView({
+  hero,
+  heroes,
+  items,
+  abilities,
+  onHero,
+  onGuessed,
+  pinned = false,
+  debug: debugProp = false,
+}: Props) {
+  const debug = __DEV_TOOLS__ && debugProp; // a plain production build has no debug panel
   const [loaded, setLoaded] = useState<{ heroId: number; analytics: BrawlAnalytics } | null>(null);
   const [config, setConfig] = useState<BrawlConfig | null>(null);
   const [error, setError] = useState<string | null>(null);

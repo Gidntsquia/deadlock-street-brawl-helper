@@ -23,5 +23,5 @@
     "noFallthroughCasesInSwitch": true,
     "strict": true
   },
-  "include": ["src"]
+  "include": ["src", "electron/dev-tools.d.ts"]
 }

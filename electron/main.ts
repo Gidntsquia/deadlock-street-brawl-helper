@@ -29,7 +29,7 @@ import {
 import { probeIsBlack, probeLoadingName, probeRound, probeShopScreen, type GrabRegion } from './shopProbe';
 import { initialBlack, stepBlack, BLACK_MS } from '../src/brawl/blackProbe';
 import { PROBLEM_TEXT, problemFor, type Env, type Problem } from '../src/brawl/problems';
-import { CHANNELS } from './channels';
+import { CHANNELS, DEV_CHANNELS } from './channels';
 import { SessionStore, type DraftRecord, type FrameShot, type RegionShot } from './sessionStore';
 import { debugDefault } from '../src/brawl/debugMode';
 import { MIN_HEIGHT, MIN_WIDTH, isBounds, validBounds } from './windowBounds';
@@ -730,7 +730,7 @@ function startRectPolling() {
     quiet = !!found && !captureWanted && probeMode() && !isGameForeground();
     const took = performance.now() - t0;
     tickEma = tickEma === 0 ? took : tickEma * 0.8 + took * 0.2;
-    perf.record('poll.tick', took);
+    if (__DEV_TOOLS__) perf.record('poll.tick', took);
   }, RECT_POLL_MS);
 }
 
@@ -1306,29 +1306,31 @@ function setupIpc() {
     emitCaptureState();
     refreshDot();
   });
-  ipcMain.on(CHANNELS.saveDebugFrame, (_e, dataUrl: string) => {
-    try {
-      const file = path.join(app.getPath('userData'), 'detect-frame.png');
-      writeFileSync(file, Buffer.from(dataUrl.replace(/^data:image\/png;base64,/, ''), 'base64'));
-      log('electron-main', 'info', 'detect.frame.saved', { file });
-    } catch (e) {
-      log('electron-main', 'warn', 'detect.frame.failed', { message: String(e) });
-    }
-  });
-  ipcMain.on(CHANNELS.debugState, (_e, on: boolean) => {
-    sessions().enabled = !!on;
-    if (!on) sessions().discard();
-  });
-  ipcMain.on(CHANNELS.sessionFrame, (_e, frame: FrameShot) => sessions().addFrame(frame));
-  ipcMain.on(CHANNELS.sessionDraft, (_e, rec: DraftRecord) => {
-    sessions()
-      .finishDraft(rec)
-      .catch((e) => log('electron-main', 'warn', 'session.write.failed', { message: String(e) }));
-  });
-  ipcMain.handle(CHANNELS.sessionList, () => sessions().list());
-  ipcMain.handle(CHANNELS.sessionMark, (_e, matchId: string, n: number, wrong: boolean) =>
-    sessions().mark(matchId, n, wrong),
-  );
+  if (__DEV_TOOLS__) {
+    ipcMain.on(DEV_CHANNELS.saveDebugFrame, (_e, dataUrl: string) => {
+      try {
+        const file = path.join(app.getPath('userData'), 'detect-frame.png');
+        writeFileSync(file, Buffer.from(dataUrl.replace(/^data:image\/png;base64,/, ''), 'base64'));
+        log('electron-main', 'info', 'detect.frame.saved', { file });
+      } catch (e) {
+        log('electron-main', 'warn', 'detect.frame.failed', { message: String(e) });
+      }
+    });
+    ipcMain.on(DEV_CHANNELS.debugState, (_e, on: boolean) => {
+      sessions().enabled = !!on;
+      if (!on) sessions().discard();
+    });
+    ipcMain.on(DEV_CHANNELS.sessionFrame, (_e, frame: FrameShot) => sessions().addFrame(frame));
+    ipcMain.on(DEV_CHANNELS.sessionDraft, (_e, rec: DraftRecord) => {
+      sessions()
+        .finishDraft(rec)
+        .catch((e) => log('electron-main', 'warn', 'session.write.failed', { message: String(e) }));
+    });
+    ipcMain.handle(DEV_CHANNELS.sessionList, () => sessions().list());
+    ipcMain.handle(DEV_CHANNELS.sessionMark, (_e, matchId: string, n: number, wrong: boolean) =>
+      sessions().mark(matchId, n, wrong),
+    );
+  }
   ipcMain.on(CHANNELS.captureResult, (_e, ok: boolean) => {
     captureFailed = !ok;
     if (ok) clearBlack('capture');
@@ -1340,13 +1342,15 @@ function setupIpc() {
   ipcMain.handle(CHANNELS.testModeGet, () => testState());
   ipcMain.handle(CHANNELS.testModeSet, (_e, on: boolean) => (on ? startTestMode() : stopTestMode()));
   ipcMain.handle(CHANNELS.testModeFrame, (_e, frame: string) => setTestFrame(String(frame)));
-  ipcMain.handle(CHANNELS.testModeVideo, (_e, action: unknown) =>
-    isTestVideoAction(action) ? testVideoAction(action) : testState(),
-  );
-  // The overlay says a set's plates are drawn: one `video.advice` line and row per set while a test-mode video plays.
-  ipcMain.on(CHANNELS.overlayDrawn, (_event, setKey: unknown) => {
-    if (typeof setKey === 'string') void logVideoAdvice(setKey);
-  });
+  if (__DEV_TOOLS__) {
+    ipcMain.handle(DEV_CHANNELS.testModeVideo, (_e, action: unknown) =>
+      isTestVideoAction(action) ? testVideoAction(action) : testState(),
+    );
+    // The overlay says a set's plates are drawn: one `video.advice` line and row per set while a test-mode video plays.
+    ipcMain.on(DEV_CHANNELS.overlayDrawn, (_event, setKey: unknown) => {
+      if (typeof setKey === 'string') void logVideoAdvice(setKey);
+    });
+  }
   // Relay: the control window computes advice from its capture and forwards state for the overlay to draw.
   ipcMain.on(CHANNELS.overlayState, async (_event, incoming: import('../src/brawl/draw').OverlayState) => {
     lastOverlayState = incoming;
@@ -1359,7 +1363,7 @@ function setupIpc() {
     // test-mode video: print the ms on every plate (the start mark is the labelled `appear`, or the worker's first sight).
     // The plates are drawn first and the ms added after: reading the video's clock is a round trip to the dummy, which
     // must not hold the plates back.
-    if (incoming.timing && alive(testWindow) && testVideo) {
+    if (__DEV_TOOLS__ && incoming.timing && alive(testWindow) && testVideo) {
       const info = await timedSet(incoming).catch(() => null);
       if (info && lastOverlayState === incoming) {
         lastOverlayState = { ...incoming, msText: info.msText };
@@ -1384,7 +1388,7 @@ function setupTray() {
     Menu.buildFromTemplate([
       { label: 'Toggle overlay', click: toggleOverlay },
       { label: 'Detect now (F8)', click: () => detectNow('tray') },
-      { label: 'Debug panel', click: toggleDebugPanel },
+      ...(__DEV_TOOLS__ ? [{ label: 'Debug panel', click: toggleDebugPanel }] : []),
       { label: 'First-run check', click: () => sendControl(CHANNELS.firstRunOpen) },
       { label: 'Toggle test mode', click: () => (alive(testWindow) ? stopTestMode() : void startTestMode()) },
       { label: 'Quit', click: () => app.quit() },
@@ -1393,7 +1397,7 @@ function setupTray() {
 }
 
 function toggleDebugPanel() {
-  if (alive(control) && !control.webContents.isDestroyed()) control.webContents.send(CHANNELS.debugToggle);
+  if (alive(control) && !control.webContents.isDestroyed()) control.webContents.send(DEV_CHANNELS.debugToggle);
 }
 
 function toggleOverlay() {
@@ -1438,7 +1442,7 @@ app.whenReady().then(() => {
   createOverlayWindow();
   setupTray();
   startRectPolling();
-  startProcessMetrics();
+  if (__DEV_TOOLS__) startProcessMetrics();
   setTimeout(lowerAllPriorities, 3000).unref();
   // Detect now / re-roll reads / capture diagnostics from the control window, so they reach the terminal too.
   if (alive(control))

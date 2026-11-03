@@ -24,11 +24,11 @@ import type { BrawlInput, DraftAdvice, DraftState, Offer, RankedOffer, RerollAdv
 export const BRAWL_WEIGHTS = {
   popularity: 1.0,
   winLift: 1.0,
-  kit: 0.3,
+  kit: 0.15, // 0.3 before 0.6.0 (ITEM-AUDIT P2): kit stays a tiebreaker, not a lift over what players pick and win with
   tier: 1.0,
   counter: 0.5,
   synergy: 0.5,
-  active: 0.1,
+  active: 0, // 0.1 before 0.6.0 (ITEM-AUDIT P3); the 5th-active penalty below stays
   upgrade: 0.15,
   enhanced: 0.6,
   enhancedCarry: 0.15,
@@ -75,9 +75,14 @@ export interface Base {
   topGrade: boolean;
 }
 
-/** The `enhanced` score part: the flat bonus plus the upgrade carry, both larger for an 800-soul (tier-1) card. */
+/**
+ * The `enhanced` score part: the flat bonus plus the upgrade carry, both larger for an 800-soul (tier-1) card, scaled
+ * by the item's `pop` (0.6.0, ITEM-AUDIT P1): an enhanced card of an item players rarely take gets a small lift, the
+ * tier's most picked item keeps all of it.
+ */
 const enhancedPart = (b: Base) =>
   b.enhFactor *
+  b.pop *
   (b.item.item_tier === 1
     ? BRAWL_WEIGHTS.enhanced800 + BRAWL_WEIGHTS.enhancedCarry800 * b.carry
     : BRAWL_WEIGHTS.enhanced + BRAWL_WEIGHTS.enhancedCarry * b.carry);

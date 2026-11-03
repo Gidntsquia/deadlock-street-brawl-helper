@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { Rect } from './gameWindow';
 import type { OverlayState } from '../src/brawl/draw';
-import { CHANNELS } from './channels';
+import { CHANNELS, DEV_CHANNELS } from './channels';
 import type { TestVideo, TestVideoAction } from '../src/brawl/testVideo';
 import type { ReaderState } from './nameReader';
 import type { DraftRecord, FrameShot, SessionSummary } from './sessionStore';
@@ -20,7 +20,29 @@ export interface CaptureState {
   probe: boolean; // main.ts is probing for the draft screen (a real game); false: capture simply follows the window
 }
 
+const devApi = {
+  overlayDrawn: (setKey: string) => ipcRenderer.send(DEV_CHANNELS.overlayDrawn, setKey),
+  saveDebugFrame: (dataUrl: string) => ipcRenderer.send(DEV_CHANNELS.saveDebugFrame, dataUrl),
+  testVideo: (action: TestVideoAction): Promise<TestModeState> =>
+    ipcRenderer.invoke(DEV_CHANNELS.testModeVideo, action),
+  setDebugState: (on: boolean) => ipcRenderer.send(DEV_CHANNELS.debugState, on),
+  sessionFrame: (frame: FrameShot) => ipcRenderer.send(DEV_CHANNELS.sessionFrame, frame),
+  sessionDraft: (rec: DraftRecord) => ipcRenderer.send(DEV_CHANNELS.sessionDraft, rec),
+  sessionList: (): Promise<SessionSummary[]> => ipcRenderer.invoke(DEV_CHANNELS.sessionList),
+  sessionMark: (matchId: string, n: number, wrong: boolean): Promise<void> =>
+    ipcRenderer.invoke(DEV_CHANNELS.sessionMark, matchId, n, wrong),
+  onDebugToggle: (cb: () => void) => {
+    const listener = () => cb();
+    ipcRenderer.on(DEV_CHANNELS.debugToggle, listener);
+    return () => {
+      ipcRenderer.removeListener(DEV_CHANNELS.debugToggle, listener);
+    };
+  },
+};
+
 const api = {
+  // Dev tooling methods exist only when the build has it (`__DEV_TOOLS__`); the type always lists them.
+  ...(__DEV_TOOLS__ ? devApi : ({} as typeof devApi)),
   isElectron: true as const,
   isE2E: process.env.BRAWL_E2E === '1',
   // e2e only: shortens the ability tip so a full harness run fits its time budget (the real default is 15 s).
@@ -34,7 +56,6 @@ const api = {
     };
   },
   sendOverlayState: (state: OverlayState) => ipcRenderer.send(CHANNELS.overlayState, state),
-  overlayDrawn: (setKey: string) => ipcRenderer.send(CHANNELS.overlayDrawn, setKey),
   onOverlayState: (cb: (state: OverlayState) => void) => {
     const listener = (_e: Electron.IpcRendererEvent, state: OverlayState) => cb(state);
     ipcRenderer.on(CHANNELS.overlayState, listener);
@@ -121,7 +142,6 @@ const api = {
     };
   },
   detectMiss: () => ipcRenderer.send(CHANNELS.detectMiss),
-  saveDebugFrame: (dataUrl: string) => ipcRenderer.send(CHANNELS.saveDebugFrame, dataUrl),
   captureResult: (ok: boolean) => ipcRenderer.send(CHANNELS.captureResult, ok),
   getDetectKeyInUse: (): Promise<boolean> => ipcRenderer.invoke(CHANNELS.detectKeyGet),
   onDetectKeyState: (cb: (inUse: boolean) => void) => {
@@ -139,20 +159,6 @@ const api = {
   getTestMode: (): Promise<TestModeState> => ipcRenderer.invoke(CHANNELS.testModeGet),
   setTestMode: (on: boolean): Promise<TestModeState> => ipcRenderer.invoke(CHANNELS.testModeSet, on),
   setTestFrame: (frame: string): Promise<TestModeState> => ipcRenderer.invoke(CHANNELS.testModeFrame, frame),
-  testVideo: (action: TestVideoAction): Promise<TestModeState> => ipcRenderer.invoke(CHANNELS.testModeVideo, action),
-  setDebugState: (on: boolean) => ipcRenderer.send(CHANNELS.debugState, on),
-  sessionFrame: (frame: FrameShot) => ipcRenderer.send(CHANNELS.sessionFrame, frame),
-  sessionDraft: (rec: DraftRecord) => ipcRenderer.send(CHANNELS.sessionDraft, rec),
-  sessionList: (): Promise<SessionSummary[]> => ipcRenderer.invoke(CHANNELS.sessionList),
-  sessionMark: (matchId: string, n: number, wrong: boolean): Promise<void> =>
-    ipcRenderer.invoke(CHANNELS.sessionMark, matchId, n, wrong),
-  onDebugToggle: (cb: () => void) => {
-    const listener = () => cb();
-    ipcRenderer.on(CHANNELS.debugToggle, listener);
-    return () => {
-      ipcRenderer.removeListener(CHANNELS.debugToggle, listener);
-    };
-  },
   onTestMode: (cb: (state: TestModeState) => void) => {
     const listener = (_e: Electron.IpcRendererEvent, state: TestModeState) => cb(state);
     ipcRenderer.on(CHANNELS.testModeState, listener);
