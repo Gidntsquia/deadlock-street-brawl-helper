@@ -29,7 +29,10 @@
     "win:e2e": "bash scripts/win/run-e2e.sh",
     "win:dev": "bash scripts/win/run-dev.sh",
     "win:demo": "bash scripts/win/run-demo.sh",
-    "win:latency": "bash scripts/win/run-latency.sh"
+    "win:latency": "bash scripts/win/run-latency.sh",
+    "win:perf": "bash scripts/win/perf.sh",
+    "win:mouse": "bash scripts/win/mouse.sh",
+    "win:timers": "bash scripts/win/timers.sh"
   },
   "dependencies": {
     "koffi": "^2.9.0",

@@ -16,6 +16,7 @@
 //   --catalog                   refresh items, heroes, abilities and their images only (no analytics)
 //   --brawl-tierlist            rebuild analytics/brawl/tier-list.json only (one request + the files already on disk)
 //   --brawl-abilities           refresh ability_order_stats in every analytics/brawl/<id>.json only
+import { existsSync, statSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -44,6 +45,11 @@ if (SINCE && !Number.isFinite(SINCE_TS)) {
 // Heroes that must be present after a full pull; the fetch stops before writing if the hero filter drops one.
 const REQUIRED_HEROES = [78, 84, 85, 86, 87, 88];
 // A hero under this many Street Brawl matches in the window stops the run before anything is written.
+// --max-ts N pins the window's upper end (a rate-limited run continues the same window); --resume skips
+// heroes whose file was written after that moment, so the continued run covers exactly the same matches.
+const maxTsArg = process.argv.indexOf('--max-ts');
+const PIN_MAX_TS = maxTsArg > 0 ? Number(process.argv[maxTsArg + 1]) : null;
+const RESUME = process.argv.includes('--resume');
 const mmArg = process.argv.indexOf('--min-matches');
 const MIN_HERO_MATCHES = mmArg > 0 ? Number(process.argv[mmArg + 1]) : 2000;
 // The API still flags Baba (88) in_development although he is playable, so that flag is not used: every other
@@ -201,7 +207,7 @@ async function fetchBrawl(heroes, manifest) {
   // Pin the window for a brawl run reached from the full pipeline too, and take both ends from the clock here:
   // the earlier steps can run for hours, so the module-load MIN_TS would make the span wider than WINDOW_DAYS.
   if (MAX_TS === null) {
-    MAX_TS = Math.floor(Date.now() / 1000);
+    MAX_TS = PIN_MAX_TS ?? Math.floor(Date.now() / 1000);
     MIN_TS = SINCE_TS ?? MAX_TS - WINDOW_DAYS * 86400;
   }
   console.log(`brawl 1/2 mode config`);
@@ -216,6 +222,13 @@ async function fetchBrawl(heroes, manifest) {
     process.exit(1);
   }
   for (const h of heroes) {
+    if (RESUME && PIN_MAX_TS) {
+      const old = path.join(OUT, `analytics/brawl/${h.id}.json`);
+      if (existsSync(old) && statSync(old).mtimeMs / 1000 > PIN_MAX_TS) {
+        console.log(`   ${h.name}: kept from the earlier run`);
+        continue;
+      }
+    }
     const q = `hero_id=${h.id}&game_mode=${BRAWL_GAME_MODE}&${windowQ()}`;
     const item_stats = await getJson(`${API}/v1/analytics/item-stats?${q}`);
     const perm = await getJson(`${API}/v1/analytics/item-permutation-stats?${q}&comb_size=2`);

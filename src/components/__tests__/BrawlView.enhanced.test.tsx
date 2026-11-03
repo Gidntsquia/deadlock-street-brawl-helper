@@ -68,8 +68,8 @@ const heroes = readJson('heroes.json') as Hero[];
 const items = readJson('items.json') as Item[];
 const abilities = readJson('abilities.json') as Ability[];
 const id = (name: string) => items.find((i) => i.name === name && !i.disabled)!.id;
-const set = ['Ricochet', 'Healing Tempo', 'Transcendent Cooldown'].map(id);
-const tc = id('Transcendent Cooldown');
+const set = ['Ricochet', 'Healing Tempo', 'Spirit Burn'].map(id);
+const tc = id('Spirit Burn');
 
 const read = (itemId: number, enhanced: boolean) => ({
   card: 'c',

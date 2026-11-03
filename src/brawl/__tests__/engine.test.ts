@@ -36,12 +36,18 @@ describe('scoreOffer: enhanced', () => {
     expect(plain.parts.enhanced).toBe(0);
     const carry = bases.get(item.id)!.carry;
     expect(carry).toBeGreaterThan(0); // Improved Spirit builds into Boundless Spirit
-    expect(enhanced.parts.enhanced).toBeCloseTo(BRAWL_WEIGHTS.enhanced + BRAWL_WEIGHTS.enhancedCarry * carry, 10);
+    // 0.6.0 (audit P1): the bonus is scaled by the item's popularity within its tier and the hero's enhanced factor
+    const b = bases.get(item.id)!;
+    expect(enhanced.parts.enhanced).toBeCloseTo(
+      b.enhFactor * b.pop * (BRAWL_WEIGHTS.enhanced + BRAWL_WEIGHTS.enhancedCarry * carry),
+      10,
+    );
     // an 800-soul card uses the larger 800 weights
     const es = itemByName('Extra Spirit');
     const esEnh = scoreOffer(infernus, bases, pair, state, { itemId: es.id, enhanced: true });
+    const esb = bases.get(es.id)!;
     expect(esEnh.parts.enhanced).toBeCloseTo(
-      BRAWL_WEIGHTS.enhanced800 + BRAWL_WEIGHTS.enhancedCarry800 * bases.get(es.id)!.carry,
+      esb.enhFactor * esb.pop * (BRAWL_WEIGHTS.enhanced800 + BRAWL_WEIGHTS.enhancedCarry800 * esb.carry),
       10,
     );
     expect(enhanced.score).toBeGreaterThan(plain.score);
@@ -60,16 +66,16 @@ describe('scoreOffer: enhanced', () => {
     expect(score('Mystic Burst', true)).toBeLessThan(score('Healbane'));
   });
 
-  it('re-rolls a round-1 set whose enhanced 800 card is weak, to draw another enhanced 800 card', () => {
-    const set = ['Healbane', 'Mystic Burst', 'Mystic Regeneration'].map((n) => ({
-      itemId: itemByName(n).id,
-      enhanced: n === 'Mystic Burst',
-    }));
-    const advice = adviseDraft(infernus, { round: 1, owned: [], enemies: [], sets: [set, [], []] });
-    expect(advice.reroll?.set).toBe(0);
-    // the same set without the enhanced slot is kept
-    const plain = set.map((o) => ({ ...o, enhanced: false }));
-    expect(adviseDraft(infernus, { round: 1, owned: [], enemies: [], sets: [plain, [], []] }).reroll).toBeNull();
+  it('gives a rarely picked enhanced 800 card a small lift (audit P1), so it no longer justifies a re-roll alone', () => {
+    const bases = baseScores(infernus);
+    const pair = pairLifts(infernus);
+    const state = { round: 1, owned: [], enemies: [], sets: [] };
+    const lift = (name: string) =>
+      scoreOffer(infernus, bases, pair, state, { itemId: itemByName(name).id, enhanced: true }).parts.enhanced;
+    expect(lift('Mystic Burst')).toBeLessThan(lift('Extra Spirit'));
+    expect(bases.get(itemByName('Mystic Burst').id)!.pop).toBeLessThan(bases.get(itemByName('Extra Spirit').id)!.pop);
+    // the lift never exceeds the full bonus
+    expect(lift('Extra Spirit')).toBeLessThanOrEqual(BRAWL_WEIGHTS.enhanced800 + BRAWL_WEIGHTS.enhancedCarry800 * 4);
   });
 });
 

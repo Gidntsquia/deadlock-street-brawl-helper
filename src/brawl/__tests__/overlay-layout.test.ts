@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { drawReads, drawReading, type DrawnRect, type FrameRect, type OverlayTheme } from '../draw';
 import { cardSquares, type CardRead } from '../recognise';
 import { recordingCtx } from './recordingCtx';
-import { BRAWL_WEIGHTS, baseScores, pairLifts, scoreOffer } from '../engine';
+import { baseScores, pairLifts, scoreOffer } from '../engine';
 import { breakdownRows } from '../breakdown';
 import { heroByName, inputFor, itemByName } from './testData';
 
@@ -110,7 +110,8 @@ describe('Enhanced cell number', () => {
       const enh = scoreOffer(infernus, bases, pair, state, { itemId: item.id, enhanced: true });
       expect(enh.enhancedBonus).toBeCloseTo(enh.score - plain.score, 10);
       expect(plain.enhancedBonus).toBe(0);
-      expect(enh.enhancedBonus).toBeGreaterThanOrEqual(BRAWL_WEIGHTS.enhanced - 1e-9);
+      // audit P1 scales the bonus by popularity, so only a positive lift is guaranteed
+      expect(enh.enhancedBonus).toBeGreaterThan(0);
       const rows = breakdownRows(enh.parts, enh.score, enh.known, enh.enhancedBonus);
       const row = rows.find((r) => r.label === 'Enhanced')!;
       expect(row.cents / 100).toBeCloseTo(Math.round(enh.enhancedBonus * 100) / 100, 2);
