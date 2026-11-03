@@ -125,7 +125,7 @@ export default function OverlayApp() {
   };
 
   /** Hover: which plate (if any) is under the cursor. Does nothing unless a draft is on screen. */
-  const onMove = (ev: MouseEvent) => {
+  const onMove = (ev: { clientX: number; clientY: number }) => {
     const st = stateRef.current;
     const c0 = canvasRef.current;
     if (c0 && dotRef.current) {
@@ -189,6 +189,12 @@ export default function OverlayApp() {
     return () => window.removeEventListener('resize', resize);
   }, []);
 
+  // Production: main reads the cursor (no mouse hook, see overlayCursorTick in main.ts) and sends overlay pixels.
+  useEffect(() => {
+    return window.brawlAPI?.onOverlayCursor?.((p) => (p ? onMove({ clientX: p.x, clientY: p.y }) : clearHover()));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- handlers only read refs
+  }, []);
+
   useEffect(() => {
     window.addEventListener('mousemove', onMove);
     document.addEventListener('mouseleave', clearHover);
@@ -218,14 +224,14 @@ export default function OverlayApp() {
 
   // the amber dot pulses while the app is reading, so it is clear it is working (cheap: only while reading)
   useEffect(() => {
-    if (window.brawlAPI?.isE2E) return;
+    if (window.brawlAPI?.isE2E || panelState?.dot !== 'reading') return;
     const t = setInterval(() => {
       const st = stateRef.current;
       if (st?.dot === 'reading') draw(st);
     }, 100);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- draw only reads refs
-  }, []);
+  }, [panelState?.dot]);
 
   const c_ = dotTip && canvasRef.current ? dotBadgeRect(canvasRef.current.height) : null;
   const advice = panelState?.draft ? panelState.advice : null;

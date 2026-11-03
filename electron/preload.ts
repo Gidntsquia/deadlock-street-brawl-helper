@@ -63,6 +63,13 @@ const api = {
       ipcRenderer.removeListener(CHANNELS.overlayState, listener);
     };
   },
+  onOverlayCursor: (cb: (p: { x: number; y: number } | null) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, p: { x: number; y: number } | null) => cb(p);
+    ipcRenderer.on(CHANNELS.overlayCursor, listener);
+    return () => {
+      ipcRenderer.removeListener(CHANNELS.overlayCursor, listener);
+    };
+  },
   onCaptureDenied: (cb: () => void) => {
     const listener = () => cb();
     ipcRenderer.on(CHANNELS.captureDenied, listener);

@@ -76,14 +76,16 @@ if (!process.env.BRAWL_E2E) {
     log('electron-main', 'warn', 'priority.fail', { message: String(err) });
   }
 }
-const RECT_POLL_MS = 250; // base tick; see the poll's own cadence below
-// Game window lookup cadence (in ticks): once a second while no game is open, twice a second while it is.
-const POLL_TICKS_NO_GAME = 4;
-const POLL_TICKS_GAME = 2;
-// With the game open but in the background and nothing being read, or when a tick itself is slow (a loaded PC), look
-// half as often. The probe only runs while the game is the foreground window, so nothing is missed.
-const POLL_TICKS_QUIET = 4;
+// Window poll cadence. Nothing here may wake the process more than once per 5 s while there is no game, or the game is
+// open but in the background with nothing being read (0.6.0: the poll used to tick every 250 ms and act every 0.5 to 1 s
+// in all of those states). The probe only runs while the game is the foreground window; the slow tick also notices the
+// game coming to the front, at most IDLE_POLL_MS late, long before a draft can be on screen and read.
+const IDLE_POLL_MS = 5000;
+const ACTIVE_POLL_MS = 500; // game in front (or test mode / harness): looking for the draft
+const SLOW_POLL_MS = 1000; // the same when a tick itself is slow (a loaded PC)
 const POLL_TICK_SLOW_MS = 40;
+// A plain build is idle until a game window shows up; the harness (BRAWL_E2E) keeps the old one-second lookup.
+const NO_GAME_POLL_MS = process.env.BRAWL_E2E ? 1000 : IDLE_POLL_MS;
 
 let control: BrowserWindow | null = null;
 let overlay: BrowserWindow | null = null;
@@ -166,7 +168,7 @@ function emitCaptureState() {
   log('electron-main', 'info', 'capture.state', st);
   sendControl(CHANNELS.captureState, st);
 }
-let pollTimer: ReturnType<typeof setInterval> | null = null;
+let pollTimer: ReturnType<typeof setTimeout> | null = null;
 // Mirrors the value passed to the last setIgnoreMouseEvents() call, so the e2e harness can assert the
 // *actual* live click-through state instead of the literal `true` createOverlayWindow() happens to pass
 // today (electron/main.ts has no BrowserWindow getter to read this back).
@@ -393,10 +395,12 @@ function createOverlayWindow() {
     },
   });
   logPreloadErrors(overlay);
-  // Click-through; mouse moves are forwarded for the plate hover. Not under the harness: the person's real cursor (a game
-  // in front holds it at the screen centre, inside the overlay) would clear the harness's own hover. Its synthetic
-  // moves reach the page directly (sendInputEvent).
-  overlay.setIgnoreMouseEvents(true, { forward: !process.env.BRAWL_E2E });
+  // Click-through, with no forwarded mouse messages: Electron implements `forward` with a system-wide low-level mouse
+  // hook (WH_MOUSE_LL) whose callback runs on this process's main thread, so every mouse move on the PC passes through
+  // a below-normal-priority process while the overlay exists (0.6.0: suspected cause of the changed aim feel). The plate
+  // hover is fed from `overlayCursorTick` instead, only while a draft shows. The harness's synthetic moves reach the page
+  // directly (sendInputEvent).
+  overlay.setIgnoreMouseEvents(true);
   overlayIgnoresMouseEvents = true;
   overlayOnTop();
   // Under the harness nobody looks at the overlay (checks read it via capturePage/executeJavaScript), and it
@@ -625,6 +629,30 @@ function detectNow(source: string): boolean {
   return true;
 }
 
+// Plate hover without a mouse hook: while a draft shows (50 ms), or while the lobby dot shows with the game in front
+// (400 ms), main reads the cursor and sends it in overlay pixels. Stopped otherwise, so nothing wakes up when idle.
+let overlayCursorTimer: ReturnType<typeof setTimeout> | null = null;
+let lastCursorKey = '';
+function overlayCursorTick() {
+  overlayCursorTimer = null;
+  if (process.env.BRAWL_E2E || !alive(overlay) || !overlay.isVisible()) return;
+  const draft = !!lastOverlayState?.draft;
+  if (!draft && !(lastDot !== null && isGameForeground())) return;
+  const pt = screen.getCursorScreenPoint();
+  const b = overlay.getBounds();
+  const inside = pt.x >= b.x && pt.y >= b.y && pt.x < b.x + b.width && pt.y < b.y + b.height;
+  const key = inside ? `${pt.x - b.x},${pt.y - b.y}` : '';
+  if (key !== lastCursorKey) {
+    lastCursorKey = key;
+    overlay.webContents.send(CHANNELS.overlayCursor, inside ? { x: pt.x - b.x, y: pt.y - b.y } : null);
+  }
+  overlayCursorTimer = setTimeout(overlayCursorTick, draft ? 50 : 400);
+}
+function syncOverlayCursor() {
+  if (overlayCursorTimer || process.env.BRAWL_E2E) return;
+  if (alive(overlay) && overlay.isVisible()) overlayCursorTimer = setTimeout(overlayCursorTick, 0);
+}
+
 /** Shows or hides the overlay window to match `overlayWanted`, the game window and the toggle. */
 function syncOverlay() {
   if (!alive(overlay)) return;
@@ -637,6 +665,7 @@ function syncOverlay() {
   } else if (!show && overlay.isVisible()) {
     overlay.hide();
   }
+  syncOverlayCursor();
 }
 
 // How often the overlay is pushed back on top of the game while it is showing. It is also re-asserted at once when it
@@ -645,26 +674,18 @@ const OVERLAY_REASSERT_MS = 2000;
 
 function startRectPolling() {
   if (pollTimer) return;
-  let tickNo = 0;
   let lastReassert = 0;
   let gameWasForeground = false;
   let quiet = false;
   let tickEma = 0;
-  pollTimer = setInterval(() => {
-    tickNo += 1;
-    const every = !lastRect
-      ? POLL_TICKS_NO_GAME
-      : quiet || tickEma > POLL_TICK_SLOW_MS
-        ? POLL_TICKS_QUIET
-        : POLL_TICKS_GAME;
-    if (tickNo % every !== 0) return;
+  const tick = () => {
     const t0 = performance.now();
     const found = findTarget();
     let reassert = false;
     if (!rectsEqual(found, lastRect)) {
       lastRect = found;
       log('electron-main', 'info', found ? 'window.found' : 'window.lost', found ?? undefined);
-      sessions().endMatch(); // a window lost and found is a new match
+      if (__DEV_TOOLS__) sessions().endMatch(); // a window lost and found is a new match
       sendControl(CHANNELS.gameRect, found);
       if (found && alive(overlay)) overlay.setBounds(toDipBounds(found));
       syncOverlay();
@@ -731,7 +752,13 @@ function startRectPolling() {
     const took = performance.now() - t0;
     tickEma = tickEma === 0 ? took : tickEma * 0.8 + took * 0.2;
     if (__DEV_TOOLS__) perf.record('poll.tick', took);
-  }, RECT_POLL_MS);
+    const idle = !found || (quiet && !alive(testWindow));
+    pollTimer = setTimeout(
+      tick,
+      idle ? (found ? IDLE_POLL_MS : NO_GAME_POLL_MS) : tickEma > POLL_TICK_SLOW_MS ? SLOW_POLL_MS : ACTIVE_POLL_MS,
+    );
+  };
+  pollTimer = setTimeout(tick, 0);
 }
 
 /** Dev only: CPU and memory of every Electron process, summarised with the other timings. */
@@ -1511,5 +1538,5 @@ app.on('window-all-closed', () => {
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
   nameReader?.stop();
-  if (pollTimer) clearInterval(pollTimer);
+  if (pollTimer) clearTimeout(pollTimer);
 });

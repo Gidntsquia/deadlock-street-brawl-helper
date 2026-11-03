@@ -761,6 +761,7 @@ export function BrawlView({
     if (!isElectron) return;
     void window.brawlAPI!.getCaptureState().then((st) => {
       captureWantedRef.current = st.wanted;
+      setWantedUi(st.wanted);
       probeModeRef.current = st.probe;
       setProbing(st.probe);
       if (!st.probe || st.wanted) void startCapture();
@@ -792,6 +793,8 @@ export function BrawlView({
   // cheap screen-region probe sees the draft screen (electron/main.ts), so the game window is not being captured the
   // whole session; under test mode / the harness (`probe: false`) it simply follows the game window.
   const captureWantedRef = useRef(false);
+  // Mirrors captureWantedRef for the retry timer below, which must not run while nothing wants capture (idle cost).
+  const [wantedUi, setWantedUi] = useState(false);
   const probeModeRef = useRef(false);
   // Mirrors probeModeRef for rendering: with a real game, capture being off is the normal "watching" state.
   const [, setProbing] = useState(false);
@@ -799,6 +802,7 @@ export function BrawlView({
     if (!isElectron) return;
     return window.brawlAPI!.onCaptureState((st) => {
       captureWantedRef.current = st.wanted;
+      setWantedUi(st.wanted);
       probeModeRef.current = st.probe;
       setProbing(st.probe);
       if (st.wanted && capture === 'off' && !manualStopRef.current) {
@@ -880,12 +884,12 @@ export function BrawlView({
   // is denied and no further state change follows. While capture is wanted and off, retry every 2 s (never
   // otherwise: that would be a busy loop against a denial that cannot succeed).
   useEffect(() => {
-    if (!isElectron || capture !== 'off') return;
+    if (!isElectron || capture !== 'off' || !wantedUi) return;
     const t = setInterval(() => {
       if (captureWantedRef.current && !manualStopRef.current) void startCapture();
     }, 2000);
     return () => clearInterval(t);
-  }, [capture]);
+  }, [capture, wantedUi]);
   // With a real game the stream is only for the draft: once neither the draft screen nor the ability tip is up for a
   // few seconds, stop capturing and tell main.ts to go back to probing.
   useEffect(() => {

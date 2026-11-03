@@ -3,6 +3,9 @@ export const CHANNELS = {
   getGameRect: 'get-game-rect',
   gameRect: 'game-rect',
   overlayState: 'overlay-state',
+  // Main -> overlay: where the cursor is in the overlay's own pixels (null outside it). Main reads it while a draft shows,
+  // so the overlay needs no forwarded mouse messages (see overlayCursorTimer in main.ts).
+  overlayCursor: 'overlay-cursor',
   // Test-mode video only: the overlay tells main a set's plates are drawn (main logs `video.advice`).
   captureDenied: 'capture-denied',
   // Test mode (dummy "Deadlock" window): invoke to read/toggle/switch frame, and a push of the state to the
