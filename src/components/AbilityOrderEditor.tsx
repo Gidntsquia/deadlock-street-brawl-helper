@@ -28,8 +28,8 @@ interface Props {
   abilities: EditorAbility[];
   /** The standard order, used when the player starts their own. */
   standard: CustomOrder;
-  /** `<n> matches, <w>% win rate` of the default (best blended) order, or `No reliable order`. */
-  defaultEvidence: string;
+  /** Evidence for the default target at the end of the round selected in this editor. */
+  defaultEvidence: (round: number) => string;
   value: CustomOrder | null;
   onChange: (next: CustomOrder | null) => void;
   /** The round selected when the editor opens (the game's current round). */
@@ -100,7 +100,7 @@ export function AbilityOrderEditor({ heroName, abilities, standard, defaultEvide
         <div className="ap-title">
           Round {sel}: {AP_PER_ROUND[sel - 1]} points, {left} left
         </div>
-        <div className="ap-evidence">{value ? 'Your order' : `Default order: ${defaultEvidence}`}</div>
+        <div className="ap-evidence">{value ? 'Your order' : `Default order: ${defaultEvidence(sel)}`}</div>
         {abilities.slice(0, 4).map((ab, a) => (
           <div key={a} className="ap-col" data-ability={ab.name}>
             {TIERS.map((tier) => {

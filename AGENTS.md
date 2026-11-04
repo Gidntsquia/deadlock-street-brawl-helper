@@ -180,7 +180,10 @@ one-off hidden check (with a synthetic clip, never the user's recording) and no 
   (`overlayHasContent`, `src/brawl/overlayContent.ts`). The panel is an HTML picture of the game's ability upgrade
   panel (`src/components/AbilityPanel.tsx`, data from `abilityPanelFor` in `src/brawl/abilities.ts`) for 15 s after
   the draft screen closes (`src/brawl/abilityPanelTimer.ts`, a pure state machine); a reopened draft ends it at once.
-  It shows this round's standard points highlighted (Street Brawl gives 6/6/5/5/10 points in rounds 1-5; pills cost 1/2/5; `pillRounds` in `abilities.ts` follows the standard order, carries unspent points, and fills leftovers so all 32 are spent by round 5), earlier rounds' greyed with a check, later ones plain, with a "Round N: X points" title. Every ability starts unlocked in Street Brawl: there is no unlock advice anywhere.
+  Automatic advice highlights the whole target at round end, with a "By end of round N" title. `brawlAbilityOrder`
+  pools the same four ability tiers across purchase paths under cumulative budgets 6/12/17/22/32 (pills cost 1/2/5).
+  A custom order instead highlights this round's purchases, greys earlier ones with a check, and keeps the
+  "Round N: X points" title. Every ability starts unlocked in Street Brawl: there is no unlock advice anywhere.
 - No yellow outline: Windows Graphics Capture draws one; `disable-features=CalculateNativeWinOcclusion,AllowWgcWindowCapturer` (in
   `electron/main.ts` and the harnesses; occlusion off so a covered test-mode dummy keeps painting its video) falls back to Chromium's GDI window capturer, which has none. Keep that
   switch in all three places.
@@ -221,8 +224,10 @@ in `win:e2e`/`win:demo` drives the actual game:
   `capture-denied` channel instead.
 - Never edit `public/data/**` or `scripts/fixtures/**` by hand except `manifest.json` metadata.
 - Do not change scoring constants in `src/brawl/engine.ts` without updating the tests and the wiki page.
-- Layout anchors in the recogniser are for 2560×1440; other 16:9 sizes scale. No fixtures exist for other
-  resolutions.
+- Layout anchors in the recogniser are for 2560×1440; other 16:9 sizes scale. `hudLayout` centres the same 16:9 HUD
+  on ultrawide captures (more than 5% wider than 16:9), scaling by height. Slightly stretched captures retain
+  independent x/y scaling. `scripts/__tests__/ultrawide.test.ts` pads real frames in memory to verify reads and crops;
+  no extra fixture files are stored.
 - User docs live in the GitHub wiki; README is quickstart only. `plans/` is gitignored planner state.
 - The game window is matched by exact title `Deadlock` (`electron/main.ts`, `electron/gameWindow.ts`), never
   by substring: the app's own window is "Deadlock Street Brawl Helper".
@@ -345,7 +350,12 @@ logs `round.start` itself in its `onRoundStart` handler (round banner probe in `
 `Resynced to round N choice M` is shown by `BrawlView`'s `resyncText` (5 s) ahead of `statusFor`; F8 forces it (`forceResync`).
 e2e hooks: `__brawlE2E.roundStart(n)`; checks `round-start-warms-first`, `slots-read-once`, `f8-resync`, `frame-switch-resync`;
 the advice limit is `ADVICE_LIMIT_MS` (1000) in `e2e-main.cjs`. `--slow 4` (processor affinity) does not yet meet it (about 2.7 s).
-The editor's default row shows the best blended order's matches and win rate; `Reset to default order` returns to it.
+Ability advice groups purchase sequences by the four ability tiers held at each round end, pooling matches and wins
+from every path to the same state. Each target needs 100 matches; later recommendations cannot undo an earlier tier.
+Automatic panels show the whole round-end target (`By end of round N`), with that round's evidence. Custom orders keep
+their explicit per-round highlights and storage format. The editor's default evidence follows its selected round.
+`standardCustom` seeds only a complete supported plan; unknown rounds leave the editor empty. `Reset to default order`
+returns to the statistical plan.
 If `npm run check` fails with ENOTDIR on prettier, delete the stray file `node_modules/.cache/prettier`.
 
 ## Fast draft read (0.4.0 tracker)

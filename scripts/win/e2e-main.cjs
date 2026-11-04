@@ -231,9 +231,7 @@ async function main() {
     await waitFor(
       async () =>
         captureAttempts >= 1 &&
-        (await js(control, 'document.querySelector(".brawl-status")?.textContent ?? ""')).includes(
-          'Deadlock window not found',
-        ),
+        (await js(control, 'document.querySelector(".brawl-status")?.textContent ?? ""')) === 'Waiting for Deadlock',
       4_000,
       100,
     );
@@ -256,7 +254,12 @@ async function main() {
     const hasDebug = () => js(control, '!!document.querySelector("[aria-label=\\"Debug panel\\"]")');
     // First-run panel: three lines and Show me; Got it dismisses it and it stays dismissed.
     // userData keeps the dismissal between runs, so start from a first run.
-    await js(control, `localStorage.removeItem('brawl.firstRunDone'); setTimeout(() => location.reload(), 0)`);
+    await js(control, `localStorage.removeItem('brawl.firstRunDone')`);
+    // Wait for the new document before inspecting it: the old page can still contain all three lines.
+    await new Promise((resolve) => {
+      control.webContents.once('did-finish-load', resolve);
+      control.webContents.reload();
+    });
     await waitFor(() => js(control, `document.querySelectorAll('.brawl-firstrun li').length === 3`), 6_000, 100);
     const firstRun = await js(control, `document.querySelectorAll('.brawl-firstrun li').length`);
     check('first-run-shown', firstRun === 3, `lines=${firstRun}`);
@@ -627,6 +630,35 @@ async function main() {
       // next real state replaces the forced one (advice re-sent on change only): switch frame below re-syncs
     }
 
+    const automaticTarget = await js(
+      control,
+      `(() => { const p = document.querySelector('.ap-control'); return { round: Number(p?.dataset.round), title: p?.querySelector('.ap-title')?.textContent, evidence: p?.querySelector('.ap-evidence')?.textContent }; })()`,
+    );
+    check(
+      'ability-target-round',
+      automaticTarget.title === `By end of round ${automaticTarget.round}` &&
+        /^\d+ matches, \d+% win rate$/.test(automaticTarget.evidence),
+      JSON.stringify(automaticTarget),
+    );
+    const selectedEvidence = await js(
+      control,
+      `(async () => {
+        const result = [];
+        for (const round of [1, 5]) {
+          [...document.querySelectorAll('.brawl-my-order button')].find((b) => b.textContent === 'Round ' + round).click();
+          await new Promise((r) => setTimeout(r, 0));
+          result.push({ round: Number(document.querySelector('.ap-editor').dataset.round), evidence: document.querySelector('.ap-editor .ap-evidence').textContent });
+        }
+        return { result, gameRound: Number(document.querySelector('.ap-control').dataset.round) };
+      })()`,
+    );
+    check(
+      'ability-editor-round-evidence',
+      selectedEvidence.gameRound === automaticTarget.round &&
+        selectedEvidence.result.every((p) => p.evidence.startsWith('Default order: Round ' + p.round + ': ')),
+      JSON.stringify(selectedEvidence),
+    );
+
     // --- the ability order editor drives the panel: build an order by clicking its pills (Start from empty, then
     // round button + pill for each of the 12), and the panel shown after this draft must highlight that order's pills ---
     const nowOf = `(sel) => [...document.querySelectorAll(sel + ' .ap-col')].flatMap((c) =>
@@ -936,8 +968,8 @@ async function main() {
 
     // --- off ---
     await js(control, CLICK_TEST_MODE_JS);
-    const closed = await waitFor(() => !e2e.getTestWindow(), 6_000);
-    await sleep(300);
+    // Window discovery polls every 500 ms; await both outcomes instead of racing it with a 300 ms sleep.
+    const closed = await waitFor(() => !e2e.getTestWindow() && !overlay.isVisible(), 6_000);
     check(
       'testmode-off',
       !!closed && !overlay.isVisible() && !control.isDestroyed(),

@@ -92,7 +92,7 @@ describe('abilityPanelFor', () => {
     expect(p.slots.map((s) => s.key)).toEqual(['1', '2', '3', '4']);
   });
 
-  it('spends 6/6/5/5/10 points a round without overspending, and all 32 by round 5', () => {
+  it('shows cumulative targets within 6/12/17/22/32 points and all 32 by round 5', () => {
     const pts = [6, 6, 5, 5, 10];
     let carried = 0;
     let cum = 0;
@@ -100,9 +100,10 @@ describe('abilityPanelFor', () => {
       expect(panel(i + 1).points).toBe(p);
       const now = sum(i + 1, 'now');
       cum += p;
-      expect(sum(i + 1, 'done')).toBe(carried);
-      expect(carried + now).toBeLessThanOrEqual(cum);
-      carried += now;
+      expect(sum(i + 1, 'done')).toBe(0);
+      expect(now).toBeGreaterThanOrEqual(carried);
+      expect(now).toBeLessThanOrEqual(cum);
+      carried = now;
     });
     expect(carried).toBe(32);
     expect(sum(5, 'later')).toBe(0);
@@ -145,8 +146,17 @@ describe('custom ability order', () => {
   it('starts the editor from the standard order', () => {
     const std = standardCustom(order, hero);
     expect(customOrderProblem(std)).toBeNull();
-    expect(abilityPanelFor(order, hero, input.abilities, 3, std).slots).toEqual(
-      abilityPanelFor(order, hero, input.abilities, 3).slots,
-    );
+    expect(
+      abilityPanelFor(order, hero, input.abilities, 3, std).slots.map((s) => s.tiers.map((t) => t !== 'later')),
+    ).toEqual(abilityPanelFor(order, hero, input.abilities, 3).slots.map((s) => s.tiers.map((t) => t !== 'later')));
+  });
+
+  it('does not seed a complete custom order when a round target is unknown', () => {
+    const partial = { rounds: order.rounds.map((p, i) => (i === 4 ? null : p)) };
+    expect(standardCustom(partial, hero)).toEqual(Array(12).fill(0));
+    const missing = abilityPanelFor(partial, hero, input.abilities, 5);
+    expect(missing.evidence).toBe('No reliable order');
+    expect(missing.slots.every((s) => s.tiers.every((t) => t === 'later'))).toBe(true);
+    expect(abilityPanelFor(partial, hero, input.abilities, 2, mine).evidence).toBe('Your order');
   });
 });

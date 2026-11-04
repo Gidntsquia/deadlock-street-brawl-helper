@@ -3,7 +3,6 @@
 // cards are accepted once the screen has settled and the player has not already picked from them (draftGate.ts), and
 // the expensive labels / hero bar read runs only then.
 import {
-  BRAWL_LAYOUT,
   HERO_BAR,
   decodeIconIndex,
   isShopScreen,
@@ -43,6 +42,7 @@ import { initialGate, offScreenGate, RELABEL_SETTLE_MS, SETTLE_MS, stepGate } fr
 import { setLocked } from './brawlState';
 import { createTracker, type TrackOut } from './tracker';
 import type { IconIndex } from './types';
+import { hudLayout } from './hudLayout';
 
 export interface FrameRegion {
   x: number;
@@ -718,13 +718,12 @@ const stage = <T>(name: string, fn: () => T): T => {
 const BAR_SIG_MAX_CHANGED = 12; // of ~200 sampled channel values; a different portrait moves most of them
 let matchBar: { bar: DraftMeta['bar']; self: number; sig: Uint8Array } | null = null;
 const barSig = (img: { width: number; height: number; data: Uint8ClampedArray }): Uint8Array => {
-  const sx = img.width / BRAWL_LAYOUT.ref.width,
-    sy = img.height / BRAWL_LAYOUT.ref.height,
-    out: number[] = [];
+  const { sx, sy, offsetX } = hudLayout(img.width, img.height);
+  const out: number[] = [];
   for (const cx of [...HERO_BAR.left, ...HERO_BAR.right])
     for (let dy = -30; dy <= 30; dy += 15)
       for (let dx = -30; dx <= 30; dx += 15) {
-        const i = (Math.round((HERO_BAR.cy + dy) * sy) * img.width + Math.round((cx + dx) * sx)) * 4;
+        const i = (Math.round((HERO_BAR.cy + dy) * sy) * img.width + Math.round(offsetX + (cx + dx) * sx)) * 4;
         out.push(img.data[i]!, img.data[i + 1]!, img.data[i + 2]!);
       }
   return Uint8Array.from(out);
