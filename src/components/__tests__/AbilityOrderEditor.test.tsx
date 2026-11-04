@@ -10,6 +10,7 @@ import {
   abilityPanelFor,
   brawlAbilityOrder,
   customOrderProblem,
+  evidenceLine,
   NOT_BOUGHT,
   type CustomOrder,
 } from '../../brawl/abilities';
@@ -39,7 +40,7 @@ function Harness({ start, onValue }: { start: CustomOrder | null; onValue?: (v: 
       heroName="Infernus"
       abilities={ABILITIES}
       standard={STANDARD}
-      defaultEvidence="1000 matches, 55% win rate"
+      defaultEvidence={() => '1000 matches, 55% win rate'}
       value={value}
       onChange={(v) => {
         setValue(v);
@@ -177,6 +178,24 @@ describe('AbilityOrderEditor persistence (brawl.customOrders in BrawlView)', () 
   // saved by the editor before this change (12 rounds, no 0): must load unchanged
   const OLD = [4, 4, 5, 1, 1, 2, 2, 4, 5, 1, 1, 3];
   beforeEach(() => localStorage.clear());
+
+  it('shows evidence for the editor round even when the game round is different', async () => {
+    localStorage.setItem('brawl.round', '3');
+    const input = inputFor(infernus.id);
+    const order = brawlAbilityOrder(input);
+    const { container } = render(
+      <BrawlView hero={infernus} heroes={heroes} items={items} abilities={abilities} onHero={() => {}} />,
+    );
+    await waitFor(() => expect(container.querySelector('.ap-editor')).not.toBeNull());
+    const evidence = () => container.querySelector('.ap-editor .ap-evidence')!.textContent;
+    expect(evidence()).toBe(`Default order: Round 3: ${evidenceLine(order.rounds[2]?.support ?? null)}`);
+    round(1);
+    expect(container.querySelector('.ap-editor')!.getAttribute('data-round')).toBe('1');
+    expect(evidence()).toBe(`Default order: Round 1: ${evidenceLine(order.rounds[0]?.support ?? null)}`);
+    expect(localStorage.getItem('brawl.round')).toBe('3');
+    round(5);
+    expect(evidence()).toBe(`Default order: Round 5: ${evidenceLine(order.rounds[4]?.support ?? null)}`);
+  });
 
   it('loads a saved pre-change order unchanged and saves clicks in the same format', async () => {
     localStorage.setItem('brawl.customOrders', JSON.stringify({ '1': OLD }));

@@ -36,6 +36,44 @@ const reads = (enhanced: boolean): CardRead[] =>
   }));
 const hit = (a: FrameRect, b: FrameRect) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
 
+it.each([false, true])('centres the same plates, circles and re-roll call on 3440x1440 (re-roll %s)', (reroll) => {
+  const draw = (w: number) => {
+    const cards = reads(true).map((r, i) => ({ ...r, match: { ...r.match, ...cardSquares(w, 1440)[i]! } }));
+    return drawReads(
+      recordingCtx(w, 1440).ctx,
+      cards,
+      reroll ? null : 2,
+      1,
+      1,
+      w,
+      1440,
+      reroll,
+      { 1: 3.21, 2: 4.56, 3: 2.1 },
+      null,
+      { 1: 'B', 2: 'S', 3: 'C' },
+      THEME,
+      { 1: 0.74, 2: 0.31, 3: 1.05 },
+    );
+  };
+  const original = draw(2560);
+  const wide = draw(3440);
+  expect(wide).toHaveLength(original.length);
+  const shifted = (a: FrameRect, b: FrameRect) => {
+    expect(b.x0).toBeCloseTo(a.x0 + 440, 8);
+    expect(b.x1).toBeCloseTo(a.x1 + 440, 8);
+    expect(b.y0).toBe(a.y0);
+    expect(b.y1).toBe(a.y1);
+  };
+  for (let i = 0; i < original.length; i++) {
+    const a = original[i]!;
+    const b = wide[i]!;
+    expect(b.kind).toBe(a.kind);
+    shifted(a, b);
+    if (a.plate) shifted(a.plate, b.plate!);
+    if (a.chip) shifted(a.chip, b.chip!);
+  }
+});
+
 describe.each(SIZES)('overlay layout at %ix%i', (cw, ch) => {
   const sx = cw / FRAME.w;
   const sy = ch / FRAME.h;

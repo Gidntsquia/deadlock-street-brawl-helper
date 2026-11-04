@@ -1,83 +1,87 @@
-import type { Ability, AbilityOrderStat, AbilityStep, Hero } from '../types';
+import type { Ability, Hero } from '../types';
 import type { BrawlInput } from './types';
 
-export interface BrawlAbilityOrder {
-  steps: AbilityStep[];
-  support: { matches: number; winRate: number } | null;
-  alternatives: { steps: AbilityStep[]; matches: number; winRate: number }[];
+type Support = { matches: number; winRate: number };
+
+export interface RoundAbilityPlan {
+  /** Upgrade tiers held at the end of this round, in the hero's ability-bar order. */
+  levels: number[];
+  support: Support;
 }
 
-const stepsFor = (seq: number[], byId: Map<number, AbilityStep['ability']>): AbilityStep[] => {
-  const seen = new Map<number, number>();
-  const steps: AbilityStep[] = [];
-  seq.forEach((id, index) => {
-    const a = byId.get(id);
-    if (!a) return;
-    const n = seen.get(id) ?? 0;
-    seen.set(id, n + 1);
-    if (n > 2) return;
-    // Every ability starts unlocked in Street Brawl, so an ability's first appearance is its tier-1 point.
-    const kind = n === 0 ? 'tier1' : n === 1 ? 'tier2' : 'tier3';
-    steps.push({ ability: a, kind, index });
-  });
-  return steps;
-};
+export interface BrawlAbilityOrder {
+  /** Earlier purchase paths do not split the evidence for a later round-end target. */
+  rounds: (RoundAbilityPlan | null)[];
+}
 
-/** Fewest matches that must back the chosen order; below this the panel says there is no reliable order. */
+/** Fewest matches that must back the same round-end target. */
 export const MIN_ORDER_MATCHES = 100;
 
 const shrunk = (wins: number, matches: number, mean: number, k: number) =>
   ((wins + k * mean) / (matches + k)) * Math.log(1 + matches);
 
-/** Builds the standard order one step at a time from every recorded sequence. Each step keeps only the sequences
- *  that start with the steps already chosen, so a short sequence counts toward the early steps it covers and a long
- *  one toward all of its steps. The next ability is the one whose continuations have the best shrunk win rate x
- *  log(matches). It stops when fewer than MIN_ORDER_MATCHES back the next step; `support` is the matches and win
- *  rate of every sequence that starts with the whole chosen order. */
+/** Groups observations by the upgrades held at the end of each round, independently of the path to that state.
+ *  A short record contributes only while the round's end can be determined. Exhausting a record with enough
+ *  points for another upgrade leaves an unknown continuation, never a completed or template-filled round. */
 export function brawlAbilityOrder(input: BrawlInput): BrawlAbilityOrder {
-  const stats: AbilityOrderStat[] = input.analytics.ability_order_stats ?? [];
-  const byId = new Map(input.abilities.map((a) => [a.id, a]));
-  const sig = input.abilities.filter((a) => input.hero.abilities.includes(a.class_name));
-  const sigIds = new Set(sig.map((a) => a.id));
-  const usable = stats.filter((s) => s.abilities.length > 0 && s.abilities.every((id) => sigIds.has(id)));
-  const totalW = usable.reduce((a, s) => a + s.wins, 0);
-  const totalM = usable.reduce((a, s) => a + s.matches, 0);
-  const mean = totalM ? totalW / totalM : 0.5;
-  const K = Math.max(50, 0.05 * Math.max(1, ...usable.map((s) => s.matches)));
-
-  const chosen: number[] = [];
-  let pool = usable;
-  let support: { matches: number; winRate: number } | null = null;
-  const count = (id: number) => ({ id, uses: chosen.filter((c) => c === id).length });
-  for (let step = 0; step < 12; step++) {
-    const groups = new Map<number, { wins: number; matches: number }>();
-    for (const s of pool) {
-      const id = s.abilities[step];
-      if (id === undefined || count(id).uses >= 3) continue;
-      const g = groups.get(id) ?? { wins: 0, matches: 0 };
-      g.wins += s.wins;
-      g.matches += s.matches;
-      groups.set(id, g);
+  const ids = input.hero.abilities.slice(0, 4).map((cls) => input.abilities.find((a) => a.class_name === cls)?.id);
+  const positions = new Map(ids.map((id, i) => [id, i]));
+  const empty = (): BrawlAbilityOrder => ({ rounds: AP_PER_ROUND.map(() => null) });
+  if (ids.length !== 4 || ids.includes(undefined) || positions.size !== 4) return empty();
+  const groups = AP_PER_ROUND.map(() => new Map<string, { levels: number[]; matches: number; wins: number }>());
+  for (const s of input.analytics.ability_order_stats ?? []) {
+    if (
+      !s.abilities.length ||
+      s.abilities.length > 12 ||
+      !Number.isInteger(s.matches) ||
+      s.matches <= 0 ||
+      !Number.isFinite(s.wins) ||
+      s.wins < 0 ||
+      s.wins > s.matches ||
+      s.abilities.some((id) => !positions.has(id) || s.abilities.filter((x) => x === id).length > 3)
+    )
+      continue;
+    const levels = [0, 0, 0, 0];
+    let at = 0;
+    let spent = 0;
+    let cap = 0;
+    for (let r = 0; r < AP_PER_ROUND.length; r++) {
+      cap += AP_PER_ROUND[r]!;
+      while (at < s.abilities.length) {
+        const a = positions.get(s.abilities[at]!)!;
+        const cost = PILL_COST[levels[a]!]!;
+        if (spent + cost > cap) break;
+        spent += cost;
+        levels[a] = levels[a]! + 1;
+        at++;
+      }
+      // Without a recorded next upgrade, spare points that could buy one leave the target unknown.
+      if (at === s.abilities.length && levels.some((n) => n < 3 && PILL_COST[n]! <= cap - spent)) break;
+      const key = levels.join(',');
+      const group = groups[r]!.get(key) ?? { levels: [...levels], matches: 0, wins: 0 };
+      group.matches += s.matches;
+      group.wins += s.wins;
+      groups[r]!.set(key, group);
     }
-    const best = [...groups.entries()]
-      .filter(([, g]) => g.matches >= MIN_ORDER_MATCHES)
-      .map(([id, g]) => ({ id, g, score: shrunk(g.wins, g.matches, mean, K) }))
-      .sort((a, b) => b.score - a.score || a.id - b.id)[0];
-    if (!best) break;
-    chosen.push(best.id);
-    pool = pool.filter((s) => s.abilities[step] === best.id);
-    support = { matches: best.g.matches, winRate: best.g.wins / best.g.matches };
   }
-
-  if (!chosen.length) {
-    const ids = input.hero.abilities
-      .map((c) => sig.find((a) => a.class_name === c)?.id)
-      .filter((x): x is number => !!x);
-    const seq = [...ids];
-    for (let t = 0; t < 3; t++) for (const id of ids) seq.push(id);
-    return { steps: stepsFor(seq, byId), support: null, alternatives: [] };
-  }
-  return { steps: stepsFor(chosen, byId), support, alternatives: [] };
+  let previous = [0, 0, 0, 0];
+  return {
+    rounds: groups.map((group) => {
+      const pool = [...group.entries()];
+      const matches = pool.reduce((n, [, s]) => n + s.matches, 0);
+      const mean = matches ? pool.reduce((n, [, s]) => n + s.wins, 0) / matches : 0.5;
+      const k = Math.max(50, 0.05 * Math.max(1, ...pool.map(([, s]) => s.matches)));
+      const best = pool
+        .filter(([, s]) => s.matches >= MIN_ORDER_MATCHES && s.levels.every((n, a) => n >= previous[a]!))
+        .map(([key, s]) => ({ key, ...s, score: shrunk(s.wins, s.matches, mean, k) }))
+        .sort((a, b) => b.score - a.score || b.matches - a.matches || a.key.localeCompare(b.key))[0];
+      if (!best) return null;
+      // Keep the targets followable without undoing an earlier recommended upgrade. Evidence is still pooled
+      // from every observed path reaching this state, not just paths following our earlier recommendation.
+      previous = best.levels;
+      return { levels: best.levels, support: { matches: best.matches, winRate: best.wins / best.matches } };
+    }),
+  };
 }
 
 /** Index of the order step nearest this draft choice, for highlighting the ability-order list. */
@@ -88,8 +92,8 @@ export const AP_PER_ROUND = [6, 6, 5, 5, 10] as const;
 /** Cost of the tier 1 / 2 / 3 point pill. Four abilities fully upgraded cost 32, the five rounds' total. */
 const PILL_COST = [1, 2, 5] as const;
 
-/** How a point looks in the ability panel: spent this round (`now`, highlighted), spent in an earlier round
- *  (`done`, dark with a check), or not yet spent (`later`). */
+/** Automatic targets use `now` for every tier held by round end and `later` for the rest. A custom order also
+ *  distinguishes tiers bought in an earlier round (`done`, dark with a check). */
 export type PointState = 'now' | 'done' | 'later';
 
 interface PanelSlot {
@@ -108,10 +112,12 @@ export interface AbilityPanelData {
   slots: PanelSlot[];
   /** `<n> matches, <w>% win rate`, or `No reliable order` (then nothing is highlighted). */
   evidence: string;
+  /** Automatic advice highlights the whole target at the end of the round. */
+  target?: boolean;
 }
 
 /** The one evidence line under the panel title. */
-export const evidenceLine = (support: BrawlAbilityOrder['support']): string =>
+export const evidenceLine = (support: Support | null): string =>
   support && support.matches >= MIN_ORDER_MATCHES
     ? `${support.matches} matches, ${Math.round(support.winRate * 100)}% win rate`
     : 'No reliable order';
@@ -119,33 +125,15 @@ export const evidenceLine = (support: BrawlAbilityOrder['support']): string =>
 /** Labels under the four abilities, left to right: their bar position, not the player's own keybinds. */
 export const ABILITY_KEYS = ['1', '2', '3', '4'] as const;
 
-/** Which round (1-5) buys each pill, keyed `<class_name>:<tier 1-3>`. Follows the standard order strictly; a pill
- *  that does not fit waits and the unspent points carry to the next round. If the order ends early, the rest are
- *  bought tier 1s first, then tier 2s, then tier 3s, in bar order, so rounds 1-5 always spend all 32. */
-function pillRounds(order: BrawlAbilityOrder, hero: Hero): Map<string, number> {
-  const classes = hero.abilities.slice(0, 4);
-  const queue: string[] = [];
-  const add = (k: string) => {
-    if (!queue.includes(k)) queue.push(k);
-  };
-  for (const st of order.steps) {
-    const tier = st.kind === 'tier2' ? 2 : st.kind === 'tier3' ? 3 : 1;
-    if (classes.includes(st.ability.class_name)) add(`${st.ability.class_name}:${tier}`);
-  }
-  for (const tier of [1, 2, 3]) for (const c of classes) add(`${c}:${tier}`);
-  const out = new Map<string, number>();
-  let spent = 0;
-  let cap = 0;
-  AP_PER_ROUND.forEach((pts, r) => {
-    cap += pts;
-    while (queue.length) {
-      const cost = PILL_COST[Number(queue[0]!.split(':')[1]) - 1]!;
-      if (spent + cost > cap) break;
-      out.set(queue.shift()!, r + 1);
-      spent += cost;
-    }
-  });
-  return out;
+function reliablePlan(plan: RoundAbilityPlan | null | undefined, round: number): plan is RoundAbilityPlan {
+  return (
+    !!plan &&
+    plan.support.matches >= MIN_ORDER_MATCHES &&
+    plan.levels.length === 4 &&
+    plan.levels.every((n) => Number.isInteger(n) && n >= 0 && n <= 3) &&
+    plan.levels.reduce((n, level) => n + PILL_COST.slice(0, level).reduce((sum, cost) => sum + cost, 0), 0) <=
+      AP_PER_ROUND.slice(0, round).reduce((n, points) => n + points, 0)
+  );
 }
 
 /** A player's own order for one hero: the round (1-5) that buys each pill, 12 numbers in bar order, tier 1/2/3 per
@@ -158,10 +146,21 @@ export const NOT_BOUGHT = 0;
 /** Cost of the pill at `index` of a `CustomOrder`. */
 export const pillCost = (index: number): number => PILL_COST[index % 3]!;
 
-/** The standard order as a `CustomOrder`, the starting point of the editor. */
-export function standardCustom(order: BrawlAbilityOrder, hero: Hero): CustomOrder {
-  const rounds = pillRounds(order, hero);
-  return hero.abilities.slice(0, 4).flatMap((cls) => [1, 2, 3].map((t) => rounds.get(`${cls}:${t}`) ?? 5));
+/** Seed the editor only when every round has a supported target and the targets form a valid complete plan.
+ *  Incompatible independent targets or unknown rounds start an empty editor, never a manufactured continuation. */
+export function standardCustom(order: BrawlAbilityOrder, _hero: Hero): CustomOrder {
+  const empty = () => Array<number>(12).fill(NOT_BOUGHT);
+  const result = empty();
+  const previous = [0, 0, 0, 0];
+  for (let r = 1; r <= 5; r++) {
+    const plan = order.rounds[r - 1];
+    if (!reliablePlan(plan, r) || plan.levels.some((level, a) => level < previous[a]!)) return empty();
+    plan.levels.forEach((level, a) => {
+      for (let t = previous[a]!; t < level; t++) result[a * 3 + t] = r;
+      previous[a] = level;
+    });
+  }
+  return customOrderProblem(result) ? empty() : result;
 }
 
 /** Why the pills placed so far cannot be followed, or null: a tier bought (or bought earlier) than the one under it,
@@ -200,8 +199,8 @@ export const customPointsLeft = (custom: CustomOrder, round: number): number =>
 export const customRoundPoints = (custom: CustomOrder): number[] =>
   [1, 2, 3, 4, 5].map((r) => custom.reduce((n, at, k) => n + (at === r ? pillCost(k) : 0), 0));
 
-/** The standard order's points as the panel shows them for `round`: pills bought with this round's points are
- *  `now`, those bought earlier `done`, the rest `later`. A valid `custom` order replaces the standard one. */
+/** Automatic advice is the whole target at the end of this round; it makes no claim about earlier purchases.
+ *  A complete user-defined order retains its explicit per-round highlights. */
 export function abilityPanelFor(
   order: BrawlAbilityOrder,
   hero: Hero,
@@ -210,26 +209,19 @@ export function abilityPanelFor(
   custom?: CustomOrder | null,
 ): AbilityPanelData {
   const mine = custom && !customOrderProblem(custom) ? custom : null;
-  const reliable = !!order.support && order.support.matches >= MIN_ORDER_MATCHES;
-  const rounds = mine
-    ? new Map(
-        hero.abilities
-          .slice(0, 4)
-          .flatMap((cls, a) => [1, 2, 3].map((t) => [`${cls}:${t}`, mine[a * 3 + t - 1]!] as const)),
-      )
-    : reliable
-      ? pillRounds(order, hero)
-      : new Map<string, number>();
-  const slots = hero.abilities.slice(0, 4).map((cls, i): PanelSlot => {
+  const plan = order.rounds[round - 1];
+  const reliable = reliablePlan(plan, round);
+  const slots = hero.abilities.slice(0, 4).map((cls, a): PanelSlot => {
     const at = (tier: number): PointState => {
-      const r = rounds.get(`${cls}:${tier}`);
-      return r === undefined || r > round ? 'later' : r === round ? 'now' : 'done';
+      if (!mine) return reliable && tier <= plan.levels[a]! ? 'now' : 'later';
+      const r = mine[a * 3 + tier - 1]!;
+      return r > round ? 'later' : r === round ? 'now' : 'done';
     };
-    const ability = abilities.find((a) => a.class_name === cls);
+    const ability = abilities.find((ab) => ab.class_name === cls);
     return {
       name: ability?.name ?? cls,
       icon: ability?.image_webp ?? '',
-      key: ABILITY_KEYS[i]!,
+      key: ABILITY_KEYS[a]!,
       tiers: [at(3), at(2), at(1)],
     };
   });
@@ -237,6 +229,7 @@ export function abilityPanelFor(
     round,
     points: AP_PER_ROUND[round - 1] ?? 0,
     slots,
-    evidence: mine ? 'Your order' : evidenceLine(order.support),
+    evidence: mine ? 'Your order' : evidenceLine(reliable ? plan.support : null),
+    target: !mine,
   };
 }

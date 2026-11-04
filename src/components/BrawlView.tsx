@@ -18,7 +18,6 @@ import {
   type RankedOffer,
   type RerollAdvice,
   brawlAbilityOrder,
-  abilityStepIndex,
   abilityPanelFor,
   evidenceLine,
   standardCustom,
@@ -28,13 +27,13 @@ import {
   stepTip,
   shopProbeRect,
   draftRegions,
-  BRAWL_LAYOUT,
   REROLL_SEARCH,
   findRerollButton,
   TIP_MS,
   type AbilityPanelData,
   type TipState,
 } from '../brawl';
+import { hudLayout } from '../brawl/hudLayout';
 import { createPerf } from '../perf';
 import type { FrameRegion, WorkerIn, WorkerOut } from '../brawl/worker';
 import type { TrackOut, TrackSummary } from '../brawl/tracker';
@@ -442,7 +441,6 @@ export function BrawlView({
   }, [advisedId]);
   const tiers = input ? roundTiers(input, round) : [];
   const topItems = useMemo(() => (input ? topItemsByTier(input) : []), [input]);
-  const abilityStepNow = abilityStepIndex(round, choice);
   // The standard point allocation for this round, shown ~15 s after the draft closes (latched then).
   const setCustomOrder = (next: CustomOrder | null) =>
     setCustomOrders((all) => {
@@ -1100,9 +1098,8 @@ export function BrawlView({
       }
       if (rerollRef.current && draftRef.current) {
         // Where the "Use Re-Roll" pill really sits on this frame (layouts differ by a few %), so the box hugs it.
-        const sx = srcW / BRAWL_LAYOUT.ref.width,
-          sy = srcH / BRAWL_LAYOUT.ref.height;
-        const x = Math.round(REROLL_SEARCH.x0 * sx),
+        const { sx, sy, offsetX } = hudLayout(srcW, srcH);
+        const x = Math.round(offsetX + REROLL_SEARCH.x0 * sx),
           y = Math.round(REROLL_SEARCH.y0 * sy),
           w = Math.round((REROLL_SEARCH.x1 - REROLL_SEARCH.x0) * sx),
           h = Math.round((REROLL_SEARCH.y1 - REROLL_SEARCH.y0) * sy);
@@ -1111,7 +1108,7 @@ export function BrawlView({
         if (c.height !== h) c.height = h;
         const rctx = c.getContext('2d', { willReadFrequently: true })!;
         rctx.drawImage(src, x, y, w, h, 0, 0, w, h);
-        const found = findRerollButton(rctx.getImageData(0, 0, w, h).data, w, h, x, y, srcW);
+        const found = findRerollButton(rctx.getImageData(0, 0, w, h).data, w, h, x, y, srcW, srcH);
         const old = rerollRectRef.current;
         if (found && (!old || Math.abs(old.y0 - found.y0) + Math.abs(old.x0 - found.x0) > 1.5)) {
           rerollRectRef.current = found;
@@ -1638,7 +1635,9 @@ export function BrawlView({
           })}
           round={round}
           standard={standardCustom(abilityOrder, hero)}
-          defaultEvidence={evidenceLine(abilityOrder.support)}
+          defaultEvidence={(selectedRound) =>
+            `Round ${selectedRound}: ${evidenceLine(abilityOrder.rounds[selectedRound - 1]?.support ?? null)}`
+          }
           value={customOrder}
           onChange={setCustomOrder}
         />
@@ -1856,24 +1855,10 @@ export function BrawlView({
             </div>
           </div>
 
-          {abilityOrder && abilityOrder.steps.length > 0 && (
+          {abilityOrder && (
             <div className="panel">
-              <h2>Ability order</h2>
-              {abilityOrder.support ? (
-                <div className="muted">
-                  seen in {abilityOrder.support.matches} brawls, wins {(abilityOrder.support.winRate * 100).toFixed(0)}%
-                </div>
-              ) : (
-                <div className="muted">no Street Brawl ability data for {hero.name} yet; fallback order shown</div>
-              )}
+              <h2>Ability targets</h2>
               {abilityTarget && <AbilityPanel panel={abilityTarget} className="ap-control" />}
-              <ol className="brawl-ability-order">
-                {abilityOrder.steps.map((s, k) => (
-                  <li key={k} className={k === abilityStepNow ? 'now' : ''}>
-                    {s.ability.name} <small>({s.kind})</small>
-                  </li>
-                ))}
-              </ol>
             </div>
           )}
 
